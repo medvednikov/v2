@@ -19,7 +19,14 @@ fn (app &App) index() {
 	$vweb.html()
 }
 
-pub fn (app & App) init() {}
+pub fn (app mut App) init() {
+	db := pg.connect(pg.Config{
+		host:   '127.0.0.1'
+		dbname: 'blog'
+		user:   'blog'
+	}) or { panic(err) }
+	app.db = db
+}
 
 fn (app mut App) time() {
 	app.vweb.text('2019-12-14 09:54') //time.now().format())

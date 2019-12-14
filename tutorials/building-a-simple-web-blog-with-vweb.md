@@ -131,17 +131,59 @@ but V is a language with pure functions by default, and you won't be able
 to modify any data from a view. `<b>@foo.bar()</b>` will only work if the `bar()` method
 doesn't modify `foo`.
 
-The HTML template is compiled to V once during the compilation of the website, that's done by the `$vweb.html()` line.
-(`$` always means compile time actions in V.)
+The HTML template is compiled to V during the compilation of the website, that's done by the `$vweb.html()` line.
+(`$` always means compile time actions in V.) offering the following benefits:
 
-This results in great performance, since the templates don't need to be compiled
+- Great performance, since the templates don't need to be compiled
 on every request, like in almost every major web framework.
 
-The deployment becomes easier as well, since all your HTML templates are  compiled
+- Easier deployment, since all your HTML templates are  compiled
 into a single binary file together with the web application itself.
 
-Precompilation of the templates also means that all errors are guaranteed to
-be caught during compilation.
+- All errors in the templates are guaranteed to be caught during compilation.
+
+### Fetching data with V ORM
+
+Now let's display some articles!
+
+Modify the `init()` method we created earlier to connect to a database:
+
+```v
+pub fn (app mut App) init() {
+	db := pg.connect(pg.Config{
+		host:   '127.0.0.1'
+		dbname: 'blog'
+		user:   'blog'
+	}) or { panic(err) }
+	app.db = db
+}
+```
+
+Code in the `init()` function is run only once during app's startup, so we are going
+to have one DB connection for all requests.
+
+Create a new file `article.v`:
+
+
+```v
+
+module main
+
+struct Article {
+	id    int
+	title string
+	text  string
+}
+
+pub fn (app & App) find_all_articles() []Article {
+
+
+}
+```
+
+
+
+
 
 
 
