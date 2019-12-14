@@ -151,12 +151,27 @@ support MySQL, SQLite, and SQL Server in the near future.)
 
 Create a SQL file with the schema:
 ```sql
--- blog.sql
+create database blog;
+
+\c blog
+
+drop table articles;
+
 create table articles (
-	id int serial primary key,
+	id serial primary key,
 	title text default '',
 	text text default ''
-)
+);
+
+insert into articles (title, text) values (
+	'Hello, world!',
+	'V is great.'
+);
+
+insert into articles (title, text) values (
+	'Second post.',
+	'Hm... what should I write about?'
+);
 ```
 
 Run the file with `psql -f blog.sql`.
@@ -210,7 +225,35 @@ pub fn (app & App) find_all_articles() []Article {
 }
 ```
 
+Let's fetch the articles in the `index()` action:
+
+```v
+fn (app &App) index() {
+	articles := app.find_all_articles()
+	$vweb.html()
+}
+```
+
+
+Finally, let's update our view:
+
+```html
+<body>
+	@for article in articles
+		<div>
+			<b>@article.title</b> <br>
+			@article.text
+		</div>
+	@end
+</body>
+```
+
 <img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/articles1.png?raw=true)">
+
+That was very simple, wasn't it?
+
+
+
 
 
 
