@@ -1,8 +1,17 @@
-The benefits of using V for web:
-- 1
-- 2
+Hello,
 
-Let's start with installing V:
+In this guide we'll build a simple web blog in V.
+
+The benefits of using V for web:
+- A safe, fast, language with great performance.
+- Zero dependencies: everything you need for web development comes with the language.
+- Very small resulting binaries: the blog we'll create in this tutorial is about 150 KB.
+- Easy deployments: a single binary file that even  includes the precompiled templates.
+
+*Please note that V and Vweb are at a very early stage. *
+
+
+### Installing V
 
 ```
 wget https://github.com/vlang/v/releases/latest/download/v_linux.zip
@@ -18,6 +27,8 @@ If you use a BSD system, Solaris, Android, or simply want to install V
 from source, follow the simple instructions here:
 https://github.com/vlang/v#installing-v-from-source
 
+
+### Creating a new Vweb project
 
 V projects can be created anywhere and don't need to have any structure:
 
@@ -87,6 +98,10 @@ while it's running.
 
 The `.text(string)` method obviously returns a plain text document with the provided
 text, which isn't frequently used in websites.
+
+
+### HTML View
+
 
 Let's return an HTML view instead. Create `index.html` in the same directory:
 
