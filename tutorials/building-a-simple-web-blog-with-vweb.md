@@ -50,4 +50,13 @@ fn main() {
 }
 ```
 
+Run it with
+
+```bash
+v run blog.v
+```
+
+![](https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello.png?raw=true)
+
+
 
