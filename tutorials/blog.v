@@ -3,11 +3,13 @@ module main
 import (
 	vweb
 	time
+	pg
 )
 
 struct App {
 mut:
 	vweb vweb.Context
+	db pg.DB
 }
 
 fn (app mut App) index2() {
@@ -23,7 +25,7 @@ pub fn (app mut App) init() {
 	db := pg.connect(pg.Config{
 		host:   '127.0.0.1'
 		dbname: 'blog'
-		user:   'blog'
+		user:   'alex'
 	}) or { panic(err) }
 	app.db = db
 }

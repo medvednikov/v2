@@ -146,6 +146,32 @@ into a single binary file together with the web application itself.
 
 Now let's display some articles!
 
+We'll be using V's builtin ORM and a Postgres database.
+
+Create a SQL file with the schema:
+```sql
+-- blog.sql
+create table articles (
+	id int serial primary key,
+	title text default '',
+	text text default ''
+)
+```
+
+
+
+Add a Postgres DB handle to `App`:
+
+```v
+struct App {
+mut:
+	vweb vweb.Context
+	db   pg.DB
+}
+```
+
+
+
 Modify the `init()` method we created earlier to connect to a database:
 
 ```v
@@ -176,8 +202,9 @@ struct Article {
 }
 
 pub fn (app & App) find_all_articles() []Article {
-
-
+	db := app.db
+	articles := db.select from Article
+	return articles
 }
 ```
 

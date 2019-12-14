@@ -6,9 +6,10 @@ struct Article {
 	text  string
 }
 
-pub fn (app & App) find_all_articles() []Article {
-
-
+pub fn (app &App) find_all_articles() []Article {
+	db := app.db
+	articles := db.select from Article
+	return articles
 }
 
 
