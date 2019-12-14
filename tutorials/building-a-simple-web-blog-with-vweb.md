@@ -5,8 +5,8 @@ The benefits of using V for web:
 Let's start with installing V:
 
 ```
-wget https://github.com/vlang/v/releases/latest/download/v_macos.zip
-unzip v_macos.zip
+wget https://github.com/vlang/v/releases/latest/download/v_linux.zip
+unzip v_linux.zip
 cd v
 ./v symlink
 ```
@@ -41,16 +41,17 @@ struct App {
 	vweb vweb.Context
 }
 
+fn main() {
+	app := App{}
+	vweb.run(mut app, 8080)
+}
+
 fn (app mut App) index() {
 	app.vweb.text('Hello, world from vweb!')
 }
 
 pub fn (app &App) init() {}
 
-fn main() {
-	app := App{}
-	vweb.run(mut app, 8080)
-}
 ```
 
 Run it with
@@ -59,16 +60,17 @@ Run it with
 v run blog.v
 ```
 
-<img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello.png?raw=true)">
+and open http://localhost:8080/ in your browser:
+
+<img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello.png?raw=true)">
 
 The `App` struct is an entry point of our web application. If you have experience
-with an MVC web framework, you can think of it as a Controller. However vweb is
-not an MVC framework.
+with an MVC web framework, you can think of it as a controller. (vweb is
+not an MVC framework however.)
 
-The `index()` action handles the `/` request.
-
-Vweb often uses convention over configuration, so adding a new action requires
-no routing rules:
+As you can see, there are no routing rules. The `index()` action handles the `/` request by default.
+Vweb often uses convention over configuration, and adding a new action requires
+no routing rules either:
 
 ```v
 fn (app mut App) time() {
@@ -77,13 +79,13 @@ fn (app mut App) time() {
 ```
 
 
-<img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/time.png?raw=true)">
+<img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/time.png?raw=true)">
 
->You have to restart the running website every time you change the code.
+>You have to rebuild and restart the website every time you change the code.
 In the future vweb will detect changes and recompile the website in the background
 while it's running.
 
-The `.text(str)` method obviously returns a plain text document with the provided
+The `.text(string)` method obviously returns a plain text document with the provided
 text, which isn't frequently used in websites.
 
 Let's return an HTML view instead. Create `index.html` in the same directory:
@@ -110,7 +112,17 @@ fn (app mut App) index() {
 }
 ```
 
-<img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello_html.png?raw=true)">
+<img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello_html.png?raw=true)">
+
+Good, now we have an actual HTML page.
+
+The V template language is similar to C#'s Razor: `@message` prints the value
+of `message`.
+
+You may notice something unsual: the `message` variable created in the `index()`
+action is automatically available in the view.
+
+That's achieved by the
 
 
 
