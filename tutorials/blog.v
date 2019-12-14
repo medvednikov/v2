@@ -10,9 +10,15 @@ mut:
 	vweb vweb.Context
 }
 
-fn (app mut App) index() {
+fn (app mut App) index2() {
 	app.vweb.text('Hello, world from vweb!')
 }
+
+fn (app &App) index() {
+	message := 'Hello, world from vweb!'
+	$vweb.html()
+}
+
 pub fn (app & App) init() {}
 
 fn (app mut App) time() {

@@ -71,18 +71,47 @@ Vweb often uses convention over configuration, so adding a new action requires
 no routing rules:
 
 ```v
-...
-
-import time
-
-...
-
 fn (app mut App) time() {
 	app.vweb.text(time.now().format())
 }
 ```
 
+
 <img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/time.png?raw=true)">
+
+>You have to restart the running website every time you change the code.
+In the future vweb will detect changes and recompile the website in the background
+while it's running.
+
+The `.text(str)` method obviously returns a plain text document with the provided
+text, which isn't frequently used in websites.
+
+Let's return an HTML view instead. Create `index.html` in the same directory:
+
+```html
+<html>
+<header>
+	<title>V Blog</title>
+</header>
+<body>
+	<b>@message</b>
+	<br>
+	<img src='https://vlang.io/img/v-logo.png' width=100>
+</body>
+</html>
+```
+
+and update our `index()` action so that it returns the HTML view we just created:
+
+```v
+fn (app mut App) index() {
+	message := 'Hello, world from vweb!'
+	$vweb.html()
+}
+```
+
+<img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello_html.png?raw=true)">
+
 
 
 
