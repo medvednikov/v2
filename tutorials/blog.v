@@ -12,6 +12,11 @@ mut:
 	db pg.DB
 }
 
+fn main() {
+	app := App{}
+	vweb.run(mut app, 8080)
+}
+
 fn (app mut App) index_text() {
 	app.vweb.text('Hello, world from vweb!')
 }
@@ -38,10 +43,6 @@ pub fn (app mut App) init() {
 }
 
 fn (app mut App) time() {
-	app.vweb.text('2019-12-14 09:54') //time.now().format())
+	app.vweb.text(time.now().format())
 }
 
-fn main() {
-	app := App{}
-	vweb.run(mut app, 8080)
-}

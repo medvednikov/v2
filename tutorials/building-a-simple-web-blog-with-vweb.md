@@ -3,12 +3,16 @@ Hello,
 In this guide we'll build a simple web blog in V.
 
 The benefits of using V for web:
-- A safe, fast, language with great performance.
-- Zero dependencies: everything you need for web development comes with the language.
+- A safe, fast, language with the development speed of Python and
+the performance of C.
+- Zero dependencies: everything you need for web development comes with the language
+in a 1 MB package.
 - Very small resulting binaries: the blog we'll create in this tutorial is about 150 KB.
 - Easy deployments: a single binary file that even  includes the precompiled templates.
+- Runs on the cheapest hardare with minimum footprint: for most apps a $3 instance
+is enough.
 
-*Please note that V and Vweb are at a very early stage. *
+*Please note that V and Vweb are at a very early stage and are changing rapidly.*
 
 
 ### Installing V
@@ -134,7 +138,7 @@ Good, now we have an actual HTML page.
 The V template language is similar to C#'s Razor: `@message` prints the value
 of `message`.
 
-You may notice something unsual: the `message` variable created in the `index()`
+You may notice something unusual: the `message` variable created in the `index()`
 action is automatically available in the view.
 
 It's another feature of Vweb to reduce the boilerplate in your web apps.
@@ -263,6 +267,10 @@ Finally, let's update our view:
 </body>
 ```
 
+```bash
+v run .
+```
+
 <img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/articles1.png?raw=true)">
 
 That was very simple, wasn't it?
@@ -278,7 +286,7 @@ Retrieveing a single article is very simple:
 
 ```v
 
-pub fn (app & App) retrieve_article() ?Article {
+pub fn (app &App) retrieve_article() ?Article {
 	db := app.db
 	article := db.select from Article limit 1
 	return article
@@ -300,20 +308,6 @@ article := app.retrieve_article(10) or {
 V ORM, soon they will not be needed.
 
 To be continued on Dec 14...
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
