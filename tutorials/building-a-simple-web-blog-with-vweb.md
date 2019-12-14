@@ -8,7 +8,7 @@ Let's start with installing V:
 wget https://github.com/vlang/v/releases/latest/download/v_linux.zip
 unzip v_linux.zip
 cd v
-./v symlink
+sudo ./v symlink
 ```
 
 Now V should be globally available on your system.
@@ -65,7 +65,7 @@ and open http://localhost:8080/ in your browser:
 <img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello.png?raw=true)">
 
 The `App` struct is an entry point of our web application. If you have experience
-with an MVC web framework, you can think of it as a controller. (vweb is
+with an MVC web framework, you can think of it as a controller. (Vweb is
 not an MVC framework however.)
 
 As you can see, there are no routing rules. The `index()` action handles the `/` request by default.
@@ -82,7 +82,7 @@ fn (app mut App) time() {
 <img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/time.png?raw=true)">
 
 >You have to rebuild and restart the website every time you change the code.
-In the future vweb will detect changes and recompile the website in the background
+In the future Vweb will detect changes and recompile the website in the background
 while it's running.
 
 The `.text(string)` method obviously returns a plain text document with the provided
@@ -107,7 +107,7 @@ and update our `index()` action so that it returns the HTML view we just created
 
 ```v
 fn (app mut App) index() {
-	message := 'Hello, world from vweb!'
+	message := 'Hello, world from Vweb!'
 	$vweb.html()
 }
 ```
@@ -122,7 +122,27 @@ of `message`.
 You may notice something unsual: the `message` variable created in the `index()`
 action is automatically available in the view.
 
-That's achieved by the
+It's another feature of Vweb to reduce the boilerplate in your web apps.
+No need to create view models just to pass data, or use an unsafe and untyped
+alternative, like C#'s `ViewBag["message"]`.
+
+Making all action's variables available in the view may seem crazy,
+but V is a language with pure functions by default, and you won't be able
+to modify any data from a view. `<b>@foo.bar()</b>` will only work if the `bar()` method
+doesn't modify `foo`.
+
+The HTML template is compiled to V once during the compilation of the website, that's done by the `$vweb.html()` line.
+(`$` always means compile time actions in V.)
+
+This results in great performance, since the templates don't need to be compiled
+on every request, like in almost every major web framework.
+
+The deployment becomes easier as well, since all your HTML templates are  compiled
+into a single binary file together with the web application itself.
+
+Precompilation of the templates also means that all errors are guaranteed to
+be caught during compilation.
+
 
 
 
