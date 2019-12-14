@@ -252,6 +252,44 @@ Finally, let's update our view:
 
 That was very simple, wasn't it?
 
+The built-in V ORM uses a syntax very similar to SQL. The queries are built with V.
+For example, if we only wanted to find articles with ids between 100 and 200, we'd do:
+
+```
+articles := db.select from Article where id >= 100 && id <= 200
+```
+
+Retrieveing a single article is very simple:
+
+```v
+
+pub fn (app & App) retrieve_article() ?Article {
+	db := app.db
+	article := db.select from Article limit 1
+	return article
+}
+```
+
+V ORM uses V's optionals for single values, which is very useful, since
+bad queries will always be handled by the developer:
+
+```v
+article := app.retrieve_article(10) or {
+	app.vweb.text('Article not found')
+	return
+}
+```
+
+
+> Temporary variables like `db := app.db` are a temporary limitation in the
+V ORM, soon they will not be needed.
+
+To be continued on Dec 14...
+
+
+
+
+
 
 
 
