@@ -45,6 +45,8 @@ fn (app mut App) index() {
 	app.vweb.text('Hello, world from vweb!')
 }
 
+pub fn (app &App) init() {}
+
 fn main() {
 	app := App{}
 	vweb.run(mut app, 8080)
@@ -58,6 +60,32 @@ v run blog.v
 ```
 
 <img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/hello.png?raw=true)">
+
+The `App` struct is an entry point of our web application. If you have experience
+with an MVC web framework, you can think of it as a Controller. However vweb is
+not an MVC framework.
+
+The `index()` action handles the `/` request.
+
+Vweb often uses convention over configuration, so adding a new action requires
+no routing rules:
+
+```v
+...
+
+import time
+
+...
+
+fn (app mut App) time() {
+	app.vweb.text(time.now().format())
+}
+```
+
+<img width=600 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/time.png?raw=true)">
+
+
+
 
 
 
