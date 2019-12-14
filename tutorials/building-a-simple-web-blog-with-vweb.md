@@ -146,7 +146,8 @@ into a single binary file together with the web application itself.
 
 Now let's display some articles!
 
-We'll be using V's builtin ORM and a Postgres database.
+We'll be using V's builtin ORM and a Postgres database. (V ORM will also
+support MySQL, SQLite, and SQL Server in the near future.)
 
 Create a SQL file with the schema:
 ```sql
@@ -158,6 +159,7 @@ create table articles (
 )
 ```
 
+Run the file with `psql -f blog.sql`.
 
 
 Add a Postgres DB handle to `App`:
@@ -207,6 +209,8 @@ pub fn (app & App) find_all_articles() []Article {
 	return articles
 }
 ```
+
+<img width=662 src="https://github.com/medvednikov/v2/blob/tutorial/tutorials/articles1.png?raw=true)">
 
 
 

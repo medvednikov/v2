@@ -12,12 +12,19 @@ mut:
 	db pg.DB
 }
 
-fn (app mut App) index2() {
+fn (app mut App) index_text() {
 	app.vweb.text('Hello, world from vweb!')
 }
 
-fn (app &App) index() {
+/*
+fn (app &App) index_html() {
 	message := 'Hello, world from vweb!'
+	$vweb.html()
+}
+*/
+
+fn (app &App) index() {
+	articles := app.find_all_articles()
 	$vweb.html()
 }
 
