@@ -213,6 +213,10 @@ mut:
 	autofree_scope_stmts   []string
 	use_segfault_handler   bool = true
 	test_function_names    []string
+	/////////
+	// out_parallel []strings.Builder
+	// out_idx      int
+	out_fn_start_pos []int
 }
 
 // global or const variable definition string
@@ -222,6 +226,7 @@ struct GlobalConstDef {
 	init      string   // init later (in _vinit)
 	dep_names []string // the names of all the consts, that this const depends on
 	order     int      // -1 for simple defines, string literals, anonymous function names, extern declarations etc
+	is_precomputed bool // can be declared as a const in C: primitive, and a simple definition
 }
 
 pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
@@ -279,6 +284,17 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 		is_cc_msvc: pref.ccompiler == 'msvc'
 		use_segfault_handler: !('no_segfault_handler' in pref.compile_defines || pref.os == .wasm32)
 	}
+	nr_cpus := 2 // runtime.nr_cpus()
+	println('len=$nr_cpus')
+	/*
+	global_g.out_parallel = []strings.Builder{len: nr_cpus}
+	for i in 0 .. nr_cpus {
+		global_g.out_parallel[i] = strings.new_builder(100000)
+		global_g.out_parallel[i].writeln('#include "out.h"\n')
+	}
+	println('LEN=')
+	println(global_g.out_parallel.len)
+	*/
 	// anon fn may include assert and thus this needs
 	// to be included before any test contents are written
 	if pref.is_test {
@@ -515,6 +531,7 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 		b.write_string(g.dump_funcs.str())
 	}
 	if g.auto_fn_definitions.len > 0 {
+		b.writeln('\n// V auto functions:')
 		for fn_def in g.auto_fn_definitions {
 			b.writeln(fn_def)
 		}
@@ -525,11 +542,16 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 			b.writeln(c_closure_helpers(g.pref))
 		}
 		for fn_def in g.anon_fn_definitions {
+		b.writeln('\n// V anon functions:')
 			b.writeln(fn_def)
 		}
 	}
-	b.writeln('\n// V out')
-	b.write_string(g.out.str())
+	b.writeln('\n// end of V out')
+	mut header := b.last_n(b.len)
+	header = '#ifndef V_HEADER_FILE\n#define V_HEADER_FILE' + header
+	header += '\n#endif\n'
+	out_str := g.out.str()
+	b.write_string(out_str) // g.out.str())
 	b.writeln('\n// THE END.')
 	g.timers.show('cgen common')
 	res := b.str()
@@ -539,6 +561,43 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 			eprintln('>> g.table.fn_generic_types key: $gkey')
 		}
 	}
+	os.write_file('/Users/alex/code/v/out.h', header) or { panic(err) }
+	// Write generated stuff in `g.out` before and after the `out_fn_start_pos` locations,
+// like the `int main()` to "out_0.c" and "out_x.c"
+	os.write_file('/Users/alex/code/v/out_0.c', '#include "out.h"\n' + out_str[..g.out_fn_start_pos[0]]) or { panic(err) }
+	os.write_file('/Users/alex/code/v/out_x.c', '#include "out.h"\n' +
+out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
+
+	mut prev_fn_pos := 0
+	mut out_files := []os.File{len: nr_cpus}
+	for i in 0 .. nr_cpus {
+		out_files[i] = os.create('/Users/alex/code/v/out_${i + 1}.c') or { panic(err) }
+		out_files[i].writeln('#include "out.h"\n') or { panic(err) }
+	}
+	// g.out_fn_start_pos.sort()
+	for i, fn_pos in g.out_fn_start_pos {
+		if prev_fn_pos >= out_str.len || fn_pos >= out_str.len || prev_fn_pos > fn_pos {
+			println('EXITING i=$i out of $g.out_fn_start_pos.len prev_pos=$prev_fn_pos fn_pos=$fn_pos')
+			break
+		}
+		if i == 0 {
+			// Skip typeof etc stuff that's been added to out_0.c
+		prev_fn_pos = fn_pos
+		continue
+
+		}
+		fn_text := out_str[prev_fn_pos..fn_pos]
+		out_files[i % nr_cpus].writeln(fn_text + '\n//////////////////////////////////////\n\n') or {
+			panic(err)
+		}
+		prev_fn_pos = fn_pos
+		// os.write_file('/Users/alex/code/v/out_9.c', out.str()) or { panic(err) }
+	}
+	/*
+	for i, mut out in g.out_parallel {
+		os.write_file('/Users/alex/code/v/out_${i}.c', out.str()) or { panic(err) }
+	}
+	*/
 	unsafe { b.free() }
 	unsafe { g.free_builders() }
 	return res
@@ -814,7 +873,8 @@ pub fn (mut g Gen) write_typeof_functions() {
 			if sum_info.is_generic {
 				continue
 			}
-			g.writeln('static char * v_typeof_sumtype_${sym.cname}(int sidx) { /* $sym.name */ ')
+			g.writeln('char * v_typeof_sumtype_${sym.cname}(int sidx) { /* $sym.name */ ')
+			//g.writeln('static char * v_typeof_sumtype_${sym.cname}(int sidx) { /* $sym.name */ ')
 			if g.pref.build_mode == .build_module {
 				g.writeln('\t\tif( sidx == _v_type_idx_${sym.cname}() ) return "${util.strip_main_name(sym.name)}";')
 				for v in sum_info.variants {
@@ -835,7 +895,8 @@ pub fn (mut g Gen) write_typeof_functions() {
 			}
 			g.writeln('}')
 			g.writeln('')
-			g.writeln('static int v_typeof_sumtype_idx_${sym.cname}(int sidx) { /* $sym.name */ ')
+			//g.writeln('static int v_typeof_sumtype_idx_${sym.cname}(int sidx) { /* $sym.name */ ')
+			g.writeln('int v_typeof_sumtype_idx_${sym.cname}(int sidx) { /* $sym.name */ ')
 			if g.pref.build_mode == .build_module {
 				g.writeln('\t\tif( sidx == _v_type_idx_${sym.cname}() ) return ${int(ityp)};')
 				for v in sum_info.variants {
@@ -935,13 +996,17 @@ fn (mut g Gen) generic_fn_name(types []ast.Type, before string) string {
 
 fn (mut g Gen) expr_string(expr ast.Expr) string {
 	pos := g.out.len
+	// pos2 := 	g.out_parallel[g.out_idx].len
 	g.expr(expr)
+	// g.out_parallel[g.out_idx].cut_to(pos2)
 	return g.out.cut_to(pos).trim_space()
 }
 
 fn (mut g Gen) expr_string_with_cast(expr ast.Expr, typ ast.Type, exp ast.Type) string {
 	pos := g.out.len
+	// pos2 := 	g.out_parallel[g.out_idx].len
 	g.expr_with_cast(expr, typ, exp)
+	// g.out_parallel[g.out_idx].cut_to(pos2)
 	return g.out.cut_to(pos).trim_space()
 }
 
@@ -949,6 +1014,7 @@ fn (mut g Gen) expr_string_with_cast(expr ast.Expr, typ ast.Type, exp ast.Type) 
 // (and create a statement)
 fn (mut g Gen) expr_string_surround(prepend string, expr ast.Expr, append string) string {
 	pos := g.out.len
+	// pos2 := 	g.out_parallel[g.out_idx].len
 	g.stmt_path_pos << pos
 	defer {
 		g.stmt_path_pos.delete_last()
@@ -956,6 +1022,7 @@ fn (mut g Gen) expr_string_surround(prepend string, expr ast.Expr, append string
 	g.write(prepend)
 	g.expr(expr)
 	g.write(append)
+	// g.out_parallel[g.out_idx].cut_to(pos2)
 	return g.out.cut_to(pos)
 }
 
@@ -1257,8 +1324,10 @@ pub fn (mut g Gen) write_typedef_types() {
 					mut fixed := g.typ(info.elem_type)
 					if elem_sym.info is ast.FnType {
 						pos := g.out.len
+						// pos2:=g.out_parallel[g.out_idx].len
 						g.write_fn_ptr_decl(&elem_sym.info, '')
 						fixed = g.out.cut_to(pos)
+						// g.out_parallel[g.out_idx].cut_to(pos2)
 						mut def_str := 'typedef $fixed;'
 						def_str = def_str.replace_once('(*)', '(*$styp[$len])')
 						g.type_definitions.writeln(def_str)
@@ -1480,28 +1549,6 @@ pub fn (mut g Gen) write_multi_return_types() {
 	}
 	g.typedefs.writeln('// END_multi_return_typedefs\n')
 	g.type_definitions.writeln('// END_multi_return_structs\n')
-}
-
-pub fn (mut g Gen) write(s string) {
-	$if trace_gen ? {
-		eprintln('gen file: ${g.file.path:-30} | last_fn_c_name: ${g.last_fn_c_name:-45} | write: $s')
-	}
-	if g.indent > 0 && g.empty_line {
-		g.out.write_string(util.tabs(g.indent))
-	}
-	g.out.write_string(s)
-	g.empty_line = false
-}
-
-pub fn (mut g Gen) writeln(s string) {
-	$if trace_gen ? {
-		eprintln('gen file: ${g.file.path:-30} | last_fn_c_name: ${g.last_fn_c_name:-45} | writeln: $s')
-	}
-	if g.indent > 0 && g.empty_line {
-		g.out.write_string(util.tabs(g.indent))
-	}
-	g.out.writeln(s)
-	g.empty_line = true
 }
 
 pub fn (mut g Gen) new_tmp_var() string {
@@ -3183,6 +3230,7 @@ fn (mut g Gen) expr(node_ ast.Expr) {
 				g.write(')')
 				if gen_or {
 					if !node.is_option {
+						g.write('/*JJJ*/')
 						g.or_block(tmp_opt, node.or_block, elem_type)
 					}
 					if is_gen_or_and_assign_rhs {
@@ -3696,7 +3744,7 @@ fn (mut g Gen) map_init(node ast.MapInit) {
 	is_amp := g.is_amp
 	g.is_amp = false
 	if is_amp {
-		g.out.go_back(1) // delete the `&` already generated in `prefix_expr()
+		g.go_back(1) // delete the `&` already generated in `prefix_expr()
 	}
 	if g.is_shared {
 		mut shared_typ := node.typ.set_flag(.shared_f)
@@ -4645,7 +4693,8 @@ fn (mut g Gen) const_decl_precomputed(mod string, name string, field_name string
 fn (mut g Gen) const_decl_write_precomputed(mod string, styp string, cname string, field_name string, ct_value string) {
 	g.global_const_defs[util.no_dots(field_name)] = GlobalConstDef{
 		mod: mod
-		def: '$styp $cname = $ct_value; // precomputed'
+		def: 'static const $styp $cname = $ct_value; // precomputed2'
+		//is_precomputed: true
 	}
 }
 
@@ -4733,7 +4782,8 @@ fn (mut g Gen) global_decl(node ast.GlobalDecl) {
 		&& !util.should_bundle_module(node.mod) {
 		'extern '
 	} else {
-		''
+		//''
+		'static ' // TODO used to be '' before parallel_cc, may cause issues
 	}
 	// should the global be initialized now, not later in `vinit()`
 	cinit := node.attrs.contains('cinit')
@@ -5231,38 +5281,6 @@ fn (mut g Gen) sort_structs(typesa []&ast.TypeSymbol) []&ast.TypeSymbol {
 	}
 }
 
-[inline]
-fn (g &Gen) nth_stmt_pos(n int) int {
-	return g.stmt_path_pos[g.stmt_path_pos.len - (1 + n)]
-}
-
-[inline]
-fn (mut g Gen) set_current_pos_as_last_stmt_pos() {
-	g.stmt_path_pos << g.out.len
-}
-
-fn (mut g Gen) go_before_stmt(n int) string {
-	stmt_pos := g.nth_stmt_pos(n)
-	return g.out.cut_to(stmt_pos)
-}
-
-[inline]
-fn (mut g Gen) go_before_ternary() string {
-	return g.go_before_stmt(g.inside_ternary)
-}
-
-fn (mut g Gen) insert_before_stmt(s string) {
-	cur_line := g.go_before_stmt(g.inside_ternary)
-	g.writeln(s)
-	g.write(cur_line)
-}
-
-fn (mut g Gen) insert_at(pos int, s string) {
-	cur_line := g.out.cut_to(pos)
-	g.writeln(s)
-	g.write(cur_line)
-}
-
 // fn (mut g Gen) start_tmp() {
 // }
 // If user is accessing the return value eg. in assigment, pass the variable name.
@@ -5271,7 +5289,11 @@ fn (mut g Gen) insert_at(pos int, s string) {
 // `os.cp(...)` => `Option bool tmp = os__cp(...); if (tmp.state != 0) { ... }`
 // Returns the type of the last stmt
 fn (mut g Gen) or_block(var_name string, or_block ast.OrExpr, return_type ast.Type) {
+	g.write('/*KEK BLOCK $var_name*/')
 	cvar_name := c_name(var_name)
+	// if var_name == '_t1' && g.cur_fn.name.contains('load') {
+	// print_backtrace()
+	//}
 	mut mr_styp := g.base_type(return_type)
 	is_none_ok := return_type == ast.ovoid_type
 	g.writeln(';')
@@ -5938,7 +5960,7 @@ static inline __shared__$interface_name ${shared_fn_name}(__shared__$cctype* x) 
 			}
 			iin_idx := already_generated_mwrappers[interface_index_name] - iinidx_minimum_base
 			if g.pref.build_mode != .build_module {
-				sb.writeln('const int $interface_index_name = $iin_idx;')
+				sb.writeln('static const int $interface_index_name = $iin_idx;')
 			} else {
 				sb.writeln('extern const int $interface_index_name;')
 			}

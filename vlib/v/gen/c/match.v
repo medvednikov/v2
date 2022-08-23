@@ -45,6 +45,7 @@ fn (mut g Gen) match_expr(node ast.MatchExpr) {
 		g.writeln('// match 0')
 		return
 	}
+	g.write('/*MMATCH2*/')
 	need_tmp_var := g.need_tmp_var_in_match(node)
 	is_expr := (node.is_expr && node.return_type != ast.void_type) || g.inside_ternary > 0
 
@@ -61,9 +62,13 @@ fn (mut g Gen) match_expr(node ast.MatchExpr) {
 		}
 		g.inside_match_optional = true
 	}
+	g.write('/*q*/')
 	if node.cond in [ast.Ident, ast.SelectorExpr, ast.IntegerLiteral, ast.StringLiteral, ast.FloatLiteral] {
+	g.write('/*2*/')
 		cond_var = g.expr_string(node.cond)
+	g.write('/* CONDVAR="$cond_var"3*/')
 	} else {
+	g.write('/*4*/')
 		line := if is_expr {
 			g.empty_line = true
 			g.go_before_stmt(0)
@@ -75,14 +80,18 @@ fn (mut g Gen) match_expr(node ast.MatchExpr) {
 		g.expr(node.cond)
 		g.writeln(';')
 		g.set_current_pos_as_last_stmt_pos()
+	g.write('/*0*/')
 		g.write(line)
+	g.write('/*9*/')
 	}
+	g.write('/*1*/')
 	if need_tmp_var {
 		g.empty_line = true
 		cur_line = g.go_before_stmt(0).trim_left(' \t')
 		tmp_var = g.new_tmp_var()
 		g.writeln('${g.typ(node.return_type)} $tmp_var = ${g.type_default(node.return_type)};')
 	}
+	g.write('/*f*/')
 
 	if is_expr && !need_tmp_var {
 		// brackets needed otherwise '?' will apply to everything on the left

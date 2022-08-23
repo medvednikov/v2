@@ -13,8 +13,13 @@ pub mut:
 	delimiter u8
 }
 
+[params]
+pub struct WriterParams {
+	delimiter string  = ','
+}
+
 // new_writer returns a reference to a Writer
-pub fn new_writer() &Writer {
+pub fn new_writer(param WriterParams) &Writer {
 	return &Writer{
 		delimiter: `,`
 		sb: strings.new_builder(200)

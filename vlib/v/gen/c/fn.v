@@ -48,6 +48,9 @@ fn (mut g Gen) fn_decl(node ast.FnDecl) {
 		g.definitions.write_string('#define _v_malloc GC_MALLOC\n')
 		return
 	}
+	if !node.is_anon {
+		g.out_fn_start_pos << g.out.len
+	}
 	g.gen_attrs(node.attrs)
 	mut skip := false
 	pos := g.out.len
@@ -98,13 +101,18 @@ fn (mut g Gen) fn_decl(node ast.FnDecl) {
 	}
 	g.fn_decl = keep_fn_decl
 	if skip {
-		g.out.go_back_to(pos)
+		g.go_back_to(pos)
 	}
 	if !g.pref.skip_unused {
 		if node.language != .c {
 			g.writeln('')
 		}
 	}
+	// Write the next function into another parallel C file
+	// g.out_idx++
+	// if g.out_idx >= g.out_parallel.len {
+	// g.out_idx = 0
+	//}
 }
 
 fn (mut g Gen) gen_fn_decl(node &ast.FnDecl, skip bool) {
@@ -643,6 +651,7 @@ fn (mut g Gen) call_expr(node ast.CallExpr) {
 	} else {
 		''
 	}
+	// g.write('/*EE line="$cur_line"*/')
 	tmp_opt := if gen_or || gen_keep_alive { g.new_tmp_var() } else { '' }
 	if gen_or || gen_keep_alive {
 		mut ret_typ := node.return_type
@@ -1907,7 +1916,7 @@ fn (mut g Gen) go_expr(node ast.GoExpr) {
 				pos := g.out.len
 				g.call_args(expr)
 				mut call_args_str := g.out.after(pos)
-				g.out.go_back(call_args_str.len)
+				g.go_back(call_args_str.len)
 				mut rep_group := []string{cap: 2 * expr.args.len}
 				for i in 0 .. expr.args.len {
 					rep_group << g.expr_string(expr.args[i].expr)
