@@ -13,6 +13,8 @@ import v.util
 import v.util.version
 import v.depgraph
 import sync.pool
+import time
+import sync
 
 const (
 	// Note: some of the words in c_reserved, are not reserved in C, but are
@@ -604,13 +606,17 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 	for i in 0 .. nr_cpus {
 		out_files[i].close()
 		}
+		mut wg:=sync.new_waitgroup()
+		t := time.now()
 	for i in 0..nr_cpus {
-		ii := i
-		//go fn(ii int) {
+		go fn [mut wg](ii int) {
 			os.system('cc -c -w -o out_${ii}.o out_${ii}.c')
+			wg.add(1)
 
-		//}	 (i)
+		}	 (i)
 	}
+	wg.wait()
+	println(time.now() - t)
 	/*
 	for i, mut out in g.out_parallel {
 		os.write_file('/Users/alex/code/v/out_${i}.c', out.str()) or { panic(err) }
