@@ -565,13 +565,13 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 
 	header = header.replace_once('static char * v_typeof_interface_IError',
 	'char * v_typeof_interface_IError')
-	os.write_file('/Users/alex/code/v/out.h', header) or { panic(err) }
+	os.write_file('out.h', header) or { panic(err) }
 	// Write generated stuff in `g.out` before and after the `out_fn_start_pos` locations,
 // like the `int main()` to "out_0.c" and "out_x.c"
 	out0 := out_str[..g.out_fn_start_pos[0]].replace_once(
 'static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
-	os.write_file('/Users/alex/code/v/out_0.c', '#include "out.h"\n' + out0) or { panic(err) }
-	os.write_file('/Users/alex/code/v/out_x.c', '#include "out.h"\n' +
+	os.write_file('out_0.c', '#include "out.h"\n' + out0) or { panic(err) }
+	os.write_file('out_x.c', '#include "out.h"\n' +
 out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 
 
@@ -579,7 +579,7 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 	mut prev_fn_pos := 0
 	mut out_files := []os.File{len: nr_cpus}
 	for i in 0 .. nr_cpus {
-		out_files[i] = os.create('/Users/alex/code/v/out_${i + 1}.c') or { panic(err) }
+		out_files[i] = os.create('out_${i + 1}.c') or { panic(err) }
 		out_files[i].writeln('#include "out.h"\n') or { panic(err) }
 	}
 	// g.out_fn_start_pos.sort()
