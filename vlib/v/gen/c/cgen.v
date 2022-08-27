@@ -14,7 +14,6 @@ import v.util.version
 import v.depgraph
 import sync.pool
 import time
-import sync
 
 const (
 	// Note: some of the words in c_reserved, are not reserved in C, but are
@@ -223,12 +222,12 @@ mut:
 
 // global or const variable definition string
 struct GlobalConstDef {
-	mod       string   // module name
-	def       string   // definition
-	init      string   // init later (in _vinit)
-	dep_names []string // the names of all the consts, that this const depends on
-	order     int      // -1 for simple defines, string literals, anonymous function names, extern declarations etc
-	is_precomputed bool // can be declared as a const in C: primitive, and a simple definition
+	mod            string   // module name
+	def            string   // definition
+	init           string   // init later (in _vinit)
+	dep_names      []string // the names of all the consts, that this const depends on
+	order          int      // -1 for simple defines, string literals, anonymous function names, extern declarations etc
+	is_precomputed bool     // can be declared as a const in C: primitive, and a simple definition
 }
 
 pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
@@ -564,19 +563,16 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 		}
 	}
 
-
-	header = header.replace_once('static char * v_typeof_interface_IError',
-	'char * v_typeof_interface_IError')
+	header = header.replace_once('static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
 	os.write_file('out.h', header) or { panic(err) }
 	// Write generated stuff in `g.out` before and after the `out_fn_start_pos` locations,
-// like the `int main()` to "out_0.c" and "out_x.c"
-	out0 := out_str[..g.out_fn_start_pos[0]].replace_once(
-'static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
+	// like the `int main()` to "out_0.c" and "out_x.c"
+	out0 := out_str[..g.out_fn_start_pos[0]].replace_once('static char * v_typeof_interface_IError',
+		'char * v_typeof_interface_IError')
 	os.write_file('out_0.c', '#include "out.h"\n' + out0) or { panic(err) }
-	os.write_file('out_x.c', '#include "out.h"\n' +
-out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
-
-
+	os.write_file('out_x.c', '#include "out.h"\n' + out_str[g.out_fn_start_pos.last()..]) or {
+		panic(err)
+	}
 
 	mut prev_fn_pos := 0
 	mut out_files := []os.File{len: nr_cpus}
@@ -592,9 +588,8 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 		}
 		if i == 0 {
 			// Skip typeof etc stuff that's been added to out_0.c
-		prev_fn_pos = fn_pos
-		continue
-
+			prev_fn_pos = fn_pos
+			continue
 		}
 		fn_text := out_str[prev_fn_pos..fn_pos]
 		out_files[i % nr_cpus].writeln(fn_text + '\n//////////////////////////////////////\n\n') or {
@@ -605,14 +600,13 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 	}
 	for i in 0 .. nr_cpus {
 		out_files[i].close()
-		}
-	mut wg:=sync.new_waitgroup()
-	t := time.now()
-	for i in 0..nr_cpus {
-		wg.add(1)
-		go build_o(i, mut wg)
 	}
-	wg.wait()
+	t := time.now()
+	mut builder_tasks := []thread{}
+	for i in 0 .. nr_cpus {
+		builder_tasks << go build_o(i)
+	}
+	builder_tasks.wait()
 	println(time.now() - t)
 	/*
 	for i, mut out in g.out_parallel {
@@ -895,7 +889,7 @@ pub fn (mut g Gen) write_typeof_functions() {
 				continue
 			}
 			g.writeln('char * v_typeof_sumtype_${sym.cname}(int sidx) { /* $sym.name */ ')
-			//g.writeln('static char * v_typeof_sumtype_${sym.cname}(int sidx) { /* $sym.name */ ')
+			// g.writeln('static char * v_typeof_sumtype_${sym.cname}(int sidx) { /* $sym.name */ ')
 			if g.pref.build_mode == .build_module {
 				g.writeln('\t\tif( sidx == _v_type_idx_${sym.cname}() ) return "${util.strip_main_name(sym.name)}";')
 				for v in sum_info.variants {
@@ -916,7 +910,7 @@ pub fn (mut g Gen) write_typeof_functions() {
 			}
 			g.writeln('}')
 			g.writeln('')
-			//g.writeln('static int v_typeof_sumtype_idx_${sym.cname}(int sidx) { /* $sym.name */ ')
+			// g.writeln('static int v_typeof_sumtype_idx_${sym.cname}(int sidx) { /* $sym.name */ ')
 			g.writeln('int v_typeof_sumtype_idx_${sym.cname}(int sidx) { /* $sym.name */ ')
 			if g.pref.build_mode == .build_module {
 				g.writeln('\t\tif( sidx == _v_type_idx_${sym.cname}() ) return ${int(ityp)};')
@@ -4715,7 +4709,7 @@ fn (mut g Gen) const_decl_write_precomputed(mod string, styp string, cname strin
 	g.global_const_defs[util.no_dots(field_name)] = GlobalConstDef{
 		mod: mod
 		def: 'static const $styp $cname = $ct_value; // precomputed2'
-		//is_precomputed: true
+		// is_precomputed: true
 	}
 }
 
@@ -6152,9 +6146,8 @@ fn (mut g Gen) check_noscan(elem_typ ast.Type) string {
 	return ''
 }
 
-fn build_o(ii int,mut wg sync.WaitGroup) {
-	println('spawning $ii')
-	os.system('cc -c -w -o out_${ii}.o out_${ii}.c')
-	wg.done()
-
+fn build_o(ii int) {
+	cmd := 'cc -c -w -o out_${ii}.o out_${ii}.c'
+	res := os.execute(cmd)
+	println('cmd: `$cmd` => $res.exit_code')
 }
