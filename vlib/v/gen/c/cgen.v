@@ -601,6 +601,9 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 		prev_fn_pos = fn_pos
 		// os.write_file('/Users/alex/code/v/out_9.c', out.str()) or { panic(err) }
 	}
+	for i in 0 .. nr_cpus {
+		out_files[i].close()
+		}
 	for i in 0..nr_cpus {
 		ii := i
 		//go fn(ii int) {
