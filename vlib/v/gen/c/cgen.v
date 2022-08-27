@@ -286,7 +286,7 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 		is_cc_msvc: pref.ccompiler == 'msvc'
 		use_segfault_handler: !('no_segfault_handler' in pref.compile_defines || pref.os == .wasm32)
 	}
-	nr_cpus := 16 // runtime.nr_cpus()
+	nr_cpus := util.nr_cpus
 	println('len=$nr_cpus')
 	/*
 	global_g.out_parallel = []strings.Builder{len: nr_cpus}
