@@ -6152,7 +6152,7 @@ fn (mut g Gen) check_noscan(elem_typ ast.Type) string {
 	return ''
 }
 
-fn build_o(ii int,mut wg &sync.WaitGroup) {
+fn build_o(ii int,mut wg sync.WaitGroup) {
 	println('spawning $ii')
 	os.system('cc -c -w -o out_${ii}.o out_${ii}.c')
 	wg.done()
