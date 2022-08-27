@@ -608,8 +608,8 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 		}
 		mut wg:=sync.new_waitgroup()
 		t := time.now()
-	for _ in 0..nr_cpus {
-		//go build_o(i, mut wg)
+	for i in 0..nr_cpus {
+		go build_o(i, mut wg)
 		/*
 		go fn [mut wg](ii int) {
 			os.system('cc -c -w -o out_${ii}.o out_${ii}.c')
