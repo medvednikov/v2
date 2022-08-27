@@ -284,7 +284,7 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 		is_cc_msvc: pref.ccompiler == 'msvc'
 		use_segfault_handler: !('no_segfault_handler' in pref.compile_defines || pref.os == .wasm32)
 	}
-	nr_cpus := 2 // runtime.nr_cpus()
+	nr_cpus := 16 // runtime.nr_cpus()
 	println('len=$nr_cpus')
 	/*
 	global_g.out_parallel = []strings.Builder{len: nr_cpus}
@@ -600,6 +600,13 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 		}
 		prev_fn_pos = fn_pos
 		// os.write_file('/Users/alex/code/v/out_9.c', out.str()) or { panic(err) }
+	}
+	for i in 0..nr_cpus {
+		ii := i
+		//go fn(ii int) {
+			os.system('cc -c -w -o out_${ii}.o out_${ii}.c')
+
+		//}	 (i)
 	}
 	/*
 	for i, mut out in g.out_parallel {
