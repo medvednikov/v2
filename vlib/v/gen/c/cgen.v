@@ -609,6 +609,7 @@ out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
 		mut wg:=sync.new_waitgroup()
 		t := time.now()
 	for i in 0..nr_cpus {
+		wg.add(1)
 		go build_o(i, mut wg)
 		/*
 		go fn [mut wg](ii int) {
@@ -6160,6 +6161,6 @@ fn (mut g Gen) check_noscan(elem_typ ast.Type) string {
 
 fn build_o(ii int,mut wg &sync.WaitGroup) {
 			os.system('cc -c -w -o out_${ii}.o out_${ii}.c')
-			wg.add(1)
+			wg.done()
 
 }
