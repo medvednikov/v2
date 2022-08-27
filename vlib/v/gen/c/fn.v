@@ -48,6 +48,10 @@ fn (mut g Gen) fn_decl(node ast.FnDecl) {
 		g.definitions.write_string('#define _v_malloc GC_MALLOC\n')
 		return
 	}
+	if node.is_anon {
+		g.write('static ')
+			g.definitions.write_string('static ')
+		}
 	if !node.is_anon {
 		g.out_fn_start_pos << g.out.len
 	}
@@ -493,6 +497,7 @@ fn (mut g Gen) gen_anon_fn_decl(mut node ast.AnonFn) {
 	}
 	node.has_gen = true
 	mut builder := strings.new_builder(256)
+	builder.writeln('/*F*/')
 	if node.inherited_vars.len > 0 {
 		ctx_struct := closure_ctx(node.decl)
 		builder.writeln('$ctx_struct {')
@@ -1867,7 +1872,7 @@ fn (mut g Gen) go_expr(node ast.GoExpr) {
 		}
 		g.type_definitions.writeln('} $wrapper_struct_name;')
 		thread_ret_type := if g.pref.os == .windows { 'u32' } else { 'void*' }
-		g.type_definitions.writeln('$thread_ret_type ${wrapper_fn_name}($wrapper_struct_name *arg);')
+		g.type_definitions.writeln('static $thread_ret_type ${wrapper_fn_name}($wrapper_struct_name *arg);')
 		g.gowrappers.writeln('$thread_ret_type ${wrapper_fn_name}($wrapper_struct_name *arg) {')
 		if node.call_expr.return_type != ast.void_type {
 			if g.pref.os == .windows {

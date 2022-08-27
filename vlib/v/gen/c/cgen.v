@@ -541,8 +541,8 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 			b.writeln('\n// V closure helpers')
 			b.writeln(c_closure_helpers(g.pref))
 		}
-		for fn_def in g.anon_fn_definitions {
 		b.writeln('\n// V anon functions:')
+		for fn_def in g.anon_fn_definitions {
 			b.writeln(fn_def)
 		}
 	}
@@ -561,12 +561,20 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 			eprintln('>> g.table.fn_generic_types key: $gkey')
 		}
 	}
+
+
+	header = header.replace_once('static char * v_typeof_interface_IError',
+	'char * v_typeof_interface_IError')
 	os.write_file('/Users/alex/code/v/out.h', header) or { panic(err) }
 	// Write generated stuff in `g.out` before and after the `out_fn_start_pos` locations,
 // like the `int main()` to "out_0.c" and "out_x.c"
-	os.write_file('/Users/alex/code/v/out_0.c', '#include "out.h"\n' + out_str[..g.out_fn_start_pos[0]]) or { panic(err) }
+	out0 := out_str[..g.out_fn_start_pos[0]].replace_once(
+'static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
+	os.write_file('/Users/alex/code/v/out_0.c', '#include "out.h"\n' + out0) or { panic(err) }
 	os.write_file('/Users/alex/code/v/out_x.c', '#include "out.h"\n' +
 out_str[g.out_fn_start_pos.last()..]) or { panic(err) }
+
+
 
 	mut prev_fn_pos := 0
 	mut out_files := []os.File{len: nr_cpus}
@@ -5733,12 +5741,12 @@ fn (mut g Gen) interface_table() string {
 		iname_table_length := inter_info.types.len
 		if iname_table_length == 0 {
 			// msvc can not process `static struct x[0] = {};`
-			methods_struct.writeln('$methods_struct_name ${interface_name}_name_table[1];')
+			methods_struct.writeln('static $methods_struct_name ${interface_name}_name_table[1];')
 		} else {
 			if g.pref.build_mode != .build_module {
-				methods_struct.writeln('$methods_struct_name ${interface_name}_name_table[$iname_table_length] = {')
+				methods_struct.writeln('static $methods_struct_name ${interface_name}_name_table[$iname_table_length] = {')
 			} else {
-				methods_struct.writeln('$methods_struct_name ${interface_name}_name_table[$iname_table_length];')
+				methods_struct.writeln('static $methods_struct_name ${interface_name}_name_table[$iname_table_length];')
 			}
 		}
 		mut cast_functions := strings.new_builder(100)
