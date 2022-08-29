@@ -38,7 +38,7 @@ const (
 	]
 )
 
-pub const nr_cpus = runtime.nr_cpus()
+pub const nr_jobs = runtime.nr_jobs()
 
 pub fn module_is_builtin(mod string) bool {
 	return mod in util.builtin_module_parts

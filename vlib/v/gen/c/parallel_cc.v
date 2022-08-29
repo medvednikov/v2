@@ -6,8 +6,8 @@ import sync
 import v.util
 
 fn (mut g Gen) parallel_cc(header string, res string, out_str string) {
-	nr_cpus := util.nr_cpus
-	println('len=$nr_cpus')
+	nr_jobs := util.nr_jobs
+	println('len=$nr_jobs')
 	out_h := header.replace_once('static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
 	os.write_file('out.h', out_h) or { panic(err) }
 	// Write generated stuff in `g.out` before and after the `out_fn_start_pos` locations,
@@ -20,9 +20,9 @@ fn (mut g Gen) parallel_cc(header string, res string, out_str string) {
 	}
 
 	mut prev_fn_pos := 0
-	mut out_files := []os.File{len: nr_cpus}
+	mut out_files := []os.File{len: nr_jobs}
 	mut fnames := []string{}
-	for i in 0 .. nr_cpus {
+	for i in 0 .. nr_jobs {
 		fname := 'out_${i + 1}.c'
 		fnames << fname
 		out_files[i] = os.create(fname) or { panic(err) }
@@ -40,12 +40,12 @@ fn (mut g Gen) parallel_cc(header string, res string, out_str string) {
 			continue
 		}
 		fn_text := out_str[prev_fn_pos..fn_pos]
-		out_files[i % nr_cpus].writeln(fn_text + '\n//////////////////////////////////////\n\n') or {
+		out_files[i % nr_jobs].writeln(fn_text + '\n//////////////////////////////////////\n\n') or {
 			panic(err)
 		}
 		prev_fn_pos = fn_pos
 	}
-	for i in 0 .. nr_cpus {
+	for i in 0 .. nr_jobs {
 		out_files[i].close()
 	}
 	t := time.now()
@@ -54,7 +54,7 @@ fn (mut g Gen) parallel_cc(header string, res string, out_str string) {
 		wg.add(1)
 		go build_o(i, mut wg)
 	}
-	for i in 0 .. nr_cpus {
+	for i in 0 .. nr_jobs {
 		wg.add(1)
 		go build_o((i + 1).str(), mut wg)
 	}
