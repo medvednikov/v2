@@ -60,7 +60,8 @@ fn (mut g Gen) parallel_cc(header string, res string, out_str string) {
 	}
 	wg.wait()
 	println(time.now() - t)
-	link_cmd := 'cc -o v_parallel out_0.o ${fnames.map(it.replace('.c', '.o')).join(' ')} out_x.o -lpthread'
+	link_cmd := '${os.quoted_path(c.cc_compiler)} -o v_parallel out_0.o ${fnames.map(it.replace('.c',
+		'.o')).join(' ')} out_x.o -lpthread $c.cc_ldflags'
 	link_res := os.execute(link_cmd)
 	println('> link_cmd: $link_cmd => $link_res.exit_code')
 	println(time.now() - t)
@@ -68,8 +69,14 @@ fn (mut g Gen) parallel_cc(header string, res string, out_str string) {
 
 fn build_o(postfix string, mut wg sync.WaitGroup) {
 	sw := time.new_stopwatch()
-	cmd := 'cc -c -w -o out_${postfix}.o out_${postfix}.c'
+	cmd := '${os.quoted_path(c.cc_compiler)} $c.cc_cflags -c -w -o out_${postfix}.o out_${postfix}.c'
 	res := os.execute(cmd)
 	wg.done()
 	println('cmd: `$cmd` => $res.exit_code , $sw.elapsed().milliseconds() ms')
 }
+
+const cc_compiler = os.getenv_opt('CC') or { 'cc' }
+
+const cc_ldflags = os.getenv_opt('LDFLAGS') or { '' }
+
+const cc_cflags = os.getenv_opt('CFLAGS') or { '' }
