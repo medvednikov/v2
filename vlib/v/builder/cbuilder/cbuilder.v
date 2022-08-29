@@ -41,10 +41,10 @@ pub fn gen_c(mut b builder.Builder, v_files []string) string {
 		}
 		return ''
 	}
-
-	util.timing_start('C GEN')
-	res := c.gen(b.parsed_files, b.table, b.pref)
-	util.timing_measure('C GEN')
+	header, res, out_str, out_fn_start_pos := c.gen(b.parsed_files, b.table, b.pref)
+	if b.pref.parallel_cc {
+		parallel_cc(mut b, header, res, out_str, out_fn_start_pos)
+	}
 	return res
 }
 

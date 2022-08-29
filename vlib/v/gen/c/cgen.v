@@ -229,7 +229,11 @@ struct GlobalConstDef {
 	is_precomputed bool     // can be declared as a const in C: primitive, and a simple definition
 }
 
-pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
+pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) (string, string, string, []int) {
+	util.timing_start('C GEN')
+	defer {
+		util.timing_measure('C GEN')
+	}
 	// println('start cgen2')
 	mut module_built := ''
 	if pref.build_mode == .build_module {
@@ -559,13 +563,11 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) string {
 			eprintln('>> g.table.fn_generic_types key: $gkey')
 		}
 	}
-
-	if g.pref.parallel_cc {
-		g.parallel_cc(header, res, out_str)
-	}
+	out_fn_start_pos := g.out_fn_start_pos.clone()
 	unsafe { b.free() }
 	unsafe { g.free_builders() }
-	return res
+
+	return header, res, out_str, out_fn_start_pos
 }
 
 fn cgen_process_one_file_cb(p &pool.PoolProcessor, idx int, wid int) &Gen {
