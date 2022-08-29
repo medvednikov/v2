@@ -230,10 +230,6 @@ struct GlobalConstDef {
 }
 
 pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) (string, string, string, []int) {
-	util.timing_start('C GEN')
-	defer {
-		util.timing_measure('C GEN')
-	}
 	// println('start cgen2')
 	mut module_built := ''
 	if pref.build_mode == .build_module {
