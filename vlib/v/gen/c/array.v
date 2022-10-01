@@ -481,7 +481,7 @@ fn (mut g Gen) gen_array_sort(node ast.CallExpr) {
 	}
 
 	stype_arg := g.typ(info.elem_type)
-	g.definitions.writeln('VV_LOCAL_SYMBOL static int ${compare_fn}($stype_arg* a, $stype_arg* b) {')
+	g.definitions.writeln('VV_LOCAL_SYMBOL $g.static_modifier int ${compare_fn}($stype_arg* a, $stype_arg* b) {')
 	c_condition := if comparison_type.sym.has_method('<') {
 		'${g.typ(comparison_type.typ)}__lt($left_expr, $right_expr)'
 	} else if comparison_type.unaliased_sym.has_method('<') {

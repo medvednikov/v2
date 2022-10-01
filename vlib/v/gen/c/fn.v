@@ -48,12 +48,14 @@ fn (mut g Gen) fn_decl(node ast.FnDecl) {
 		g.definitions.write_string('#define _v_malloc GC_MALLOC\n')
 		return
 	}
-	if node.is_anon {
-		g.write('static ')
-		g.definitions.write_string('static ')
-	}
-	if !node.is_anon {
-		g.out_fn_start_pos << g.out.len
+	if g.pref.parallel_cc {
+		if node.is_anon {
+			g.write('static ')
+			g.definitions.write_string('static ')
+		}
+		if !node.is_anon {
+			g.out_fn_start_pos << g.out.len
+		}
 	}
 	g.gen_attrs(node.attrs)
 	mut skip := false
@@ -2014,7 +2016,7 @@ fn (mut g Gen) go_expr(node ast.GoExpr) {
 		}
 		g.type_definitions.writeln('} $wrapper_struct_name;')
 		thread_ret_type := if g.pref.os == .windows { 'u32' } else { 'void*' }
-		g.type_definitions.writeln('static $thread_ret_type ${wrapper_fn_name}($wrapper_struct_name *arg);')
+		g.type_definitions.writeln('$g.static_modifier $thread_ret_type ${wrapper_fn_name}($wrapper_struct_name *arg);')
 		g.gowrappers.writeln('$thread_ret_type ${wrapper_fn_name}($wrapper_struct_name *arg) {')
 		if node.call_expr.return_type != ast.void_type {
 			if g.pref.os == .windows {

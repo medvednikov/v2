@@ -219,7 +219,8 @@ mut:
 	/////////
 	// out_parallel []strings.Builder
 	// out_idx      int
-	out_fn_start_pos []int // for generating multiple .c files, stores locations of all fn positions in `out` string builder
+	out_fn_start_pos []int  // for generating multiple .c files, stores locations of all fn positions in `out` string builder
+	static_modifier  string // for parallel_cc
 }
 
 // global or const variable definition string
@@ -4726,7 +4727,7 @@ fn (mut g Gen) const_decl_precomputed(mod string, name string, field_name string
 fn (mut g Gen) const_decl_write_precomputed(mod string, styp string, cname string, field_name string, ct_value string) {
 	g.global_const_defs[util.no_dots(field_name)] = GlobalConstDef{
 		mod: mod
-		def: 'static const $styp $cname = $ct_value; // precomputed2'
+		def: '$g.static_modifier const $styp $cname = $ct_value; // precomputed2'
 		// is_precomputed: true
 	}
 }
@@ -4816,7 +4817,7 @@ fn (mut g Gen) global_decl(node ast.GlobalDecl) {
 		'extern '
 	} else {
 		//''
-		'static ' // TODO used to be '' before parallel_cc, may cause issues
+		'$g.static_modifier ' // TODO used to be '' before parallel_cc, may cause issues
 	}
 	// should the global be initialized now, not later in `vinit()`
 	cinit := node.attrs.contains('cinit')
@@ -5775,12 +5776,12 @@ fn (mut g Gen) interface_table() string {
 		iname_table_length := inter_info.types.len
 		if iname_table_length == 0 {
 			// msvc can not process `static struct x[0] = {};`
-			methods_struct.writeln('static $methods_struct_name ${interface_name}_name_table[1];')
+			methods_struct.writeln('$g.static_modifier $methods_struct_name ${interface_name}_name_table[1];')
 		} else {
 			if g.pref.build_mode != .build_module {
-				methods_struct.writeln('static $methods_struct_name ${interface_name}_name_table[$iname_table_length] = {')
+				methods_struct.writeln('$g.static_modifier $methods_struct_name ${interface_name}_name_table[$iname_table_length] = {')
 			} else {
-				methods_struct.writeln('static $methods_struct_name ${interface_name}_name_table[$iname_table_length];')
+				methods_struct.writeln('$g.static_modifier $methods_struct_name ${interface_name}_name_table[$iname_table_length];')
 			}
 		}
 		mut cast_functions := strings.new_builder(100)
@@ -6002,7 +6003,7 @@ static inline __shared__$interface_name ${shared_fn_name}(__shared__$cctype* x) 
 			}
 			iin_idx := already_generated_mwrappers[interface_index_name] - iinidx_minimum_base
 			if g.pref.build_mode != .build_module {
-				sb.writeln('static const int $interface_index_name = $iin_idx;')
+				sb.writeln('$g.static_modifier const int $interface_index_name = $iin_idx;')
 			} else {
 				sb.writeln('extern const int $interface_index_name;')
 			}
