@@ -288,6 +288,7 @@ pub fn gen(files []&ast.File, table &ast.Table, pref &pref.Preferences) (string,
 		is_cc_msvc: pref.ccompiler == 'msvc'
 		use_segfault_handler: !('no_segfault_handler' in pref.compile_defines
 			|| pref.os in [.wasm32, .wasm32_emscripten])
+		static_modifier: if pref.parallel_cc { 'static' } else { '' }
 	}
 	/*
 	global_g.out_parallel = []strings.Builder{len: nr_cpus}

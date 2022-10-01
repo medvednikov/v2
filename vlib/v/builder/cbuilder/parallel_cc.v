@@ -66,6 +66,9 @@ fn parallel_cc(mut b builder.Builder, header string, res string, out_str string,
 	link_res := os.execute(link_cmd)
 	println('> link_cmd: $link_cmd => $link_res.exit_code')
 	println(time.now() - t)
+	if link_res.exit_code != 0 {
+		println(link_res.output)
+	}
 }
 
 fn build_o(postfix string, mut wg sync.WaitGroup) {
