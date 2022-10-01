@@ -43,8 +43,15 @@ pub fn gen_c(mut b builder.Builder, v_files []string) string {
 	}
 
 	util.timing_start('C GEN')
-	res := c.gen(b.parsed_files, b.table, b.pref)
+	header, res, out_str, out_fn_start_pos := c.gen(b.parsed_files, b.table, b.pref)
 	util.timing_measure('C GEN')
+
+	if b.pref.parallel_cc {
+		util.timing_start('Parallel C compilation')
+		parallel_cc(mut b, header, res, out_str, out_fn_start_pos)
+		util.timing_measure('Parallel C compilation')
+	}
+
 	return res
 }
 
