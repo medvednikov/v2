@@ -245,7 +245,7 @@ pub fn parse_request_head(mut reader io.BufferedReader) !Request {
 	line = reader.read_line()!
 	for line != '' {
 		key, value := parse_header(line)!
-		header.add_custom(key, value)!
+		// header.add_custom(key, value)!
 		line = reader.read_line()!
 	}
 	// header.coerce(canonicalize: true)
