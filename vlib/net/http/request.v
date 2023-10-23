@@ -248,7 +248,7 @@ pub fn parse_request_head(mut reader io.BufferedReader) !Request {
 		header.add_custom(key, value)!
 		line = reader.read_line()!
 	}
-	header.coerce(canonicalize: true)
+	// header.coerce(canonicalize: true)
 
 	mut request_cookies := map[string]string{}
 	for _, cookie in read_cookies(header.data, '') {
@@ -266,17 +266,27 @@ pub fn parse_request_head(mut reader io.BufferedReader) !Request {
 }
 
 fn parse_request_line(s string) !(Method, urllib.URL, Version) {
-	words := s.split(' ')
-	if words.len != 3 {
+	// println('S=${s}')
+	// words := s.split(' ')
+	// println(words)
+	space1, space2 := fast_request_words(s)
+	// if words.len != 3 {
+	if space1 == 0 || space2 == 0 {
 		return error('malformed request line')
 	}
-	method := method_from_str(words[0])
-	target := urllib.parse(words[1])!
-	version := version_from_str(words[2])
+	method_str := s.substr_unsafe(0, space1)
+	target_str := s.substr_unsafe(space1 + 1, space2)
+	version_str := s.substr_unsafe(space2 + 1, s.len)
+	// println('${method_str}!${target_str}!${version_str}')
+	// method := method_from_str(words[0])
+	// target := urllib.parse(words[1])!
+	// version := version_from_str(words[2])
+	method := method_from_str(method_str)
+	target := urllib.parse(target_str)!
+	version := version_from_str(version_str)
 	if version == .unknown {
 		return error('unsupported version')
 	}
-
 	return method, target, version
 }
 
