@@ -87,7 +87,6 @@ fn insert_template_code(fn_name string, tmpl_str_start string, line string) stri
 	if rline.ends_with('\\') {
 		rline = rline[0..rline.len - 2] + trailing_bs
 	}
-
 	return rline
 }
 
@@ -252,6 +251,11 @@ fn vweb_tmpl_${fn_name}() string {
 			continue
 		}
 		if line.contains('@for') {
+			// Remove an extra unnecessary newline added before in state == .simple
+			// Can break stuff like Markdown
+			if source.len > 1 {
+				source.go_back(1)
+			}
 			source.writeln(parser.tmpl_str_end)
 			pos := line.index('@for') or { continue }
 			source.writeln('for ' + line[pos + 4..] + '{')
@@ -260,7 +264,7 @@ fn vweb_tmpl_${fn_name}() string {
 		}
 		if state == .simple {
 			// by default, just copy 1:1
-			source.writeln(insert_template_code(fn_name, tmpl_str_start, line))
+			source.writeln(insert_template_code(fn_name, tmpl_str_start, line.trim_space()))
 			continue
 		}
 		// The .simple mode ends here. The rest handles .html/.css/.js state transitions.
