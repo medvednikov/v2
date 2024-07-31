@@ -957,14 +957,13 @@ fn (mut g Gen) gen_array_contains_methods() {
 			if fn_name == 'Array_i64_contains' {
 				if got_int_str {
 					continue
-				}
-				else {
+				} else {
 					got_int_str = true
 				}
 			}
 
-			//if t == ast.int_type_idx || t == ast.i64_type_idx {
-				//continue
+			// if t == ast.int_type_idx || t == ast.i64_type_idx {
+			// continue
 			//}
 		}
 

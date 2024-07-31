@@ -165,8 +165,8 @@ pub fn (n int) str() string {
 	return n.str_l(12)
 }
 
-//pub fn int_str(n int) string {
-	//return i64(n).str()
+// pub fn int_str(n int) string {
+// return i64(n).str()
 //}
 
 // str returns the value of the `u32` as a `string`.
