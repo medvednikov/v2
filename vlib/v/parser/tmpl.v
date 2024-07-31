@@ -264,7 +264,7 @@ fn vweb_tmpl_${fn_name}() string {
 		}
 		if state == .simple {
 			// by default, just copy 1:1
-			source.writeln(insert_template_code(fn_name, tmpl_str_start, line.trim_space()))
+			source.writeln(insert_template_code(fn_name, tmpl_str_start, line))
 			continue
 		}
 		// The .simple mode ends here. The rest handles .html/.css/.js state transitions.
