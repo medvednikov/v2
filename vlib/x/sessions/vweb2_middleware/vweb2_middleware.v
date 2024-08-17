@@ -1,7 +1,7 @@
 module vweb2_middleware
 
 import x.sessions
-import x.vweb
+import veb
 
 // middleware can be used to add session middleware to your vweb app to ensure
 // a valid session always exists. If a valid session exists the session data will

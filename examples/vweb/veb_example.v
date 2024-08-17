@@ -25,8 +25,9 @@ pub fn (app &App) before_request() {
 	}
 }
 
+// pub fn (mut app App) user_endpoint(mut ctx Context, user string) veb.Result {
 @['/users/:user']
-pub fn (mut app App) user_endpoint(mut ctx Context, user string) veb.Result {
+pub fn (mut app App) user_endpoint(user string) veb.Result {
 	id := rand.intn(100) or { 0 }
 	return ctx.json({
 		user: id

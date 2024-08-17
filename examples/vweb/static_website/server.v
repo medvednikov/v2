@@ -1,6 +1,6 @@
 module main
 
-import x.vweb
+import veb
 import os
 
 pub struct Context {

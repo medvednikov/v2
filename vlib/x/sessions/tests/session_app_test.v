@@ -1,7 +1,7 @@
 import net.http
 import time
 import x.sessions
-import x.vweb
+import veb
 import x.sessions.vweb2_middleware
 
 const port = 13010
