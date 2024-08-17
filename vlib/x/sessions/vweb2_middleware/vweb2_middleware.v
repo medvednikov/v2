@@ -8,11 +8,9 @@ import veb
 // be loaded into `session_data`, else a new session id will be generated.
 // You have to pass the Context type as the generic type
 // Example: app.use(app.sessions.middleware[Context]())
-pub fn create[T, X](mut s sessions.Sessions[T]) vweb.MiddlewareOptions[X] {
-	return vweb.MiddlewareOptions[X]
-	{
-		handler:
-		fn [mut s] [T, X](mut ctx X) bool {
+pub fn create[T, X](mut s sessions.Sessions[T]) veb.MiddlewareOptions[X] {
+	return veb.MiddlewareOptions[X]{
+		handler: fn [mut s] [T, X](mut ctx X) bool {
 			// a session id is retrieved from the client, so it must be considered
 			// untrusted and has to be verified on every request
 			sid, valid := s.validate_session(ctx)
