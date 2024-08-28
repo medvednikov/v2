@@ -138,6 +138,9 @@ const internally_generated_v_code = 'internally_generated_v_code'
 
 // new scanner from string.
 pub fn new_scanner(text string, comments_mode CommentsMode, pref_ &pref.Preferences) &Scanner {
+	$if print_string_scanner ? {
+		println(text)
+	}
 	mut s := &Scanner{
 		pref:                        pref_
 		text:                        text
@@ -1173,7 +1176,8 @@ fn (mut s Scanner) invalid_character() {
 	len := utf8_char_len(s.text[s.pos])
 	end := mathutil.min(s.pos + len, s.text.len)
 	c := s.text[s.pos..end]
-	s.error('invalid character `${c}`')
+	line := s.text[s.pos - 20..end]
+	s.error('invalid character `${c}` line=`${line}`')
 }
 
 fn (s &Scanner) current_column() int {
