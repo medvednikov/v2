@@ -502,7 +502,7 @@ fn (mut g Gen) gen_str_for_union_sum_type(info ast.SumType, styp string, typ_str
 			fn_builder.write_string('\t\tcase ${int(typ)}: return ${res};\n')
 		}
 	}
-	fn_builder.writeln('\t\tdefault: return _SLIT("unknown sum type value");')
+	fn_builder.writeln('\t\tdefault: return _SLIT("1unknown sum type value");')
 	fn_builder.writeln('\t}')
 	fn_builder.writeln('}')
 	g.auto_fn_definitions << fn_builder.str()
