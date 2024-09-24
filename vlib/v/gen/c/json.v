@@ -378,14 +378,18 @@ fn (mut g Gen) gen_sumtype_enc_dec(utyp ast.Type, sym ast.TypeSymbol, mut enc st
 		// An empty instance of the first variant is generated.
 		// This way the user can easily check if the sum type was not provided in json ("key":null):
 		// `if node.expr is InvalidExpr { ... }`
+		// (Do this only for structs)
 		type_tmp := g.new_tmp_var()
 		first_variant := info.variants[0]
 		variant_typ := g.typ(first_variant)
 		fv_sym := g.table.sym(first_variant)
 		first_variant_name := fv_sym.cname
-		dec.writeln('\tif (root->type == cJSON_NULL) { ') // puts("YEP NULL using ${first_variant_name}"); ')
-		dec.writeln('\t\tstruct ${first_variant_name} empty = {0};')
-		dec.writeln('res = ${variant_typ}_to_sumtype_${ret_styp}(&empty); } \n else ')
+		// println('KIND=${fv_sym.kind}')
+		if fv_sym.kind == .struct_ {
+			dec.writeln('\tif (root->type == cJSON_NULL) { ') // puts("YEP NULL using ${first_variant_name}"); ')
+			dec.writeln('\t\tstruct ${first_variant_name} empty = {0};')
+			dec.writeln('res = ${variant_typ}_to_sumtype_${ret_styp}(&empty); } \n else ')
+		}
 		//
 		dec.writeln('if (cJSON_IsObject(root) || (cJSON_IsArray(root) && cJSON_IsObject(root->child))) {')
 		dec.writeln('\t\tcJSON* ${type_tmp} = cJSON_IsObject(root) ? js_get(root, "_type") : js_get(root->child, "_type");')
