@@ -197,7 +197,11 @@ fn (mut p Parser) partial_assign_stmt(left []ast.Expr) ast.Stmt {
 			ast.Ident {
 				if op == .decl_assign {
 					if p.scope.known_var(lx.name) {
-						return p.error_with_pos('redefinition of `${lx.name}`', lx.pos)
+						// if p.pref.go_translated {
+						if lx.name != 'err' {
+							//}
+							return p.error_with_pos('redefinition of `${lx.name}`', lx.pos)
+						}
 					}
 					mut share := unsafe { ast.ShareType(0) }
 					if mut lx.info is ast.IdentVar {

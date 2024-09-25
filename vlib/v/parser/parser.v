@@ -2073,7 +2073,7 @@ fn (mut p Parser) note(s string) {
 }
 
 fn (mut p Parser) error_with_pos(s string, pos token.Pos) ast.NodeError {
-	// print_backtrace()
+	print_backtrace()
 	mut kind := 'error:'
 	if p.pref.fatal_errors {
 		util.show_compiler_message(kind, pos: pos, file_path: p.file_path, message: s)
@@ -2896,12 +2896,21 @@ fn (mut p Parser) name_expr() ast.Expr {
 			return p.array_init(is_option, alias_array_type)
 		} else {
 			// `if a == Foo{} {...}` or `match foo { Foo{} {...} }`
+			if p.fileis('api_impl') {
+				println('AXAAZAZA ${p.tok.lit}')
+			}
 			return p.struct_init(p.mod + '.' + p.tok.lit, .normal, is_option)
 		}
 	} else if p.peek_tok.kind == .lcbr
 		&& ((p.inside_if && lit0_is_capital && p.tok.lit.len > 1 && !known_var && language == .v)
-		|| (p.inside_match_case && p.tok.kind == .name && p.peek_tok.is_next_to(p.tok))) {
+		|| (p.inside_match_case && lit0_is_capital && p.tok.kind == .name
+		&& p.peek_tok.is_next_to(p.tok))) {
+		// XTODO check iscap
+		//|| (p.inside_match_case && p.tok.kind == .name && p.peek_tok.is_next_to(p.tok))) {
 		// `if a == Foo{} {...}` or `match foo { Foo{} {...} }`
+		if p.fileis('api_impl') {
+			println('AXAAZAZA2 is_cap=${lit0_is_capital} ${p.tok.lit}')
+		}
 		return p.struct_init(p.mod + '.' + p.tok.lit, .normal, is_option)
 	} else if p.peek_tok.kind == .dot && lit0_is_capital && !known_var && language == .v {
 		// T.name selector
