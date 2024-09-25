@@ -385,7 +385,7 @@ fn (mut g Gen) gen_sumtype_enc_dec(utyp ast.Type, sym ast.TypeSymbol, mut enc st
 		fv_sym := g.table.sym(first_variant)
 		first_variant_name := fv_sym.cname
 		// println('KIND=${fv_sym.kind}')
-		if fv_sym.kind == .struct_ && !is_option { // !ret_styp.starts_with('_option_') {
+		if fv_sym.kind == .struct_ && !is_option && field_op != '->' { // !ret_styp.starts_with('_option_') {
 			dec.writeln('/*sum type ${fv_sym.name} ret_styp=${ret_styp}*/\tif (root->type == cJSON_NULL) { ') // puts("YEP NULL using ${first_variant_name}"); ')
 			dec.writeln('\t\tstruct ${first_variant_name} empty = {0};')
 			dec.writeln('res = ${variant_typ}_to_sumtype_${ret_styp}(&empty); } \n else ')
