@@ -2896,9 +2896,6 @@ fn (mut p Parser) name_expr() ast.Expr {
 			return p.array_init(is_option, alias_array_type)
 		} else {
 			// `if a == Foo{} {...}` or `match foo { Foo{} {...} }`
-			if p.fileis('api_impl') {
-				println('AXAAZAZA ${p.tok.lit}')
-			}
 			return p.struct_init(p.mod + '.' + p.tok.lit, .normal, is_option)
 		}
 	} else if p.peek_tok.kind == .lcbr
@@ -2908,9 +2905,6 @@ fn (mut p Parser) name_expr() ast.Expr {
 		// XTODO check iscap
 		//|| (p.inside_match_case && p.tok.kind == .name && p.peek_tok.is_next_to(p.tok))) {
 		// `if a == Foo{} {...}` or `match foo { Foo{} {...} }`
-		if p.fileis('api_impl') {
-			println('AXAAZAZA2 is_cap=${lit0_is_capital} ${p.tok.lit}')
-		}
 		return p.struct_init(p.mod + '.' + p.tok.lit, .normal, is_option)
 	} else if p.peek_tok.kind == .dot && lit0_is_capital && !known_var && language == .v {
 		// T.name selector
