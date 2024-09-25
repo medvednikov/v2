@@ -125,6 +125,7 @@ pub mut:
 	profile_no_inline  bool     // when true, @[inline] functions would not be profiled
 	profile_fns        []string // when set, profiling will be off by default, but inside these functions (and what they call) it will be on.
 	translated         bool     // `v translate doom.v` are we running V code translated from C? allow globals, ++ expressions, etc
+	translated_go      bool     // Are we running V code translated from Go? Allow err shadowing
 	obfuscate          bool     // `v -obf program.v`, renames functions to "f_XXX"
 	hide_auto_str      bool     // `v -hide-auto-str program.v`, doesn't generate str() with struct data
 	// Note: passing -cg instead of -g will set is_vlines to false and is_debug to true, thus making v generate cleaner C files,
@@ -658,6 +659,9 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 			'-translated' {
 				res.translated = true
 				res.gc_mode = .no_gc // no gc in c2v'ed code, at least for now
+			}
+			'-translated-go' {
+				res.translated_go = true
 			}
 			'-m32', '-m64' {
 				res.m64 = arg[2] == `6`
