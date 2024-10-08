@@ -1,4 +1,4 @@
-vlib/v/checker/tests/index_sumtype_interface_struct_params_err.vv:12:9: warning: pointer indexing is only allowed in `unsafe` blocks
+vlib/v/checker/tests/index_sumtype_interface_struct_params_err.vv:12:9: error: pointer indexing is only allowed in `unsafe` blocks
    10 | 
    11 |     _ = st1[0]
    12 |     _ = st2[0]
