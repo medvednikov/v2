@@ -117,7 +117,8 @@ fn C.SSL_do_handshake(&C.SSL) int
 fn C.SSL_set_cipher_list(ctx &SSL, str &char) int
 
 fn C.SSL_get_peer_certificate(ssl &SSL) &C.X509
-fn C.SSL_get1_peer_certificate(ssl &SSL) &C.X509
+
+// fn C.SSL_get1_peer_certificate(ssl &SSL) &C.X509
 
 fn C.X509_free(const_cert &C.X509)
 
