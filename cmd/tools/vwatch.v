@@ -15,7 +15,7 @@ const scan_period_ms = 1000 / scan_frequency_hz
 
 const max_scan_cycles = scan_timeout_s * scan_frequency_hz
 
-const default_vweb_suffixes = '*.v,*.html,*.css,*.js,*.md'
+const default_vweb_suffixes = '*.v,*.html,*.css,*.js,*.md,*.tr'
 
 fn get_scan_timeout_seconds() int {
 	env_vw_timeout := os.getenv('VWATCH_TIMEOUT').int()

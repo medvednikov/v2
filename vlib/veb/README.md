@@ -289,6 +289,36 @@ pub fn (mut ctx Context) not_found() veb.Result {
 }
 ```
 
+
+## Templates
+
+V uses a simple templating language, similar to ASP.NET's Razor engine.
+
+All templates are compiled into the final binary.
+
+```
+<table>
+@include 'header.html'
+
+@for user in users
+       <tr>
+               <td>@user.id</td>
+               <td>@user.name</td>
+               <td>@user.last_name</td>
+               <td>@user.age</td>
+               <td>@user.gender_format()</td>
+       </tr>
+@end
+
+@include 'footer.html'
+
+For more complex examples with HTML templates, check out the  `examples/veb/` directory in the
+`vlang/v` repo.
+
+Sometimes you may need to debug HTML templates compiled into V code.
+Build a custom version of V with `v -d print_veb_template_expansions self`.
+Then run `v .`. Don't forget to recompile V with `v self` after you're done.
+
 ## Static files and website
 
 veb also provides a way of handling static files. We can mount a folder at the root

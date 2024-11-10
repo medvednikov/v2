@@ -8,6 +8,8 @@ import v.errors
 import os
 import strings
 
+const replace_curly_with_div = false
+
 enum State {
 	simple // default - no special interpretation of tags, *at all*!
 	// That is suitable for the general case of text template interpolation,
@@ -77,7 +79,7 @@ fn insert_template_code(fn_name string, tmpl_str_start string, line string) stri
 	// HTML, may include `@var`
 	// escaped by cgen, unless it's a `veb.RawHtml` string
 	trailing_bs := tmpl_str_end + 'sb_${fn_name}.write_u8(92)\n' + tmpl_str_start
-	replace_pairs := ['\\', '\\\\', r"'", "\\'", r'@@', r'@', r'@', r'$', r'$$', r'\@']
+	replace_pairs := ['\\', '\\\\', r"'", "\\'", r'@@', r'@', r'@', r'$', r'$$', r'\@', r'$', r'\$']
 	mut rline := line.replace_each(replace_pairs)
 	comptime_call_str := rline.find_between('\${', '}')
 	if comptime_call_str.contains("\\'") {
@@ -379,33 +381,35 @@ fn veb_tmpl_${fn_name}() string {
 		match state {
 			.html {
 				line_t := line.trim_space()
-				if line_t.starts_with('span.') && line.ends_with('{') {
-					// `span.header {` => `<span class='header'>`
-					class := line.find_between('span.', '{').trim_space()
-					source.writeln('<span class="${class}">')
-					in_span = true
-					continue
-				} else if line_t.starts_with('.') && line.ends_with('{') {
-					// `.header {` => `<div class='header'>`
-					class := line.find_between('.', '{').trim_space()
-					trimmed := line.trim_space()
-					source.write_string(strings.repeat(`\t`, line.len - trimmed.len)) // add the necessary indent to keep <div><div><div> code clean
-					source.writeln('<div class="${class}">')
-					continue
-				} else if line_t.starts_with('#') && line.ends_with('{') {
-					// `#header {` => `<div id='header'>`
-					class := line.find_between('#', '{').trim_space()
-					source.writeln('<div id="${class}">')
-					continue
-				} else if line_t == '}' {
-					source.write_string(strings.repeat(`\t`, line.len - line_t.len)) // add the necessary indent to keep <div><div><div> code clean
-					if in_span {
-						source.writeln('</span>')
-						in_span = false
-					} else {
-						source.writeln('</div>')
+				if replace_curly_with_div {
+					if line_t.starts_with('span.') && line.ends_with('{') {
+						// `span.header {` => `<span class='header'>`
+						class := line.find_between('span.', '{').trim_space()
+						source.writeln('<span class="${class}">')
+						in_span = true
+						continue
+					} else if line_t.starts_with('.') && line.ends_with('{') {
+						// `.header {` => `<div class='header'>`
+						class := line.find_between('.', '{').trim_space()
+						trimmed := line.trim_space()
+						source.write_string(strings.repeat(`\t`, line.len - trimmed.len)) // add the necessary indent to keep <div><div><div> code clean
+						source.writeln('<div class="${class}">')
+						continue
+					} else if line_t.starts_with('#') && line.ends_with('{') {
+						// `#header {` => `<div id='header'>`
+						class := line.find_between('#', '{').trim_space()
+						source.writeln('<div id="${class}">')
+						continue
+					} else if line_t == '}' {
+						source.write_string(strings.repeat(`\t`, line.len - line_t.len)) // add the necessary indent to keep <div><div><div> code clean
+						if in_span {
+							source.writeln('</span>')
+							in_span = false
+						} else {
+							source.writeln('</div>')
+						}
+						continue
 					}
-					continue
 				}
 			}
 			.js {
@@ -427,7 +431,21 @@ fn veb_tmpl_${fn_name}() string {
 			else {}
 		}
 
-		if pos := line.index('%') {
+		if pos := line.index('%%') {
+			// %%translation_key => RAW ${tr('translation_key')}
+			mut line_ := line
+			if pos + 2 < line.len && line[pos + 2].is_letter() { //|| line[pos + 1] == '_' {
+				mut end := pos + 2
+				for end < line.len
+					&& (line[end].is_letter() || line[end] == `_` || line[end].is_digit()) {
+					end++
+				}
+				key := line[pos + 2..end]
+				line_ = line.replace('%%${key}', '@{veb.raw(veb.tr(ctx.lang.str(), "${key}"))}')
+			}
+			source.writeln(insert_template_code(fn_name, tmpl_str_start, line_))
+		} else if pos := line.index('%') {
+			// TODO allow multiple % on one line
 			// %translation_key => ${tr('translation_key')}
 			mut line_ := line
 			if pos + 1 < line.len && line[pos + 1].is_letter() { //|| line[pos + 1] == '_' {
