@@ -1134,6 +1134,7 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 	res.build_options = m.keys()
 	// eprintln('>> res.build_options: $res.build_options')
 	res.fill_with_defaults()
+	res.skip_unused = true
 	return res, command
 }
 
