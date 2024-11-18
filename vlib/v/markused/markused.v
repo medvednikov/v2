@@ -42,18 +42,6 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			'builtin_init',
 			'fast_string_eq',
 			// TODO: process the _vinit const initializations automatically too
-			'json.decode_string',
-			'json.decode_int',
-			'json.decode_bool',
-			'json.decode_u64',
-			'json.encode_int',
-			'json.encode_string',
-			'json.encode_bool',
-			'json.encode_u64',
-			'json.json_print',
-			'json.json_print_pretty',
-			'json.json_parse',
-			'main.nasserts',
 			'main.vtest_init',
 			'main.vtest_new_metainfo',
 			'main.vtest_new_filemetainfo',
@@ -209,9 +197,8 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			continue
 		}
 		if mfn.name == 'before_request' {
-			println('YEP GOT IT k=${k}  name=${mfn.name}')
+			println('YEP GOT IT')
 			all_fn_root_names << k
-			continue
 		}
 
 		// sync:
@@ -482,9 +469,7 @@ fn handle_vweb(mut table ast.Table, mut all_fn_root_names []string, result_name 
 			for m in sym_app.methods {
 				mut skip := true
 				if m.name == 'before_request' {
-					println('NOT SKIPPING BEFORE REQUEST')
-					// TODO: handle expansion of method calls in generic functions in a more
-					// universal way
+					// TODO: handle expansion of method calls in generic functions in a more universal way
 					skip = false
 				}
 				if m.return_type == result_type_idx {
