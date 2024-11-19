@@ -335,6 +335,7 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 		res.use_cache = true
 		res.skip_unused = true
 	} */
+	mut kek := false
 
 	mut command, mut command_idx := '', 0
 	for i := 0; i < args.len; i++ {
@@ -602,6 +603,7 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 				res.skip_unused = true
 			}
 			'-no-skip-unused' {
+				kek = true
 				res.skip_unused = false
 			}
 			'-compress' {
@@ -1136,7 +1138,11 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 	res.fill_with_defaults()
 	if res.backend == .c {
 		res.skip_unused = true
+		if kek { // res.no_skip_unused {
+			res.skip_unused = false
+		}
 	}
+
 	// println('BACKEND=${res.backend}')
 	return res, command
 }
