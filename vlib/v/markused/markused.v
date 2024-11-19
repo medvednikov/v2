@@ -197,7 +197,7 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			continue
 		}
 		if mfn.name == 'before_request' {
-			println('YEP GOT IT')
+			// println('YEP GOT IT')
 			all_fn_root_names << k
 		}
 
