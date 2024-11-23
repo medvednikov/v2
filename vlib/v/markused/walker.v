@@ -114,8 +114,8 @@ pub fn (mut w Walker) mark_markused_fns() {
 			if w.pref.is_verbose {
 				println('${func.name} is markused')
 				if func.name == 'new_map' {
-					println('GGGG')
-					println(w.used_fns)
+					println('GGGG KEK:')
+					println(w.used_fns['new_map'])
 				}
 			}
 		}
@@ -248,7 +248,14 @@ pub fn (mut w Walker) stmt(node_ ast.Stmt) {
 		ast.GotoLabel {}
 		ast.GotoStmt {}
 		ast.HashStmt {}
-		ast.Import {}
+		ast.Import {
+			println('WALKER IMPORT')
+			if node.mod == 'json' {
+				// json decode_map uses maps
+				println('INC JSON')
+				w.table.used_maps++
+			}
+		}
 		ast.InterfaceDecl {}
 		ast.SemicolonStmt {}
 		ast.Module {}
@@ -563,6 +570,9 @@ pub fn (mut w Walker) fn_decl(mut node ast.FnDecl) {
 }
 
 pub fn (mut w Walker) call_expr(mut node ast.CallExpr) {
+	if node.name.starts_with('json') { // TODO perf do this on json import once
+		w.table.used_maps++
+	}
 	for arg in node.args {
 		w.expr(arg.expr)
 	}

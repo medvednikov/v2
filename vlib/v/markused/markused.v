@@ -353,10 +353,16 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 	)
 	// println( all_fns.keys() )
 	walker.mark_markused_fns() // tagged with `@[markused]`
+
+	println('11111111')
+	println(walker.used_fns['new_map'])
 	walker.mark_markused_consts() // tagged with `@[markused]`
 	walker.mark_markused_globals() // tagged with `@[markused]`
 	walker.mark_exported_fns()
 	walker.mark_root_fns(all_fn_root_names)
+
+	println('2222')
+	println(walker.used_fns['new_map'])
 
 	if walker.n_asserts > 0 {
 		unsafe { walker.fn_decl(mut all_fns['__print_assert_failure']) }
@@ -419,6 +425,9 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 		eprintln('>> t.used_globals: ${table.used_features.used_globals.keys()}')
 		eprintln('>> walker.table.used_features.used_maps: ${walker.table.used_features.used_maps}')
 	}
+
+	println('HOHOHO')
+	println(table.used_fns['new_map'])
 }
 
 fn all_fn_const_and_global(ast_files []&ast.File) (map[string]ast.FnDecl, map[string]ast.ConstField, map[string]ast.GlobalField) {

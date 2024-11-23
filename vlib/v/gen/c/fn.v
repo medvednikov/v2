@@ -37,7 +37,8 @@ fn (mut g Gen) fn_decl(node ast.FnDecl) {
 	used := g.is_used_by_main(node)
 	g.writeln('//FNDECL ${node.name} should be skippped=${node.should_be_skipped} used_by_main=${used}')
 	if node.name.contains('new_map') {
-		println('LLLLL')
+		println('LLLLL new_map')
+		println(g.table.used_fns)
 		// println(node)
 	}
 	if g.pref.experimental && node.should_be_skipped {
