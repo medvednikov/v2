@@ -34,20 +34,13 @@ fn (mut g Gen) is_used_by_main(node ast.FnDecl) bool {
 }
 
 fn (mut g Gen) fn_decl(node ast.FnDecl) {
-	used := g.is_used_by_main(node)
-	g.writeln('//FNDECL ${node.name} should be skippped=${node.should_be_skipped} used_by_main=${used}')
-	if node.name.contains('new_map') {
-		println('LLLLL new_map')
-		println(g.table.used_fns)
-		// println(node)
-	}
-	if g.pref.experimental && node.should_be_skipped {
-		// if node.name.contains('map') {
-		println('!!! skipping fn decl map')
-		println(node)
-		//}
-		return
-	}
+	// used := g.is_used_by_main(node)
+	// g.writeln('//FNDECL ${node.name} should be skippped=${node.should_be_skipped} used_by_main=${used}')
+	// if g.pref.experimental && node.should_be_skipped {
+	// println('skipping fn decl map')
+	//}
+	// return
+	//}
 	if node.should_be_skipped {
 		return
 	}

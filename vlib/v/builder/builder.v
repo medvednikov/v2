@@ -147,10 +147,6 @@ pub fn (mut b Builder) middle_stages() ! {
 	b.table.complete_interface_check()
 	if b.pref.skip_unused {
 		markused.mark_used(mut b.table, mut b.pref, b.parsed_files)
-		println('after mark used:')
-		println(b.table.used_fns['new_map'])
-
-		// println(b.table.used_fns)
 	}
 	if b.pref.show_callgraph {
 		callgraph.show(mut b.table, b.pref, b.parsed_files)
