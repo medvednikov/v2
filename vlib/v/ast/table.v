@@ -65,7 +65,7 @@ pub mut:
 	sumtypes           map[int]SumTypeDecl
 	cmod_prefix        string // needed for ast.type_to_str(Type) while vfmt; contains `os.`
 	is_fmt             bool
-	used_features      &UsedFeatures = &UsedFeatures{} // filled in by the checker/markused, when pref.skip_unused = true;
+	used_features      &UsedFeatures = &UsedFeatures{} // filled in by the builder via markused module, when pref.skip_unused = true;
 	veb_res_idx_cache  int // Cache of `veb.Result` type
 	veb_ctx_idx_cache  int // Cache of `veb.Context` type
 	panic_handler      FnPanicHandler = default_table_panic_handler

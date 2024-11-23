@@ -111,6 +111,13 @@ pub fn (mut w Walker) mark_markused_fns() {
 				println('>>>> walking markused func: ${func.name} ...')
 			}
 			w.fn_decl(mut func)
+			if w.pref.is_verbose {
+				println('${func.name} is markused')
+				if func.name == 'new_map' {
+					println('GGGG')
+					println(w.used_fns)
+				}
+			}
 		}
 	}
 }
