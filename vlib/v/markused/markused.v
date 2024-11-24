@@ -114,10 +114,6 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			if table.used_features.arr_last {
 				core_fns << array_idx_str + '.last'
 			}
-			if table.used_features.json {
-				println('used feature json')
-				core_fns << 'time.unix'
-			}
 		} else {
 			// TODO: this *should not* depend on the used compiler, which is brittle, but only on info in the AST...
 			// hello world apps
@@ -345,9 +341,10 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 	}
 
 	if 'C.cJSON_Parse' in all_fns {
-		println('GOT JSSS')
+		// println('GOT JSSS')
 		all_fn_root_names << 'tos5'
 		all_fn_root_names << 'time.unix' // used by json
+		table.used_features.used_maps++ // json needs new_map etc
 	}
 	mut walker := Walker.new(
 		table:       table
@@ -415,11 +412,6 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 		if !pref_.is_shared && con.is_pub && con.name.starts_with('main.') {
 			walker.mark_const_as_used(kcon)
 		}
-	}
-
-	if table.used_features.json {
-		println('used feature json2')
-		// core_fns << 'time.unix'
 	}
 
 	table.used_features.used_fns = walker.used_fns.move()
