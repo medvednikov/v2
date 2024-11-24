@@ -253,7 +253,7 @@ pub fn (mut w Walker) stmt(node_ ast.Stmt) {
 			if node.mod == 'json' {
 				// json decode_map uses maps
 				println('INC JSON')
-				w.table.used_maps++
+				w.table.used_features.used_maps++
 			}
 		}
 		ast.InterfaceDecl {}
@@ -571,7 +571,7 @@ pub fn (mut w Walker) fn_decl(mut node ast.FnDecl) {
 
 pub fn (mut w Walker) call_expr(mut node ast.CallExpr) {
 	if node.name.starts_with('json') { // TODO perf do this on json import once
-		w.table.used_maps++
+		w.table.used_features.used_maps++
 	}
 	for arg in node.args {
 		w.expr(arg.expr)
