@@ -345,7 +345,9 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 	}
 
 	if 'C.cJSON_Parse' in all_fns {
+		println('GOT JSSS')
 		all_fn_root_names << 'tos5'
+		all_fn_root_names << 'time.unix' // used by json
 	}
 	mut walker := Walker.new(
 		table:       table
@@ -414,6 +416,12 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			walker.mark_const_as_used(kcon)
 		}
 	}
+
+	if table.used_features.json {
+		println('used feature json2')
+		// core_fns << 'time.unix'
+	}
+
 	table.used_features.used_fns = walker.used_fns.move()
 	table.used_features.used_consts = walker.used_consts.move()
 	table.used_features.used_globals = walker.used_globals.move()
