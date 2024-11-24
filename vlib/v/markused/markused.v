@@ -114,6 +114,10 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			if table.used_features.arr_last {
 				core_fns << array_idx_str + '.last'
 			}
+			if table.used_features.json {
+				println('used feature json')
+				core_fns << 'time.unix'
+			}
 		} else {
 			// TODO: this *should not* depend on the used compiler, which is brittle, but only on info in the AST...
 			// hello world apps
