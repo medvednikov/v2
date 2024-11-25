@@ -196,10 +196,9 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			all_fn_root_names << k
 			continue
 		}
-		if mfn.name == 'before_request' {
-			// println('YEP GOT IT')
-			all_fn_root_names << k
-		}
+		// if mfn.name == 'before_request' {
+		// all_fn_root_names << k
+		//}
 
 		// sync:
 		if k == 'sync.new_channel_st' {
@@ -341,7 +340,6 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 	}
 
 	if 'C.cJSON_Parse' in all_fns {
-		// println('GOT JSSS')
 		all_fn_root_names << 'tos5'
 		all_fn_root_names << 'time.unix' // used by json
 		table.used_features.used_maps++ // json needs new_map etc

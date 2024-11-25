@@ -111,13 +111,6 @@ pub fn (mut w Walker) mark_markused_fns() {
 				println('>>>> walking markused func: ${func.name} ...')
 			}
 			w.fn_decl(mut func)
-			if w.pref.is_verbose {
-				println('${func.name} is markused')
-				if func.name == 'new_map' {
-					println('GGGG KEK:')
-					println(w.used_fns['new_map'])
-				}
-			}
 		}
 	}
 }
@@ -248,18 +241,7 @@ pub fn (mut w Walker) stmt(node_ ast.Stmt) {
 		ast.GotoLabel {}
 		ast.GotoStmt {}
 		ast.HashStmt {}
-		ast.Import {
-			/*
-			//println('WALKER IMPORT')
-			if node.mod == 'json' {
-				// TODO doesn't seem to work
-				// json decode_map uses maps
-				println('INC JSON')
-				w.table.used_features.used_maps++
-				// w.table.used_features.json = true
-			}
-			*/
-		}
+		ast.Import {}
 		ast.InterfaceDecl {}
 		ast.SemicolonStmt {}
 		ast.Module {}
@@ -574,12 +556,6 @@ pub fn (mut w Walker) fn_decl(mut node ast.FnDecl) {
 }
 
 pub fn (mut w Walker) call_expr(mut node ast.CallExpr) {
-	/*
-	if node.name.starts_with('json') { // TODO perf do this on json import once
-		w.table.used_features.used_maps++
-		// w.table.used_features.json = true
-	}
-	*/
 	for arg in node.args {
 		w.expr(arg.expr)
 	}

@@ -34,9 +34,9 @@ fn np(path string) string {
 }
 
 fn test_simple() {
-	if true {
-		return
-	}
+	// if true {
+	// return
+	//}
 
 	t1 := np(os.join_path(tfolder, 't1'))
 	t2 := np(os.join_path(tfolder, 't2'))
