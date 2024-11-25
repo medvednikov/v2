@@ -1143,7 +1143,6 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 		}
 	}
 
-	// println('BACKEND=${res.backend}')
 	return res, command
 }
 
