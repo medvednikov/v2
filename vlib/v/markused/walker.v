@@ -95,11 +95,13 @@ pub fn (mut w Walker) mark_root_fns(all_fn_root_names []string) {
 
 pub fn (mut w Walker) mark_veb_actions() {
 	for _, mut func in w.all_fns {
-		// if fn_name !in w.used_fns {
-		$if trace_skip_veb_actions ? {
-			println('>>>> walking veb action func: ${fn_name} ...')
+		if func.return_type == w.table.veb_res_idx_cache {
+			// if fn_name !in w.used_fns {
+			$if trace_skip_veb_actions ? {
+				println('>>>> walking veb action func: ${func.name} ...')
+			}
+			w.fn_decl(mut func)
 		}
-		w.fn_decl(mut func)
 		//}
 	}
 }
