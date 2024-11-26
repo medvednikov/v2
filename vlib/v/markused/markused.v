@@ -9,6 +9,14 @@ import v.pref
 // mark_used walks the AST, starting at main() and marks all used fns transitively
 pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&ast.File) {
 	mut all_fns, all_consts, all_globals := all_fn_const_and_global(ast_files)
+	if pref_.is_verbose {
+		println('LOLOL')
+		println(all_fns.len)
+		for _, f in all_fns {
+			println(f.receiver.name + ': ' + f.name + ' markused:${f.is_markused}')
+		}
+	}
+	println('')
 	util.timing_start(@METHOD)
 	defer {
 		util.timing_measure(@METHOD)
@@ -357,7 +365,12 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 		pref:        pref_
 	)
 	// println( all_fns.keys() )
+
+	println('AND NOW:')
+	// println(all_fns.len)
+	// println(walker.all_fns.len)
 	walker.mark_markused_fns() // tagged with `@[markused]`
+	// walker.mark_markused_methods() // tagged with `@[markused]`
 
 	walker.mark_markused_consts() // tagged with `@[markused]`
 	walker.mark_markused_globals() // tagged with `@[markused]`
