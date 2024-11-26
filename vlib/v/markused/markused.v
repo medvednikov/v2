@@ -16,7 +16,6 @@ pub fn mark_used(mut table ast.Table, mut pref_ pref.Preferences, ast_files []&a
 			println(f.receiver.name + ': ' + f.name + ' markused:${f.is_markused}')
 		}
 	}
-	println('')
 	util.timing_start(@METHOD)
 	defer {
 		util.timing_measure(@METHOD)
