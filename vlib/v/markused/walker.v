@@ -117,39 +117,16 @@ pub fn (mut w Walker) mark_exported_fns() {
 	}
 }
 
-pub fn (mut w Walker) mark_markused_fns() {
+pub fn (mut w Walker) mark_markused_fn_decls() {
 	for _, mut func in w.all_fns {
 		if func.is_markused {
-			//$if trace_skip_unused_markused_fns ? {
-			println('>>>> walking markused func: ${func.name} ...')
-			//}
+			$if trace_skip_unused_markused_fns ? {
+				println('>>>> walking markused func: ${func.name} ...')
+			}
 			w.fn_decl(mut func)
 		}
 	}
 }
-
-/*
-pub fn (mut w Walker) mark_markused_methods() {
-	for mut sym in w.table.type_symbols {
-		if sym.kind != .struct {
-			continue
-		}
-
-		/*
-		info := sym.info as ast.Struct
-		*/
-
-		for _, mut func in sym.methods {
-			if func.is_markused {
-				//$if trace_skip_unused_markused_fns ? {
-				println('>>>> walking markused func: ${func.name} ...')
-				//}
-				w.fn_decl(mut func)
-			}
-		}
-	}
-}
-*/
 
 pub fn (mut w Walker) mark_markused_consts() {
 	for ckey, mut constfield in w.all_consts {
