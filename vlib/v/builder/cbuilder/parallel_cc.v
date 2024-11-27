@@ -10,12 +10,19 @@ fn parallel_cc(mut b builder.Builder, header string, _res string, out_str string
 	c_files := util.nr_jobs
 	println('> c_files: ${c_files} | util.nr_jobs: ${util.nr_jobs}')
 	out_h := header.replace_once('static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
-	os.write_file('out.h', out_h) or { panic(err) }
+	os.write_file('out_str.txt', out_str) or { panic(err) }
+	os.write_file('out_res.txt', _res) or { panic(err) }
 	// Write generated stuff in `g.out` before and after the `out_fn_start_pos` locations,
 	// like the `int main()` to "out_0.c" and "out_x.c"
-	out0 := out_str[..out_fn_start_pos[0]].replace_once('static char * v_typeof_interface_IError',
-		'char * v_typeof_interface_IError')
-	os.write_file('out_0.c', '#include "out.h"\n' + out0) or { panic(err) }
+	x := _res.find_between('// ZULUL1', '// ZULUL2')
+	os.write_file('out_x.txt', x) or { panic(err) }
+	out0 := '//out0\n' +
+		out_str[..out_fn_start_pos[0]].replace_once('static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
+	// out_str[..out0_start].replace_once('static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
+	// os.write_file('out.h', out_h + '\n//out0:\n' + out0) or { panic(err) }
+	os.write_file('out.h', out_h) or { panic(err) }
+	os.write_file('out_0.c', '#include "out.h"\n' + out0 + '\n//X:\n' + x) or { panic(err) }
+	// os.write_file('out_0.c', out0) or { panic(err) }
 	os.write_file('out_x.c', '#include "out.h"\n' + out_str[out_fn_start_pos.last()..]) or {
 		panic(err)
 	}
@@ -41,7 +48,7 @@ fn parallel_cc(mut b builder.Builder, header string, _res string, out_str string
 			continue
 		}
 		fn_text := out_str[prev_fn_pos..fn_pos]
-		out_files[i % c_files].writeln(fn_text + '\n//////////////////////////////////////\n\n') or {
+		out_files[i % c_files].writeln(fn_text + '\n///////////////////////////\n\n') or {
 			panic(err)
 		}
 		prev_fn_pos = fn_pos

@@ -51,7 +51,8 @@ pub struct Gen {
 	module_built        string
 	timers_should_print bool
 mut:
-	out                       strings.Builder
+	out strings.Builder
+	// line_nr                   int
 	cheaders                  strings.Builder
 	preincludes               strings.Builder // allows includes to go before `definitions`
 	includes                  strings.Builder // all C #includes required by V modules
@@ -259,7 +260,8 @@ mut:
 	/////////
 	// out_parallel []strings.Builder
 	// out_idx      int
-	out_fn_start_pos     []int  // for generating multiple .c files, stores locations of all fn positions in `out` string builder
+	out_fn_start_pos     []int // for generating multiple .c files, stores locations of all fn positions in `out` string builder
+	out0_start           int
 	static_modifier      string // for parallel_cc
 	has_reflection       bool   // v.reflection has been imported
 	has_debugger         bool   // $dbg has been used in the code
@@ -620,17 +622,8 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 	if g.channel_definitions.len > 0 {
 		b.write_string2('\n// V channel code:\n', g.channel_definitions.str())
 	}
-	if g.auto_str_funcs.len > 0 {
-		b.write_string2('\n// V auto str functions:\n', g.auto_str_funcs.str())
-	}
 	if g.dump_funcs.len > 0 {
 		b.write_string2('\n// V dump functions:\n', g.dump_funcs.str())
-	}
-	if g.auto_fn_definitions.len > 0 {
-		b.writeln('\n// V auto functions:')
-		for fn_def in g.auto_fn_definitions {
-			b.writeln(fn_def)
-		}
 	}
 	if g.anon_fn_definitions.len > 0 {
 		if g.nr_closures > 0 {
@@ -644,10 +637,23 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 	if g.pref.is_coverage {
 		b.write_string2('\n// V coverage:\n', g.cov_declarations.str())
 	}
-	b.writeln('\n// end of V out')
+	b.writeln('\n// end of V out (header)')
 	mut header := b.last_n(b.len)
 	header = '#ifndef V_HEADER_FILE\n#define V_HEADER_FILE' + header
 	header += '\n#endif\n'
+	g.out0_start = b.len
+	b.writeln('// ZULUL1')
+	if g.auto_str_funcs.len > 0 {
+		b.write_string2('\n// V auto str functions:\n', g.auto_str_funcs.str())
+	}
+	if g.auto_fn_definitions.len > 0 {
+		b.writeln('\n// V auto functions2:')
+		for fn_def in g.auto_fn_definitions {
+			b.writeln(fn_def)
+		}
+		b.writeln('\n// end of V auto functions2:')
+	}
+	b.writeln('// ZULUL2')
 	out_str := g.out.str()
 	b.write_string(out_str)
 	b.writeln('// THE END.')
@@ -989,7 +995,9 @@ pub fn (mut g Gen) get_sumtype_variant_name(typ ast.Type, sym ast.TypeSymbol) st
 }
 
 pub fn (mut g Gen) write_typeof_functions() {
-	g.writeln2('', '// >> typeof() support for sum types / interfaces')
+	println('WRITE TYPEOF FUNCTIONS')
+	g.writeln('')
+	g.writeln('// >> typeof() support for sum types / interfaces')
 	for ityp, sym in g.table.type_symbols {
 		if sym.kind == .sum_type {
 			static_prefix := if g.pref.build_mode == .build_module { 'static ' } else { '' }
@@ -997,7 +1005,8 @@ pub fn (mut g Gen) write_typeof_functions() {
 			if sum_info.is_generic {
 				continue
 			}
-			g.writeln('${static_prefix}char * v_typeof_sumtype_${sym.cname}(int sidx) {')
+			g.writeln('/*C1*/${static_prefix}char * v_typeof_sumtype_${sym.cname}(int sidx) {')
+			g.definitions.writeln('/*C1*/${static_prefix}char * v_typeof_sumtype_${sym.cname}(int);')
 			if g.pref.build_mode == .build_module {
 				g.writeln('\t\tif( sidx == _v_type_idx_${sym.cname}() ) return "${util.strip_main_name(sym.name)}";')
 				for v in sum_info.variants {
@@ -6116,7 +6125,7 @@ fn (mut g Gen) const_decl(node ast.ConstDecl) {
 					val := g.expr_string(field.expr)
 					g.global_const_defs[util.no_dots(field.name)] = GlobalConstDef{
 						mod:       field.mod
-						def:       '${styp} ${const_name} = ${val}; // fixed array const'
+						def:       '${g.static_modifier} ${styp} ${const_name} = ${val}; // fixed array const'
 						dep_names: g.table.dependent_names_in_expr(field_expr)
 					}
 				} else if field.expr.is_fixed && !field.expr.has_index
@@ -6182,7 +6191,7 @@ fn (mut g Gen) const_decl(node ast.ConstDecl) {
 							val := g.expr_string(field.expr.expr)
 							g.global_const_defs[util.no_dots(field.name)] = GlobalConstDef{
 								mod:       field.mod
-								def:       '${styp} ${const_name} = ${val}; // fixed array const'
+								def:       '${g.static_modifier} ${styp} ${const_name} = ${val}; // fixed array const'
 								dep_names: g.table.dependent_names_in_expr(field_expr)
 							}
 							continue
