@@ -2605,6 +2605,9 @@ fn (mut p Parser) is_generic_cast() bool {
 		tok := p.peek_token(i)
 
 		if tok.kind in [.lt, .lsbr] {
+			if tok.kind == .lt {
+				p.warn('`foo<T>` has been deprecated, use `foo[T]` or run `v fmt -w` to switch to the new syntax')
+			}
 			lt_count++
 			level++
 		} else if tok.kind in [.gt, .rsbr] {
@@ -3443,6 +3446,9 @@ fn (mut p Parser) parse_generic_types() ([]ast.Type, []string) {
 		return types, param_names
 	}
 	end_kind := if p.tok.kind == .lt { token.Kind.gt } else { token.Kind.rsbr }
+	if p.tok.kind == .lt {
+		p.warn('`foo<T>` has been deprecated, use `foo[T]` or run `v fmt -w` to switch to the new syntax')
+	}
 	p.next()
 	mut first_done := false
 	mut count := 0
