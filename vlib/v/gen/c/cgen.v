@@ -2470,8 +2470,7 @@ fn (mut g Gen) get_sumtype_casting_fn(got_ ast.Type, exp_ ast.Type) string {
 	}
 	// fn_name := '${got_sym.cname}_to_sumtype_${exp_sym.cname}'
 	sumtype_variant_name := g.get_sumtype_variant_name(got_, got_sym)
-	fn_name := '/*Fhm*/${sumtype_variant_name}_to_sumtype_${cname}'
-	// g.definitions.writeln('/*KEK2*/static inline ${cname} ${fn_name}(${sumtype_variant_name}* x);')
+	fn_name := '${sumtype_variant_name}_to_sumtype_${cname}'
 	if g.pref.experimental && fn_name.contains('v__ast__Struct_to_sumtype_v__ast__TypeInfo') {
 		print_backtrace()
 		eprintln('======\n\n')
@@ -2531,8 +2530,10 @@ fn (mut g Gen) write_sumtype_casting_fn(fun SumtypeCastingFn) {
 		is_anon_fn = true
 	}
 	if !is_anon_fn {
-		g.definitions.writeln('static inline ${exp_cname} ${fun.fn_name}(${got_cname}* x);//OK')
-		sb.writeln('static inline ${exp_cname} ${fun.fn_name}(${got_cname}* x) {')
+		// g.definitions.writeln('${g.static_modifier} inline ${exp_cname} ${fun.fn_name}(${got_cname}* x);//OK')
+		// sb.writeln('${g.static_modifier} inline ${exp_cname} ${fun.fn_name}(${got_cname}* x) {')
+		g.definitions.writeln('${exp_cname} ${fun.fn_name}(${got_cname}* x);//OK')
+		sb.writeln('${exp_cname} ${fun.fn_name}(${got_cname}* x) {')
 		sb.writeln('\t${got_cname}* ptr = memdup(x, sizeof(${got_cname}));')
 	}
 	for embed_hierarchy in g.table.get_embeds(got_sym) {
