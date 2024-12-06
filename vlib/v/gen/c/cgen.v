@@ -622,9 +622,6 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 	if g.channel_definitions.len > 0 {
 		b.write_string2('\n// V channel code:\n', g.channel_definitions.str())
 	}
-	if g.dump_funcs.len > 0 {
-		b.write_string2('\n// V dump functions:\n', g.dump_funcs.str())
-	}
 	if g.anon_fn_definitions.len > 0 {
 		if g.nr_closures > 0 {
 			b.writeln2('\n// V closure helpers', c_closure_helpers(g.pref))
@@ -643,6 +640,9 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 	header += '\n#endif\n'
 	g.out0_start = b.len
 	b.writeln('// ZULUL1')
+	// Code added here (after the header) goes to out_0.c in parallel cc mode
+	// Previously it went to the header which resulted in duplicated code and more code
+	// to compile for the C compiler
 	if g.auto_str_funcs.len > 0 {
 		b.write_string2('\n// V auto str functions:\n', g.auto_str_funcs.str())
 	}
@@ -653,7 +653,12 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 		}
 		b.writeln('\n// end of V auto functions2:')
 	}
+	if g.dump_funcs.len > 0 {
+		b.write_string2('\n// V dump functions2:\n', g.dump_funcs.str())
+	}
+	// End of out_0.c
 	b.writeln('// ZULUL2')
+	// The rest of the output
 	out_str := g.out.str()
 	b.write_string(out_str)
 	b.writeln('// THE END.')
