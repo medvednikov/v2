@@ -2469,10 +2469,13 @@ fn (mut g Gen) get_sumtype_casting_fn(got_ ast.Type, exp_ ast.Type) string {
 		g.get_sumtype_variant_name(exp_, exp_sym)
 	}
 	// fn_name := '${got_sym.cname}_to_sumtype_${exp_sym.cname}'
-	fn_name := '/*Fhm*/${g.get_sumtype_variant_name(got_, got_sym)}_to_sumtype_${cname}'
+	sumtype_variant_name := g.get_sumtype_variant_name(got_, got_sym)
+	fn_name := '/*Fhm*/${sumtype_variant_name}_to_sumtype_${cname}'
+	g.definitions.writeln('/*KEK2*/static inline ${cname} ${fn_name}(${sumtype_variant_name}* x);')
 	if g.pref.is_verbose && fn_name.contains('v__ast__Struct_to_sumtype_v__ast__TypeInfo') {
 		print_backtrace()
 		println('\n\n')
+		exit(0)
 	}
 	if got == exp || g.sumtype_definitions[i] {
 		return fn_name
