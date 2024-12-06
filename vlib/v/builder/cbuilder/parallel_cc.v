@@ -67,7 +67,8 @@ fn parallel_cc(mut b builder.Builder, header string, _res string, out_str string
 	pp.set_max_jobs(nr_threads)
 	pp.work_on_items(o_postfixes)
 	eprintln('> C compilation on ${nr_threads} threads, working on ${o_postfixes.len} files took: ${sw.elapsed().milliseconds()} ms')
-	link_cmd := '${os.quoted_path(cc_compiler)} -o ${os.quoted_path(b.pref.out_name)} out_0.o ${fnames.map(it.replace('.c',
+	// cc := os.quoted_path(cc_compiler)
+	link_cmd := '${cc} -o ${os.quoted_path(b.pref.out_name)} out_0.o ${fnames.map(it.replace('.c',
 		'.o')).join(' ')} out_x.o -lpthread ${cc_ldflags}'
 	sw_link := time.new_stopwatch()
 	link_res := os.execute(link_cmd)
@@ -77,7 +78,8 @@ fn parallel_cc(mut b builder.Builder, header string, _res string, out_str string
 fn build_parallel_o_cb(mut p pool.PoolProcessor, idx int, _wid int) voidptr {
 	postfix := p.get_item[string](idx)
 	sw := time.new_stopwatch()
-	cmd := '${os.quoted_path(cc_compiler)} ${cc_cflags} -O2 -c -w -o out_${postfix}.o out_${postfix}.c'
+	// cc := os.quoted_path(cc_compiler)
+	cmd := '${cc} ${cc_cflags} -O2 -c -w -o out_${postfix}.o out_${postfix}.c'
 	res := os.execute(cmd)
 	eprint_time('c cmd2', cmd, res, sw)
 	return unsafe { nil }
@@ -90,6 +92,8 @@ fn eprint_time(label string, cmd string, res os.Result, sw time.StopWatch) {
 	}
 }
 
+// const cc = '/Users/work5/code/v/thirdparty/tcc/tcc.exe'
+const cc = os.quoted_path(cc_compiler)
 const cc_compiler = os.getenv_opt('CC') or { 'cc' }
 
 const cc_ldflags = os.getenv_opt('LDFLAGS') or { '' }
