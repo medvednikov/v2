@@ -626,10 +626,12 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 		if g.nr_closures > 0 {
 			b.writeln2('\n// V closure helpers', c_closure_helpers(g.pref))
 		}
+		/*
 		b.writeln('\n// V anon functions:')
 		for fn_def in g.anon_fn_definitions {
 			b.writeln(fn_def)
 		}
+		*/
 	}
 	if g.pref.is_coverage {
 		b.write_string2('\n// V coverage:\n', g.cov_declarations.str())
@@ -655,6 +657,12 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) (str
 	}
 	if g.dump_funcs.len > 0 {
 		b.write_string2('\n// V dump functions2:\n', g.dump_funcs.str())
+	}
+	if g.anon_fn_definitions.len > 0 {
+		b.writeln('\n// V anon functions:')
+		for fn_def in g.anon_fn_definitions {
+			b.writeln(fn_def)
+		}
 	}
 	// End of out_0.c
 	b.writeln('// ZULUL2')
