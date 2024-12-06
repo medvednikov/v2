@@ -681,19 +681,19 @@ fn (mut g Gen) gen_anon_fn_decl(mut node ast.AnonFn) {
 		ctx_struct := g.closure_ctx(node.decl)
 		if ctx_struct !in g.closure_structs {
 			g.closure_structs << ctx_struct
-			builder.writeln('${ctx_struct} {')
+			g.definitions.writeln('/*HALLO*/${ctx_struct} {')
 			for var in node.inherited_vars {
 				var_sym := g.table.sym(var.typ)
 				if var_sym.info is ast.FnType {
 					sig := g.fn_var_signature(var_sym.info.func.return_type, var_sym.info.func.params.map(it.typ),
 						c_name(var.name))
-					builder.writeln('\t' + sig + ';')
+					g.definitions.writeln('\t' + sig + ';')
 				} else {
 					styp := g.styp(var.typ)
-					builder.writeln('\t${styp} ${c_name(var.name)};')
+					g.definitions.writeln('\t${styp} ${c_name(var.name)};')
 				}
 			}
-			builder.writeln('};\n')
+			g.definitions.writeln('};\n')
 		}
 	}
 	pos := g.out.len
