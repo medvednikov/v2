@@ -2471,11 +2471,11 @@ fn (mut g Gen) get_sumtype_casting_fn(got_ ast.Type, exp_ ast.Type) string {
 	// fn_name := '${got_sym.cname}_to_sumtype_${exp_sym.cname}'
 	sumtype_variant_name := g.get_sumtype_variant_name(got_, got_sym)
 	fn_name := '/*Fhm*/${sumtype_variant_name}_to_sumtype_${cname}'
-	g.definitions.writeln('/*KEK2*/static inline ${cname} ${fn_name}(${sumtype_variant_name}* x);')
-	if g.pref.is_verbose && fn_name.contains('v__ast__Struct_to_sumtype_v__ast__TypeInfo') {
+	// g.definitions.writeln('/*KEK2*/static inline ${cname} ${fn_name}(${sumtype_variant_name}* x);')
+	if g.pref.experimental && fn_name.contains('v__ast__Struct_to_sumtype_v__ast__TypeInfo') {
 		print_backtrace()
-		println('\n\n')
-		exit(0)
+		eprintln('======\n\n')
+		// exit(0)
 	}
 	if got == exp || g.sumtype_definitions[i] {
 		return fn_name
@@ -2485,7 +2485,7 @@ fn (mut g Gen) get_sumtype_casting_fn(got_ ast.Type, exp_ ast.Type) string {
 	}
 	g.sumtype_definitions[i] = true
 	g.sumtype_casting_fns << SumtypeCastingFn{
-		fn_name: fn_name
+		fn_name: fn_name + '/*ISEE*/'
 		got:     if got_.has_flag(.option) {
 			new_got := ast.idx_to_type(got_sym.idx).set_flag(.option)
 			new_got
