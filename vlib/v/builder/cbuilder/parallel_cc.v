@@ -7,7 +7,7 @@ import v.builder
 import sync.pool
 
 fn parallel_cc(mut b builder.Builder, header string, _res string, out_str string, out_fn_start_pos []int) {
-	c_files := util.nr_jobs
+	c_files := util.nr_jobs - 1
 	println('> c_files: ${c_files} | util.nr_jobs: ${util.nr_jobs}')
 	out_h := header.replace_once('static char * v_typeof_interface_IError', 'char * v_typeof_interface_IError')
 	os.write_file('out_str.txt', out_str) or { panic(err) }
@@ -63,10 +63,10 @@ fn parallel_cc(mut b builder.Builder, header string, _res string, out_str string
 		o_postfixes << (i + 1).str()
 	}
 	mut pp := pool.new_pool_processor(callback: build_parallel_o_cb)
-	nthreads := c_files + 2
-	pp.set_max_jobs(nthreads)
+	nr_threads := c_files + 2
+	pp.set_max_jobs(nr_threads)
 	pp.work_on_items(o_postfixes)
-	eprintln('> C compilation on ${nthreads} threads, working on ${o_postfixes.len} files took: ${sw.elapsed().milliseconds()} ms')
+	eprintln('> C compilation on ${nr_threads} threads, working on ${o_postfixes.len} files took: ${sw.elapsed().milliseconds()} ms')
 	link_cmd := '${os.quoted_path(cc_compiler)} -o ${os.quoted_path(b.pref.out_name)} out_0.o ${fnames.map(it.replace('.c',
 		'.o')).join(' ')} out_x.o -lpthread ${cc_ldflags}'
 	sw_link := time.new_stopwatch()
