@@ -2469,7 +2469,11 @@ fn (mut g Gen) get_sumtype_casting_fn(got_ ast.Type, exp_ ast.Type) string {
 		g.get_sumtype_variant_name(exp_, exp_sym)
 	}
 	// fn_name := '${got_sym.cname}_to_sumtype_${exp_sym.cname}'
-	fn_name := '${g.get_sumtype_variant_name(got_, got_sym)}_to_sumtype_${cname}'
+	fn_name := '/*Fhm*/${g.get_sumtype_variant_name(got_, got_sym)}_to_sumtype_${cname}'
+	if g.pref.is_verbose && fn_name.contains('v__ast__Struct_to_sumtype_v__ast__TypeInfo') {
+		print_backtrace()
+		println('\n\n')
+	}
 	if got == exp || g.sumtype_definitions[i] {
 		return fn_name
 	}
@@ -2755,7 +2759,8 @@ fn (mut g Gen) expr_with_cast(expr ast.Expr, got_type_raw ast.Type, expected_typ
 					unwrapped_got_sym = g.table.sym(unwrapped_got_type)
 				}
 
-				fname := g.get_sumtype_casting_fn(unwrapped_got_type, unwrapped_expected_type)
+				fname := g.get_sumtype_casting_fn(unwrapped_got_type, unwrapped_expected_type) +
+					'/*Q*/'
 
 				if expr is ast.ArrayInit && got_sym.kind == .array_fixed {
 					stmt_str := g.go_before_last_stmt().trim_space()
@@ -3136,7 +3141,7 @@ fn (mut g Gen) gen_clone_assignment(var_type ast.Type, val ast.Expr, typ ast.Typ
 			is_sumtype := g.table.type_kind(var_type) == .sum_type
 			if is_sumtype {
 				variant_typ := g.styp(typ).replace('*', '')
-				fn_name := g.get_sumtype_casting_fn(typ, var_type)
+				fn_name := g.get_sumtype_casting_fn(typ, var_type) + '/*L*/'
 				g.write('${fn_name}(ADDR(${variant_typ}, array_clone_static_to_depth(')
 				if typ.is_ptr() {
 					g.write('*')
