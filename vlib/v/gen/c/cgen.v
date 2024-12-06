@@ -2531,6 +2531,7 @@ fn (mut g Gen) write_sumtype_casting_fn(fun SumtypeCastingFn) {
 		is_anon_fn = true
 	}
 	if !is_anon_fn {
+		g.definitions.writeln('static inline ${exp_cname} ${fun.fn_name}(${got_cname}* x);//OK')
 		sb.writeln('static inline ${exp_cname} ${fun.fn_name}(${got_cname}* x) {')
 		sb.writeln('\t${got_cname}* ptr = memdup(x, sizeof(${got_cname}));')
 	}
