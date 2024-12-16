@@ -570,6 +570,7 @@ fn (mut v Builder) setup_output_name() {
 		verror("'${v.pref.out_name}' is a directory")
 	}
 	v.ccoptions.o_args << '-o "${v.pref.out_name}"'
+	println('O ARGS=${v.ccoptions.o_args}')
 }
 
 pub fn (mut v Builder) cc() {
@@ -682,6 +683,13 @@ pub fn (mut v Builder) cc() {
 			all_args.join(' ')
 		}
 		mut cmd := '${v.quote_compiler_name(ccompiler)} ${str_args}'
+		println('!!!str args=${str_args}')
+		if v.pref.parallel_cc {
+			// In parallel cc mode, all we want in cc() is build the str_args.
+			// Actual cc logic then happens in `parallel_cc()`
+			v.str_args = str_args
+			return
+		}
 		mut response_file := ''
 		mut response_file_content := str_args
 		if !v.pref.no_rsp {
