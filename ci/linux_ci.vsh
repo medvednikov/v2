@@ -10,7 +10,6 @@
 //     v run ci/linux_ci.vsh build_v_tcc
 //
 // That way, the CI workflow can invoke particular tasks as needed.
-
 import common { Task, exec }
 
 //
@@ -25,7 +24,7 @@ fn all_code_is_formatted() {
 }
 
 fn verify_v_test_works() {
-	exec('echo $VFLAGS')
+	exec('echo \$VFLAGS')
 	exec('v cmd/tools/test_if_v_test_system_works.v')
 	exec('./cmd/tools/test_if_v_test_system_works')
 }
@@ -39,6 +38,7 @@ fn self_tests() {
 		exec('VJOBS=1 v test-self vlib')
 	} else {
 		exec('v -progress test-self vlib')
+	}
 }
 
 fn test_vlib_skip_unused() {
@@ -75,6 +75,7 @@ fn install_dependencies_for_examples_and_tools_tcc() {
 	exec('v retry -- sudo apt update')
 	exec('v retry -- sudo apt install --quiet -y libssl-dev sqlite3 libsqlite3-dev valgrind')
 	exec('v retry -- sudo apt install --quiet -y libfreetype6-dev libxi-dev libxcursor-dev libgl-dev libasound2-dev')
+	// The following is needed for examples/wkhtmltopdf.v
 	exec('v retry -- wget https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.focal_amd64.deb')
 	exec('v retry -- sudo apt install --quiet -y xfonts-75dpi xfonts-base')
 	exec('v retry -- sudo apt install --quiet -y expect')
@@ -393,83 +394,79 @@ fn native_machine_code_generation_clang() {
 	exec('cd cmd/tools && ../../vprod -backend native -o 1m 1m.v && ./1m && ls')
 }
 
-
 //
 // Collect all tasks
 //
 const all_tasks = {
 	// tcc tasks
-	'build_v_tcc':                            Task{build_v_tcc, 'Build V with tcc'}
-	'build_v_with_prealloc':                  Task{build_v_with_prealloc, 'Build V with prealloc'}
-	'all_code_is_formatted_tcc':              Task{all_code_is_formatted, 'All code is formatted (tcc)'}
-	'install_dependencies_for_examples_and_tools_tcc': Task{install_dependencies_for_examples_and_tools_tcc, 'Install deps for examples/tools (tcc)'}
-	'test_v_to_c_tcc':                        Task{test_v_to_c_tcc, 'Test v->c with tcc'}
-	'v_self_compilation_tcc':                 Task{v_self_compilation_tcc, 'V self compilation (tcc)'}
-	'v_self_compilation_skip_unused_tcc':     Task{v_self_compilation_skip_unused_tcc, 'V self compilation with -skip-unused (tcc)'}
-	'test_vlib_skip_unused_tcc':              Task{test_vlib_skip_unused_tcc, 'Test vlib modules with -skip-unused (tcc)'}
-	'v_doctor_tcc':                           Task{v_doctor_tcc, 'v doctor (tcc)'}
-	'verify_v_test_works_tcc':                Task{verify_v_test_works_tcc, 'Verify `v test` works (tcc)'}
-	'test_pure_v_math_module_tcc':            Task{test_pure_v_math_module_tcc, 'Test pure V math module (tcc)'}
-	'self_tests_tcc':                         Task{self_tests_tcc, 'Self tests (tcc)'}
-	'build_examples_tcc':                     Task{build_examples_tcc, 'Build examples (tcc)'}
-	'run_submodule_example_tcc':              Task{run_submodule_example_tcc, 'Run submodule example (tcc)'}
-	'build_tools_tcc':                        Task{build_tools_tcc, 'Build V tools (tcc)'}
-	'build_vbinaries_tcc':                    Task{build_vbinaries_tcc, 'Build V binaries (tcc)'}
-	'build_benches_tcc':                      Task{build_benches_tcc, 'Build benches (tcc)'}
-	'run_vsh_script_tcc':                     Task{run_vsh_script_tcc, 'Run a VSH script (tcc)'}
-	'test_v_tutorials_tcc':                   Task{test_v_tutorials_tcc, 'Test V tutorials (tcc)'}
-	'build_fast_tcc':                         Task{build_fast_tcc, 'Build cmd/tools/fast (tcc)'}
-	'v_self_compilation_usecache_tcc':        Task{v_self_compilation_usecache_tcc, 'V self compilation with -usecache (tcc)'}
-	'test_password_input_tcc':                Task{test_password_input_tcc, 'Test password input (tcc)'}
-	'test_readline_tcc':                      Task{test_readline_tcc, 'Test readline (tcc)'}
-	'test_leak_detector_tcc':                 Task{test_leak_detector_tcc, 'Test leak detector (tcc)'}
-	'test_leak_detector_not_active_tcc':      Task{test_leak_detector_not_active_tcc, 'Test leak detector not active (tcc)'}
-
+	'build_v_tcc':                                       Task{build_v_tcc, 'Build V with tcc'}
+	'build_v_with_prealloc':                             Task{build_v_with_prealloc, 'Build V with prealloc'}
+	'all_code_is_formatted_tcc':                         Task{all_code_is_formatted, 'All code is formatted (tcc)'}
+	'install_dependencies_for_examples_and_tools_tcc':   Task{install_dependencies_for_examples_and_tools_tcc, 'Install deps for examples/tools (tcc)'}
+	'test_v_to_c_tcc':                                   Task{test_v_to_c_tcc, 'Test v->c with tcc'}
+	'v_self_compilation_tcc':                            Task{v_self_compilation_tcc, 'V self compilation (tcc)'}
+	'v_self_compilation_skip_unused_tcc':                Task{v_self_compilation_skip_unused_tcc, 'V self compilation with -skip-unused (tcc)'}
+	'test_vlib_skip_unused_tcc':                         Task{test_vlib_skip_unused_tcc, 'Test vlib modules with -skip-unused (tcc)'}
+	'v_doctor_tcc':                                      Task{v_doctor_tcc, 'v doctor (tcc)'}
+	'verify_v_test_works_tcc':                           Task{verify_v_test_works_tcc, 'Verify `v test` works (tcc)'}
+	'test_pure_v_math_module_tcc':                       Task{test_pure_v_math_module_tcc, 'Test pure V math module (tcc)'}
+	'self_tests_tcc':                                    Task{self_tests_tcc, 'Self tests (tcc)'}
+	'build_examples_tcc':                                Task{build_examples_tcc, 'Build examples (tcc)'}
+	'run_submodule_example_tcc':                         Task{run_submodule_example_tcc, 'Run submodule example (tcc)'}
+	'build_tools_tcc':                                   Task{build_tools_tcc, 'Build V tools (tcc)'}
+	'build_vbinaries_tcc':                               Task{build_vbinaries_tcc, 'Build V binaries (tcc)'}
+	'build_benches_tcc':                                 Task{build_benches_tcc, 'Build benches (tcc)'}
+	'run_vsh_script_tcc':                                Task{run_vsh_script_tcc, 'Run a VSH script (tcc)'}
+	'test_v_tutorials_tcc':                              Task{test_v_tutorials_tcc, 'Test V tutorials (tcc)'}
+	'build_fast_tcc':                                    Task{build_fast_tcc, 'Build cmd/tools/fast (tcc)'}
+	'v_self_compilation_usecache_tcc':                   Task{v_self_compilation_usecache_tcc, 'V self compilation with -usecache (tcc)'}
+	'test_password_input_tcc':                           Task{test_password_input_tcc, 'Test password input (tcc)'}
+	'test_readline_tcc':                                 Task{test_readline_tcc, 'Test readline (tcc)'}
+	'test_leak_detector_tcc':                            Task{test_leak_detector_tcc, 'Test leak detector (tcc)'}
+	'test_leak_detector_not_active_tcc':                 Task{test_leak_detector_not_active_tcc, 'Test leak detector not active (tcc)'}
 	// gcc tasks
-	'build_v_gcc':                            Task{build_v_gcc, 'Build V with gcc'}
-	'all_code_is_formatted_gcc':              Task{all_code_is_formatted_gcc, 'All code is formatted (gcc)'}
-	'install_dependencies_for_examples_and_tools_gcc': Task{install_dependencies_for_examples_and_tools_gcc, 'Install deps for examples/tools (gcc)'}
-	'recompile_v_with_cstrict_gcc':           Task{recompile_v_with_cstrict_gcc, 'Recompile V with -cstrict and gcc'}
-	'valgrind_v_c_gcc':                       Task{valgrind_v_c_gcc, 'Valgrind v.c (gcc)'}
-	'run_sanitizers_gcc':                     Task{run_sanitizers_gcc, 'Run sanitizers (gcc)'}
-	'v_self_compilation_gcc':                 Task{v_self_compilation_gcc, 'V self compilation (gcc)'}
-	'v_self_compilation_usecache_gcc':        Task{v_self_compilation_usecache_gcc, 'V self compilation with -usecache (gcc)'}
-	'verify_v_test_works_gcc':                Task{verify_v_test_works_gcc, 'Verify `v test` works (gcc)'}
-	'test_pure_v_math_module_gcc':            Task{test_pure_v_math_module_gcc, 'Test pure V math module (gcc)'}
-	'self_tests_gcc':                         Task{self_tests_gcc, 'Self tests (gcc)'}
-	'self_tests_prod_gcc':                    Task{self_tests_prod_gcc, 'Self tests (-prod) (gcc)'}
-	'self_tests_cstrict_gcc':                 Task{self_tests_cstrict_gcc, 'Self tests (-cstrict) (gcc)'}
-	'build_examples_gcc':                     Task{build_examples_gcc, 'Build examples (gcc)'}
-	'build_tetris_autofree_gcc':              Task{build_tetris_autofree_gcc, 'Build tetris with -autofree (gcc)'}
-	'build_blog_autofree_gcc':                Task{build_blog_autofree_gcc, 'Build blog tutorial with -autofree (gcc)'}
-	'build_option_test_autofree_gcc':         Task{build_option_test_autofree_gcc, 'Build option_test.c.v with -autofree (gcc)'}
-	'v_self_compilation_parallel_cc_gcc':     Task{v_self_compilation_parallel_cc_gcc, 'V self compilation with -parallel-cc (gcc)'}
-	'test_vlib_skip_unused_gcc':              Task{test_vlib_skip_unused_gcc, 'Test vlib modules with -skip-unused (gcc)'}
-	'build_modules_gcc':                      Task{build_modules_gcc, 'Build modules (gcc)'}
-	'native_machine_code_generation_gcc':     Task{native_machine_code_generation_gcc, 'native machine code generation (gcc)'}
-	'compile_vdoctor_skip_unused_prod_gcc':   Task{compile_vdoctor_skip_unused_prod_gcc, 'compile vdoctor with -skip-unused -prod (gcc)'}
-	'compile_vup_skip_unused_prod_gcc':       Task{compile_vup_skip_unused_prod_gcc, 'compile vup with -skip-unused -prod (gcc)'}
-
+	'build_v_gcc':                                       Task{build_v_gcc, 'Build V with gcc'}
+	'all_code_is_formatted_gcc':                         Task{all_code_is_formatted_gcc, 'All code is formatted (gcc)'}
+	'install_dependencies_for_examples_and_tools_gcc':   Task{install_dependencies_for_examples_and_tools_gcc, 'Install deps for examples/tools (gcc)'}
+	'recompile_v_with_cstrict_gcc':                      Task{recompile_v_with_cstrict_gcc, 'Recompile V with -cstrict and gcc'}
+	'valgrind_v_c_gcc':                                  Task{valgrind_v_c_gcc, 'Valgrind v.c (gcc)'}
+	'run_sanitizers_gcc':                                Task{run_sanitizers_gcc, 'Run sanitizers (gcc)'}
+	'v_self_compilation_gcc':                            Task{v_self_compilation_gcc, 'V self compilation (gcc)'}
+	'v_self_compilation_usecache_gcc':                   Task{v_self_compilation_usecache_gcc, 'V self compilation with -usecache (gcc)'}
+	'verify_v_test_works_gcc':                           Task{verify_v_test_works_gcc, 'Verify `v test` works (gcc)'}
+	'test_pure_v_math_module_gcc':                       Task{test_pure_v_math_module_gcc, 'Test pure V math module (gcc)'}
+	'self_tests_gcc':                                    Task{self_tests_gcc, 'Self tests (gcc)'}
+	'self_tests_prod_gcc':                               Task{self_tests_prod_gcc, 'Self tests (-prod) (gcc)'}
+	'self_tests_cstrict_gcc':                            Task{self_tests_cstrict_gcc, 'Self tests (-cstrict) (gcc)'}
+	'build_examples_gcc':                                Task{build_examples_gcc, 'Build examples (gcc)'}
+	'build_tetris_autofree_gcc':                         Task{build_tetris_autofree_gcc, 'Build tetris with -autofree (gcc)'}
+	'build_blog_autofree_gcc':                           Task{build_blog_autofree_gcc, 'Build blog tutorial with -autofree (gcc)'}
+	'build_option_test_autofree_gcc':                    Task{build_option_test_autofree_gcc, 'Build option_test.c.v with -autofree (gcc)'}
+	'v_self_compilation_parallel_cc_gcc':                Task{v_self_compilation_parallel_cc_gcc, 'V self compilation with -parallel-cc (gcc)'}
+	'test_vlib_skip_unused_gcc':                         Task{test_vlib_skip_unused_gcc, 'Test vlib modules with -skip-unused (gcc)'}
+	'build_modules_gcc':                                 Task{build_modules_gcc, 'Build modules (gcc)'}
+	'native_machine_code_generation_gcc':                Task{native_machine_code_generation_gcc, 'native machine code generation (gcc)'}
+	'compile_vdoctor_skip_unused_prod_gcc':              Task{compile_vdoctor_skip_unused_prod_gcc, 'compile vdoctor with -skip-unused -prod (gcc)'}
+	'compile_vup_skip_unused_prod_gcc':                  Task{compile_vup_skip_unused_prod_gcc, 'compile vup with -skip-unused -prod (gcc)'}
 	// clang tasks
-	'build_v_clang':                          Task{build_v_clang, 'Build V with clang'}
-	'all_code_is_formatted_clang':            Task{all_code_is_formatted_clang, 'All code is formatted (clang)'}
+	'build_v_clang':                                     Task{build_v_clang, 'Build V with clang'}
+	'all_code_is_formatted_clang':                       Task{all_code_is_formatted_clang, 'All code is formatted (clang)'}
 	'install_dependencies_for_examples_and_tools_clang': Task{install_dependencies_for_examples_and_tools_clang, 'Install deps for examples/tools (clang)'}
-	'recompile_v_with_cstrict_clang':         Task{recompile_v_with_cstrict_clang, 'Recompile V with -cstrict and clang'}
-	'valgrind_clang':                         Task{valgrind_clang, 'Valgrind (clang)'}
-	'run_sanitizers_clang':                   Task{run_sanitizers_clang, 'Run sanitizers (clang)'}
-	'v_self_compilation_clang':               Task{v_self_compilation_clang, 'V self compilation (clang)'}
-	'v_self_compilation_usecache_clang':      Task{v_self_compilation_usecache_clang, 'V self compilation with -usecache (clang)'}
-	'verify_v_test_works_clang':              Task{verify_v_test_works_clang, 'Verify `v test` works (clang)'}
-	'test_pure_v_math_module_clang':          Task{test_pure_v_math_module_clang, 'Test pure V math module (clang)'}
-	'self_tests_clang':                       Task{self_tests_clang, 'Self tests (clang)'}
-	'self_tests_vprod_clang':                 Task{self_tests_vprod_clang, 'Self tests (vprod) (clang)'}
-	'self_tests_cstrict_clang':               Task{self_tests_cstrict_clang, 'Self tests (-cstrict) (clang)'}
-	'build_examples_clang':                   Task{build_examples_clang, 'Build examples (clang)'}
-	'build_examples_autofree_clang':          Task{build_examples_autofree_clang, 'Build examples with -autofree (clang)'}
-	'test_vlib_skip_unused_clang':            Task{test_vlib_skip_unused_clang, 'Test vlib modules with -skip-unused (clang)'}
-	'build_modules_clang':                    Task{build_modules_clang, 'Build modules (clang)'}
-	'native_machine_code_generation_clang':   Task{native_machine_code_generation_clang, 'native machine code generation (clang)'}
+	'recompile_v_with_cstrict_clang':                    Task{recompile_v_with_cstrict_clang, 'Recompile V with -cstrict and clang'}
+	'valgrind_clang':                                    Task{valgrind_clang, 'Valgrind (clang)'}
+	'run_sanitizers_clang':                              Task{run_sanitizers_clang, 'Run sanitizers (clang)'}
+	'v_self_compilation_clang':                          Task{v_self_compilation_clang, 'V self compilation (clang)'}
+	'v_self_compilation_usecache_clang':                 Task{v_self_compilation_usecache_clang, 'V self compilation with -usecache (clang)'}
+	'verify_v_test_works_clang':                         Task{verify_v_test_works_clang, 'Verify `v test` works (clang)'}
+	'test_pure_v_math_module_clang':                     Task{test_pure_v_math_module_clang, 'Test pure V math module (clang)'}
+	'self_tests_clang':                                  Task{self_tests_clang, 'Self tests (clang)'}
+	'self_tests_vprod_clang':                            Task{self_tests_vprod_clang, 'Self tests (vprod) (clang)'}
+	'self_tests_cstrict_clang':                          Task{self_tests_cstrict_clang, 'Self tests (-cstrict) (clang)'}
+	'build_examples_clang':                              Task{build_examples_clang, 'Build examples (clang)'}
+	'build_examples_autofree_clang':                     Task{build_examples_autofree_clang, 'Build examples with -autofree (clang)'}
+	'test_vlib_skip_unused_clang':                       Task{test_vlib_skip_unused_clang, 'Test vlib modules with -skip-unused (clang)'}
+	'build_modules_clang':                               Task{build_modules_clang, 'Build modules (clang)'}
+	'native_machine_code_generation_clang':              Task{native_machine_code_generation_clang, 'native machine code generation (clang)'}
 }
 
 common.run(all_tasks)
-
