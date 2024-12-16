@@ -13,8 +13,6 @@ const cc_ldflags = os.getenv_opt('LDFLAGS') or { '' }
 const cc_cflags = os.getenv_opt('CFLAGS') or { '' }
 const cc_cflags_opt = os.getenv_opt('CFLAGS_OPT') or { '' } // '-O3' }
 
-__global g_builder &builder.Builder
-
 fn parallel_cc(mut b builder.Builder, result c.GenOutput) {
 	sw_total := time.new_stopwatch()
 	defer {
@@ -81,10 +79,7 @@ fn parallel_cc(mut b builder.Builder, result c.GenOutput) {
 		cmds << '${cc} ${cc_cflags} ${cc_cflags_opt} ${b.str_args} -c -w -o out_${postfix}.o out_${postfix}.c'
 	}
 	sw := time.new_stopwatch()
-	println('OP ${b.str_args}')
-	unsafe {
-		g_builder = b
-	}
+	// println('OP ${b.str_args}')
 	mut pp := pool.new_pool_processor(callback: build_parallel_o_cb)
 	pp.set_max_jobs(util.nr_jobs)
 	pp.work_on_items(cmds)
@@ -99,7 +94,7 @@ fn parallel_cc(mut b builder.Builder, result c.GenOutput) {
 }
 
 fn build_parallel_o_cb(mut p pool.PoolProcessor, idx int, _wid int) voidptr {
-	eprintln('par: ${g_builder.str_args}')
+	// eprintln('par: ${g_builder.str_args}')
 	cmd := p.get_item[string](idx)
 	sw := time.new_stopwatch()
 	res := os.execute(cmd)
