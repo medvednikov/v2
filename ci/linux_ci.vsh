@@ -164,10 +164,6 @@ fn test_leak_detector_not_active_tcc() {
 // GCC job tasks
 //
 
-fn build_v_gcc() {
-	exec('make -j4 && ./v symlink')
-}
-
 fn all_code_is_formatted_gcc() {
 	all_code_is_formatted()
 }
@@ -283,10 +279,6 @@ fn compile_vup_skip_unused_prod_gcc() {
 //
 // Clang job tasks
 //
-
-fn build_v_clang() {
-	exec('make -j4 && ./v symlink')
-}
 
 fn all_code_is_formatted_clang() {
 	all_code_is_formatted()
