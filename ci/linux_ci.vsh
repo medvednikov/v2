@@ -49,10 +49,6 @@ fn v_doctor() {
 // TCC job tasks
 //
 
-fn build_v_tcc() {
-	exec('make -j4 && ./v symlink')
-}
-
 fn build_v_with_prealloc() {
 	exec('v -d debug_malloc -d debug_realloc -o v cmd/v')
 	exec('v -cg -cstrict -o v cmd/v')
@@ -387,7 +383,6 @@ fn native_machine_code_generation_clang() {
 //
 const all_tasks = {
 	// tcc tasks
-	'build_v_tcc':                                       Task{build_v_tcc, 'Build V with tcc'}
 	'build_v_with_prealloc':                             Task{build_v_with_prealloc, 'Build V with prealloc'}
 	'all_code_is_formatted_tcc':                         Task{all_code_is_formatted, 'All code is formatted (tcc)'}
 	'install_dependencies_for_examples_and_tools_tcc':   Task{install_dependencies_for_examples_and_tools_tcc, 'Install deps for examples/tools (tcc)'}

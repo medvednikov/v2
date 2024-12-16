@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build v
-        run: v run ci/linux_ci.vsh build_v_tcc
+        run: make -j4 && ./v symlink
       - name: Build v with -prealloc
         run: v run ci/linux_ci.vsh build_v_with_prealloc
       - name: All code is formatted
