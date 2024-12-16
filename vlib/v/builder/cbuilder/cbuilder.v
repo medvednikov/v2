@@ -47,9 +47,9 @@ You can also seek #help on Discord: https://discord.gg/vlang
 		out_name_c = b.get_vtmp_filename(b.pref.out_name, '.tmp.so.c')
 	}
 	build_c(mut b, files, out_name_c)
-	// if !b.pref.parallel_cc {
-	b.cc()
-	//}
+	if !b.pref.parallel_cc {
+		b.cc()
+	}
 }
 
 pub fn build_c(mut b builder.Builder, v_files []string, out_file string) {
@@ -80,6 +80,7 @@ pub fn gen_c(mut b builder.Builder, v_files []string) string {
 	util.timing_measure('C GEN')
 
 	if b.pref.parallel_cc {
+		b.cc() // Call it just to gen b.str_args
 		util.timing_start('Parallel C compilation')
 		parallel_cc(mut b, result)
 		util.timing_measure('Parallel C compilation')
