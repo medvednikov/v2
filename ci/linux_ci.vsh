@@ -1,15 +1,3 @@
-// linux_ci.vsh
-//
-// This script replicates the same logic used in macos_ci.vsh, adapted for the Linux CI workflow.
-// It defines a set of tasks, each corresponding to a step or a group of steps from linux_ci.yml.
-// You can run an individual task by executing:
-//
-//     v run ci/linux_ci.vsh <task_name>
-//
-// For example:
-//     v run ci/linux_ci.vsh build_v_tcc
-//
-// That way, the CI workflow can invoke particular tasks as needed.
 import common { Task, exec }
 
 //
