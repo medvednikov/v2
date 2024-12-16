@@ -400,7 +400,6 @@ const all_tasks = {
 	'test_leak_detector_tcc':                            Task{test_leak_detector_tcc, 'Test leak detector (tcc)'}
 	'test_leak_detector_not_active_tcc':                 Task{test_leak_detector_not_active_tcc, 'Test leak detector not active (tcc)'}
 	// gcc tasks
-	'build_v_gcc':                                       Task{build_v_gcc, 'Build V with gcc'}
 	'all_code_is_formatted_gcc':                         Task{all_code_is_formatted_gcc, 'All code is formatted (gcc)'}
 	'install_dependencies_for_examples_and_tools_gcc':   Task{install_dependencies_for_examples_and_tools_gcc, 'Install deps for examples/tools (gcc)'}
 	'recompile_v_with_cstrict_gcc':                      Task{recompile_v_with_cstrict_gcc, 'Recompile V with -cstrict and gcc'}
@@ -424,7 +423,6 @@ const all_tasks = {
 	'compile_vdoctor_skip_unused_prod_gcc':              Task{compile_vdoctor_skip_unused_prod_gcc, 'compile vdoctor with -skip-unused -prod (gcc)'}
 	'compile_vup_skip_unused_prod_gcc':                  Task{compile_vup_skip_unused_prod_gcc, 'compile vup with -skip-unused -prod (gcc)'}
 	// clang tasks
-	'build_v_clang':                                     Task{build_v_clang, 'Build V with clang'}
 	'all_code_is_formatted_clang':                       Task{all_code_is_formatted_clang, 'All code is formatted (clang)'}
 	'install_dependencies_for_examples_and_tools_clang': Task{install_dependencies_for_examples_and_tools_clang, 'Install deps for examples/tools (clang)'}
 	'recompile_v_with_cstrict_clang':                    Task{recompile_v_with_cstrict_clang, 'Recompile V with -cstrict and clang'}
