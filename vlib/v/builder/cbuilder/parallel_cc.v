@@ -11,7 +11,7 @@ const cc_compiler = os.getenv_opt('CC') or { 'cc' }
 const cc = os.quoted_path(cc_compiler)
 const cc_ldflags = os.getenv_opt('LDFLAGS') or { '' }
 const cc_cflags = os.getenv_opt('CFLAGS') or { '' }
-const cc_cflags_opt = os.getenv_opt('CFLAGS_OPT') or { '-O3' }
+const cc_cflags_opt = os.getenv_opt('CFLAGS_OPT') or { '' } // '-O3' }
 
 __global g_builder &builder.Builder
 
