@@ -365,7 +365,9 @@ fn (mut v Builder) setup_ccompiler_options(ccompiler string) {
 		}
 	}
 	// The C file we are compiling
-	ccoptions.source_args << '"${v.out_name_c}"'
+	if !v.pref.parallel_cc { // parallel_cc uses its own split up c files
+		ccoptions.source_args << '"${v.out_name_c}"'
+	}
 	// Min macos version is mandatory I think?
 	if v.pref.os == .macos {
 		if v.pref.macosx_version_min != '0' {
