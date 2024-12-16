@@ -574,6 +574,7 @@ fn (mut v Builder) setup_output_name() {
 }
 
 pub fn (mut v Builder) cc() {
+	println('cc()!!!')
 	if os.executable().contains('vfmt') {
 		return
 	}
@@ -688,6 +689,7 @@ pub fn (mut v Builder) cc() {
 			// In parallel cc mode, all we want in cc() is build the str_args.
 			// Actual cc logic then happens in `parallel_cc()`
 			v.str_args = str_args
+			println('setting args to ${str_args}')
 			return
 		}
 		mut response_file := ''
