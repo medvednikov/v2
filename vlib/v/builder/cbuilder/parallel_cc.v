@@ -78,7 +78,7 @@ fn parallel_cc(mut b builder.Builder, result c.GenOutput) {
 		o_postfixes << (i + 1).str()
 	}
 	for postfix in o_postfixes {
-		cmds << '${cc} ${cc_cflags} ${cc_cflags_opt} -c -w -o out_${postfix}.o out_${postfix}.c'
+		cmds << '${cc} ${cc_cflags} ${cc_cflags_opt} ${b.str_args} -c -w -o out_${postfix}.o out_${postfix}.c'
 	}
 	sw := time.new_stopwatch()
 	println('OP ${b.str_args}')

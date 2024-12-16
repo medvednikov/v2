@@ -569,7 +569,10 @@ fn (mut v Builder) setup_output_name() {
 	if os.is_dir(v.pref.out_name) {
 		verror("'${v.pref.out_name}' is a directory")
 	}
-	v.ccoptions.o_args << '-o "${v.pref.out_name}"'
+	if !v.pref.parallel_cc {
+		// parallel_cc sets its own `-o out_n.o`
+		v.ccoptions.o_args << '-o "${v.pref.out_name}"'
+	}
 	println('O ARGS=${v.ccoptions.o_args}')
 }
 
