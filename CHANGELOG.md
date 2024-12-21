@@ -2,34 +2,32 @@
 #### Improvements in the language
 - `-skip-unused` is now on by default resulting in much smaller cgen and binaries. 70% reduction for hello world.
 - `-parallel-cc` for speeding up `-prod` and `-cc clang/gcc` compilation by up to 14 times!
+- C functions no longer need to be manually defined. An `#include "foo.c"` is enough (behind `-experimental` for now).
 - Remove inline sum types completely
 - Support `in` expr with number ranges: `if var in 1..4 {` (fix #20352) (#22754)
 - Optimize literal string comparison (`match`, `in` and `==`) (#22643)
-- Allow sumtype init by variant comptime var `T(v)` / `SumType(v)` (#22664)
 - Allow `map[k]()?` and `map[k]()()` (#22740)
 - Add selector option unwrapping inside `if tree.root != none {` (#22895)
-- Add array.count as a method that accepts a predicate, similar to filter, but returning just the number of matches (#23054)
+- Add `array.count` as a method that accepts a predicate, similar to filter, but returning just the number of matches (#23054)
 - Allow option array element comparison `==` and `!=` (fix #23108) (#23113)
 
 #### Breaking changes
 
 #### Checker improvements/fixes
-- Optimise identical type checking (#22596)
+- Optimize identical type checking (#22596)
 - Fix `T.unaliased_typ` if branch evaluation (fix #22587) (#22598)
 - Fix lambda expr with fntype params and restore fixed_array_any_all_test.v (#22625)
 - Check fixed array builtin method args mismatch (#22626)
 - Fix generic fn call return type resolve on var assignment (fix #22612) (#22627)
 - Improve checking parameter mismatches for fixed array builtin methods (#22630)
-- Cleanup method_call() (#22639)
 - Add tests for checking the new errors for fixed arrays .sort() calls (#22656)
 - Fix index expr that left is if expr (fix #22654) (#22661)
 - Fix return type checks, when returning struct values, implementing IError in non-result fn (fix #22659) (fix #22658) (#22660)
-- App.method` field initialisation, for fn fields, initialised with generic methods (#22665)
+- `App.method` field initialisation, for fn fields, initialised with generic methods (#22665)
 - Allow for `f() or { T{} }` in a generic method, for `fn f() ?T {`, being called with `T`, being a container like []int etc, not just a primitive type like int (#22672)
 - Allow for `f() or { T{} }` part 2, see also cc55aa5 (handle the case of an ignored result as well) (#22687)
 - Fix selector with prefixed `&` structinit (#22689)
 - Fix missing check for fn var with generic return inherited to anon fn (fix #19045) (#22683)
-- Fix generic resolve comptime generic var (#22699)
 - Check for receiver name clashing with global var (fix #22698) (#22708)
 - Fix none check for match expr with option (fix #22728) (#22732)
 - Fix option map fn type and missing check for result param type (fix #22736) (#22738)
@@ -37,8 +35,6 @@
 - Fix missing check for stack pointer return (fix #22726) (#22756)
 - Improve static method call resolution (fix #22773) (#22787)
 - Skip redundant message for int overflows, while casting integer literals (fix #22761) (#22788)
-- Auto generate missing C function definitions
-- Make auto c generation experimental for now
 - Fix callexpr after auto C func identification (fix #22800) (#22809)
 - Fix missing auto `from_string` type restriction (related to #22783) (#22803)
 - Scanner,checker: optimize Scanner.scan_remaining_text and Checker.expr, based on branch prediction analysis (#22823)
@@ -46,13 +42,11 @@
 - Disallow `foo[T]` as a value  (#22820)
 - Fix if expr with empty array init expression (related #22832) (#22841)
 - Improve the position underlining, for last statements in branches of `if` expressions  (#22845)
-- Minor cleanup of commented code in lambda_expr.v (#22844)
 - Fix generic fn call with empty array argument (fix #22843) (#22846)
 - Fix missing or-block check for callexpr (fix #22835) (#22840)
 - Check array builtin method calls, that do need a mutable receiver, but are called on an immutable one (fix #22850) (#22853)
 - Check alias of array op overloading and fix op overloading (fix #22851) (#22854)
 - Disallow struct init with `mutable_field: const_array` (fix #22862) (#22863)
-- Cleanup and move test files to tests directory (#22870)
 - Check struct aliased field unsign type assigning negative value (fix #22868) (#22871)
 - Fix alias to struct generic type (fix #22866) (#22872)
 - Fix `json.encode_pretty` with a struct init expression argument (#22897)
@@ -151,7 +145,6 @@
 - gg: add `icon` field to gg.Config, for easier access (fix #23135) (#23138)
 - math: fix math.log10() for `-exclude @vlib/math/*.c.v` (fix #23136) (#23140)
 - json: add primitive type validation (fix #23021) (#23142)
-- comptime: fix missing bool AttributeKind.kind (#23159)
 - json: fix memory leak on result messages (checked with `json_option_raw_test.v`, compiled with `-fsanitize=address,pointer-compare,pointer-subtract`) (#23172)
 - vlib: add new `rand.cuid2` module (#23181)
 - json: fix memleak on sumtype decoding (#23197)
@@ -215,13 +208,11 @@
 - Fix `[1, 2, 3]!.map(it * 2)` (#22722)
 - Fix `assert [1, 2, 3]!.contains(2)` (#22725)
 - Fix `assert [1, 2, 3]!.index(2) == 1` (#22727)
-- Fix comptime `T.methods`  with generic types and interface checking with `is` operator (fix #22721) (#22724)
 - Fix spawn with non-pointer receiver (fix #22718) (#22719)
 - Fix `assert [1, 2, 3]!.reverse() == [3, 2, 1]!` (#22745)
 - Fix codegen for `-no-builtin` flag (when used separately from `-d no_main`) (#22765)
 - Apply the `a in [x,y,z]` optimisation for `ast.IndexExpr` and `ast.SelectorExpr` again (#22767)
 - Fix codegen to emit callexpr one time for `in` expr optimization (#22764)
-- Fix comptime issues with generic type (fix #22710, #22642) (#22751)
 - Fix c codegen formatting for return match (#22768)
 - Avoid generation of empty `or` blocks for `f() or {}` (#22775)
 - Fix struct field name using c keyword `typeof` (fix #22779) (#22782)
@@ -248,7 +239,6 @@
 - Move the `msvc compiler does not support inline assembly` to cgen (so it will only get triggered, when ASM blocks are still present, in what is passed to cgen)
 - Fix dump fixed array on array append (fix #22935) (#22940)
 - Fix enum value string interpolation, like its declared enum underlying type (fix #22938) (#22945)
-- Fix if define comptime checking (fix #22906) (#22946)
 - Allow unwrapping of `x as string` expr, when `x` is a `?string` value (#22953)
 - Fix codegen for result/option propagation out of fn context (fix #22961) (#22963)
 - Fix codegen for option on concatexpr (fix #22951) (#22964)
@@ -331,7 +321,6 @@
 - ci: check more compile flag combinations in puzzle_vibes_ci.yml
 - Fix compilation of hw with vnew -> vold, in compare_pr_to_master.v
 - ci: fix for `v build-tools`
-- ci: update discord.v commit hash, to its latest version, that compiles cleanly with latest V
 - ci: check that more apps/modules do compile with -skip-unused (#22904)
 - vet: make `v vet` produce a nicer note, including the offending files, instead of `file.v` (#22957)
 - ci: extract the VTL&VSL jobs from v_apps_and_modules_compile_ci.yml to vsl_and_vtl_compile_ci.yml
@@ -381,12 +370,14 @@
 #### Comptime
 - Add `typeof(var).indirections` and `T.indirections` (#22805)
 - Add `typeof(expr).unaliased_typ` (#22806)
+- Allow sumtype init by variant comptime var `T(v)` / `SumType(v)` (#22664)
+- Fix missing bool AttributeKind.kind (#23159)
+- Fix comptime `T.methods`  with generic types and interface checking with `is` operator (fix #22721) (#22724)
 
 #### Examples
 - Fix some of the instructions in `examples/thread_safety/` (#22571)
 - builder,pref: fix `./v -os linux examples/json.v` on macos (#22651)
 - Add examples/assets/v.svg and examples/assets/v_16x16.svg
-- ci,v.gen.native: cleanup compile warnings for `./v -b native examples/wasm/hello_world.v`, to make CI annotations more useful
 - v.comptime: fix compilation of `examples/veb/veb_example.v` with V compiled with tcc on macos
 - ci: ensure that all examples can still be compiled, by `v` compiled with tcc on macos
 - Add poll_coindesk_bitcoin_vs_usd_rate.v
@@ -398,7 +389,6 @@
 - docs: add a small sumtype match example in the Match section too
 - Add TextScanner .skip_whitespace/0, .peek_u8/0, .peek_n_u8/0, add examples/mini_calculator_recursive_descent.v (#23001)
 - Reduce completion friction, when doing the very common `v run examples/hello_world.v` in a shell
-- Cleanup examples/term.ui/event_viewer.v
 
 
 ## V 0.4.8
