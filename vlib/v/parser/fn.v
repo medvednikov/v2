@@ -1072,8 +1072,7 @@ fn (mut p Parser) fn_params() ([]ast.Param, bool, bool, bool) {
 			// `a, b, c int`
 			for p.tok.kind == .comma {
 				if !p.pref.is_fmt {
-					p.warn(
-						'`fn f(x, y Type)` syntax has been deprecated and will soon be removed. ' +
+					p.error('`fn f(x, y Type)` syntax has been deprecated. ' +
 						'Use `fn f(x Type, y Type)` instead. You can run `v fmt -w "${p.scanner.file_path}"` to automatically fix your code.')
 				}
 				p.next()
