@@ -12,6 +12,7 @@
 - Allow option array element comparison `==` and `!=` (fix #23108) (#23113)
 
 #### Breaking changes
+- time: rewrite parse_rfc3339/1 to improve performance, reject partial timestamps, that miss date info like `22:47:08Z` (#22585)
 
 #### Checker improvements/fixes
 - Optimize identical type checking (#22596)
@@ -37,7 +38,6 @@
 - Skip redundant message for int overflows, while casting integer literals (fix #22761) (#22788)
 - Fix callexpr after auto C func identification (fix #22800) (#22809)
 - Fix missing auto `from_string` type restriction (related to #22783) (#22803)
-- Scanner,checker: optimize Scanner.scan_remaining_text and Checker.expr, based on branch prediction analysis (#22823)
 - Fix match expr with empty array init expression (#22832)
 - Disallow `foo[T]` as a value  (#22820)
 - Fix if expr with empty array init expression (related #22832) (#22841)
@@ -69,7 +69,6 @@
 - Allow `[]Enum{len: 10, init: .thing}` (fix #23077) (#23165)
 - Fix option unwrapping and call from option struct field (#23182)
 - Add a notice for global variable redeclarations (#23162)
-- Minor optimizations (#23191)
 - Fix assign check, when rechecking for another concrete type (#23212)
 
 #### Parser improvements
@@ -81,10 +80,10 @@
 - Optimise mark_var_as_used calls, by moving it to an ast.Scope method (#22842)
 - Optimize method parameter detection in used check (#22915)
 - Fix block position's last line (#22913)
-- parser,checker,ast: support `@[must_use]` tag for fns/methods, and an experimental `-check-result` option (#22983)
+- Support `@[must_use]` tag for fns/methods, and an experimental `-check-result` option (#22983)
 - Allow `type` as field type on params struct construction (fix #23091) (#23098)
 - Allow `type` and other keywords as plain attr value (fix #23150) (#23154)
-- v,ast,fmt,parser: support `@[tag]` for hash statements, like `#define` and `#flag` (#23210)
+- Support `@[tag]` for hash statements, like `#define` and `#flag` (#23210)
 
 #### Compiler internals
 - Add `:parse_text` to the paths of .v files, printed by `-print-v-files`, for parse time generated snippets
@@ -105,11 +104,9 @@
 - v.builder: support `-no-prod-options` with `-cc msvc` as well
 
 #### Standard library
-- breaking,time: rewrite parse_rfc3339/1 to improve performance, reject partial timestamps, that miss date info like `22:47:08Z` (#22585)
 - builtin: improve performance of `string.starts_with/1` and `string.ends_with/1`, when compiled with tcc (#22620)
 - builtin: improve `fixed_array_any_all_test.v` (related #22609) (#22621)
 - builtin: temporary fix fixed_array_any_all_test.v (#22624)
-- tmpl: remove a print
 - builtin: support `-d no_gc_threads` for turning off passing `-DGC_THREADS=1` while compiling the GC library
 - encoding.utf8: fix is_punct func (fix #22646) (#22647)
 - log,time: improve performance for writing a line to a log, add Time.format_rfc3339_micro/0 (#22662)
@@ -129,7 +126,6 @@
 - term: improve performance of repeated can_show_color_on_stdout and can_show_color_on_stderr calls, by caching their results (#22893)
 - builtin: make int_min/2 and int_max/2 public
 - json: mark json_print_pretty/1 with `@[markused]` (used by cgen)
-- strconv: remove commented code
 - math.big: use `@[manualfree]` to workaround -autofree compilation issues with gitly, and other projects using `crypto.rand` and `math.big`
 - x.encoding.asn1: improve performance (#22948)
 - gg: use a larger fontstash text atlas by default (2048x2048, and customizable), instead of 512x512 (fix #21610) (#22959)
@@ -160,7 +156,6 @@
 - net.mbedtls: define MBEDTLS_THREADING_PTHREAD, in mbedtls_config.h; call C.mbedtls_ssl_conf_read_timeout explicitly in the wrapper, with a shorter timeout value of 317ms (determined experimentally)
 - veb: fix large file transfer timeout (fix #22489) (#22924)
 - net.http: send Host headers with port (when the port is != 80 or 443) (fix #22941) (#22942)
-- markused: fix veb actions
 - net.mbedtls: support compiling with `-d mbedtls_client_read_timeout_ms=7000`, `-d mbedtls_server_read_timeout_ms=60000`, and `-d trace_mbedtls_timeouts`
 - net.urllib: fix parse of url relative address (fix #21061) (#23180)
 - veb: fix key value and translation file name (#23203)
