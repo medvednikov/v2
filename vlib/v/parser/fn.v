@@ -941,8 +941,8 @@ fn (mut p Parser) fn_params() ([]ast.Param, bool, bool, bool) {
 		|| (p.peek_tok.kind == .comma && (p.table.known_type(param_name) || is_generic_type))
 		|| p.peek_tok.kind == .dot || p.peek_tok.kind == .rpar || p.fn_language == .c
 		|| (p.tok.kind == .key_mut && (p.peek_tok.kind in [.amp, .ellipsis, .key_fn, .lsbr]
-		|| (p.peek_token(2).kind == .comma && p.tok.kind != .key_mut)
-		|| p.peek_token(2).kind == .rpar
+		|| (p.peek_token(2).kind == .comma && (p.tok.kind != .key_mut
+		|| p.peek_tok.lit[0].is_capital())) || p.peek_token(2).kind == .rpar
 		|| (p.peek_tok.kind == .name && p.peek_token(2).kind == .dot)))
 	mut prev_param_newline := p.tok.pos().line_nr
 	// TODO: copy paste, merge 2 branches
