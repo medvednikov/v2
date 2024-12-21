@@ -1,29 +1,15 @@
 ## V 0.4.9
 #### Improvements in the language
+- `-skip-unused` is now on by default resulting in much smaller cgen and binaries. 70% reduction for hello world.
+- `-parallel-cc` for speeding up `-prod` and `-cc clang/gcc` compilation by up to 14 times!
+- Remove inline sum types completely
+- Support `in` expr with number ranges: `if var in 1..4 {` (fix #20352) (#22754)
 - Optimize literal string comparison (`match`, `in` and `==`) (#22643)
 - Allow sumtype init by variant comptime var `T(v)` / `SumType(v)` (#22664)
-- Optimize the compiler performance (#22709)
-- Fix redundant emission of left expression in in infix expressions (#22763)
-- Support `in` expr with number ranges: `if var in 1..4 {` (fix #20352) (#22754)
 - Allow `map[k]()?` and `map[k]()()` (#22740)
-- Fix argument freeing for json.encode and json.encode_pretty calls (#22781)
-- Remove inline sum types completely
-- Add `typeof(var).indirections` and `T.indirections` (#22805)
-- Add `typeof(expr).unaliased_typ` (#22806)
-- Adjust some checks, based on branch prediction analysis (#22848)
-- Improve `-skip-unused` by removing code related to unused `builtin` types, interfaces, etc (#22856)
-- Minor optimizations on `cmd/v` (#22878)
-- Do a minor optimizations on `cmd/v` (#22880)
 - Add selector option unwrapping inside `if tree.root != none {` (#22895)
-- Inline some fns (#22965)
-- Reduce usage of `mathutil`
-- Missing `-skip-unused` fixes (#22978)
-- Fix `-skip-unused` with comptime (#22994)
-- Fix all `-skip-unused` issues so that it can be enabled by default (#23002)
-- Enable skip_unused by default
 - Add array.count as a method that accepts a predicate, similar to filter, but returning just the number of matches (#23054)
 - Allow option array element comparison `==` and `!=` (fix #23108) (#23113)
-- Parallel-cc fixes
 
 #### Breaking changes
 
@@ -170,6 +156,7 @@
 - vlib: add new `rand.cuid2` module (#23181)
 - json: fix memleak on sumtype decoding (#23197)
 - vlib: enable more satnitized memleak detection runs without false positives on the CI (#23200)
+- json: fix argument freeing for json.encode and json.encode_pretty calls (#22781)
 
 #### Web
 - veb: translations via %translation_key
@@ -390,6 +377,10 @@
 - ci: linux_ci.vsh; cgen: parallel-cc fixes
 - ci: remove extra EOL from linux_ci.yml (#23187)
 - Fix profile time on windows  (#23227)
+
+#### Comptime
+- Add `typeof(var).indirections` and `T.indirections` (#22805)
+- Add `typeof(expr).unaliased_typ` (#22806)
 
 #### Examples
 - Fix some of the instructions in `examples/thread_safety/` (#22571)
