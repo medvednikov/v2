@@ -1753,6 +1753,11 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 				call_arg.pos)
 		}
 		// Warn about automatic (de)referencing, which will be removed soon.
+		if func.language != .c && !c.inside_unsafe && c.pref.experimental && c.fileis('a.v')
+			&& arg_typ.nr_muls() != param.typ.nr_muls() && !(!call_arg.is_mut && !param.is_mut)
+			&& param.typ !in [ast.byteptr_type, ast.charptr_type, ast.voidptr_type, ast.nil_type] {
+			c.warn('KEKW', call_arg.pos)
+		}
 		if func.language != .c && !c.inside_unsafe && arg_typ.nr_muls() != param.typ.nr_muls()
 			&& !(call_arg.is_mut && param.is_mut) && !(!call_arg.is_mut && !param.is_mut)
 			&& param.typ !in [ast.byteptr_type, ast.charptr_type, ast.voidptr_type, ast.nil_type] {
