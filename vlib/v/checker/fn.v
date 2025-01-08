@@ -1761,18 +1761,22 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 			c.warn('KEKW', call_arg.pos)
 		}
 		*/
-		if func.language != .c && !c.inside_unsafe && arg_typ.nr_muls() != param.typ.nr_muls()
-			&& !(call_arg.is_mut && param.is_mut) {
-			if param.typ !in [ast.byteptr_type, ast.charptr_type, ast.voidptr_type, ast.nil_type]
-				&& arg_typ != ast.voidptr_type //&& !(!call_arg.is_mut && !param.is_mut)
-			  {
-				c.warn('automatic referencing/dereferencing is deprecated and will be removed soon (got: ${arg_typ.nr_muls()} references, expected: ${param.typ.nr_muls()} references)',
-					call_arg.pos)
+		if func.language != .c && !c.inside_unsafe {
+			if arg_typ.nr_muls() != param.typ.nr_muls() && !(call_arg.is_mut && param.is_mut) {
+				if param.typ !in [ast.byteptr_type, ast.charptr_type, ast.voidptr_type, ast.nil_type]
+					&& arg_typ != ast.voidptr_type //&& !(!call_arg.is_mut && !param.is_mut)
+				  {
+					c.warn('automatic referencing/dereferencing is deprecated and will be removed soon (got: ${arg_typ.nr_muls()} references, expected: ${param.typ.nr_muls()} references)',
+						call_arg.pos)
+				}
 			}
 			// A special case of the check to not allow voidptr params like in the recently reported raylib
 			// bug with fn...
-			if !c.is_builtin_mod && param.typ == ast.voidptr_type {
-				c.warn('lol', call_arg.pos)
+			// fn f(p &Foo) => f(foo) -- do not allow this, force f(&foo)
+			// if !c.is_builtin_mod
+			if param.typ == ast.voidptr_type && arg_typ.nr_muls() == 0 && c.fileis('a.v') { //&& arg_typ.nr_muls() != param.typ.nr_muls() {
+				c.warn('automatic referencing/dereferencing is deprecated and will be removed soon (got: ${arg_typ.nr_muls()} references, expected: ${param.typ.nr_muls()} references)',
+					call_arg.pos)
 			}
 		}
 	}
