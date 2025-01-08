@@ -1775,8 +1775,9 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 			// if !c.is_builtin_mod
 			if param.typ == ast.voidptr_type && func.language == .v
 				&& arg_typ !in [ast.voidptr_type, ast.nil_type] && arg_typ.nr_muls() == 0
-				&& func.name !in ['isnil', 'ptr_str'] && !func.name.starts_with('json.') {
-				c.warn('automatic referencing/dereferencing into voidptr is deprecated and will be removed soon; use `foo(&x)` instead of `foo(x)`',
+				&& func.name !in ['isnil', 'ptr_str'] && !func.name.starts_with('json.')
+				&& arg_typ_sym.kind !in [.float_literal, .int_literal] {
+				c.warn('automatic ${arg_typ_sym.name} referencing/dereferencing into voidptr is deprecated and will be removed soon; use `foo(&x)` instead of `foo(x)`',
 					call_arg.pos)
 			}
 		}
