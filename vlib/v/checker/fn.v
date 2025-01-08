@@ -1762,12 +1762,18 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 		}
 		*/
 		if func.language != .c && !c.inside_unsafe && arg_typ.nr_muls() != param.typ.nr_muls()
-			&& !(call_arg.is_mut && param.is_mut)
-			&& param.typ !in [ast.byteptr_type, ast.charptr_type, ast.voidptr_type, ast.nil_type]
-			&& arg_typ != ast.voidptr_type //&& !(!call_arg.is_mut && !param.is_mut)
-		  {
-			c.warn('automatic referencing/dereferencing is deprecated and will be removed soon (got: ${arg_typ.nr_muls()} references, expected: ${param.typ.nr_muls()} references)',
-				call_arg.pos)
+			&& !(call_arg.is_mut && param.is_mut) {
+			if param.typ !in [ast.byteptr_type, ast.charptr_type, ast.voidptr_type, ast.nil_type]
+				&& arg_typ != ast.voidptr_type //&& !(!call_arg.is_mut && !param.is_mut)
+			  {
+				c.warn('automatic referencing/dereferencing is deprecated and will be removed soon (got: ${arg_typ.nr_muls()} references, expected: ${param.typ.nr_muls()} references)',
+					call_arg.pos)
+			}
+			// A special case of the check to not allow voidptr params like in the recently reported raylib
+			// bug with fn...
+			if !c.is_builtin_mod && param.typ == ast.voidptr_type {
+				c.warn('lol', call_arg.pos)
+			}
 		}
 	}
 	if func.generic_names.len != node.concrete_types.len {
