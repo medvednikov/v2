@@ -1942,7 +1942,7 @@ fn (mut p Parser) attributes() {
 	start_pos := p.tok.pos()
 	mut is_at := false
 	if p.tok.kind == .lsbr {
-		p.warn('`[attr]` has been deprecated, use `@[attr]` instead')
+		p.error('`[attr]` has been deprecated, use `@[attr]` instead')
 		// [attr]
 		p.check(.lsbr)
 	} else if p.tok.kind == .at {
