@@ -1938,6 +1938,7 @@ fn (mut p Parser) is_attributes() bool {
 }
 
 // when is_top_stmt is true attrs are added to p.attrs
+//
 fn (mut p Parser) attributes() {
 	start_pos := p.tok.pos()
 	mut is_at := false
