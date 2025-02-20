@@ -26,21 +26,20 @@ cd v
 sudo ./v symlink
 ```
 
-Now V should be globally available on your system.
+
+V should now be globally available.
 
 > On macOS use `v_macos.zip`, on Windows - `v_windows.zip`.
-> If you use a BSD system, Solaris, Android, or simply want to install V
-> from source, follow the simple instructions here:
+> For BSD, Solaris, Android, or source installation, see:
 > https://github.com/vlang/v#installing-v-from-source
 
-### Install SQLite development dependency
+## Install SQLite Development Dependency
 
-If you don't have it already installed, look at the
-[`sqlite` README](../../vlib/db/sqlite/README.md) for instructions.
+See [`sqlite` README](../../vlib/db/sqlite/README.md) for instructions if not already installed.
 
-### Creating a new Vweb project
+## Creating a New Veb Project
 
-V projects can be created anywhere and don't need to have a certain structure:
+V projects can be created anywhere:
 
 ```bash
 mkdir blog
@@ -54,20 +53,22 @@ First, let's create a simple hello world website:
 // blog.v
 module main
 
-import vweb
+import veb
 
-struct App {
-	vweb.Context
+pub struct Context {
+    veb.Context
 }
 
+pub struct App {}
+
 fn main() {
-	app := App{}
-	vweb.run(app, 8081)
+    mut app := &App{}
+    veb.run[App, Context](mut app, 8081)
 }
 
 @['/index']
-pub fn (mut app App) index() vweb.Result {
-	return app.text('Hello world from vweb!')
+pub fn (app &App) index(mut ctx Context) veb.Result {
+    return ctx.text('Hello world from Veb!')
 }
 ```
 
