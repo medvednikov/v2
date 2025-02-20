@@ -334,23 +334,28 @@ Create `new.html`:
 ```
 
 ```v ignore
-// article.v
-import vweb
+@['/new']
+pub fn (app &App) new(mut ctx Context) veb.Result {
+    return $veb.html()
+}
 
-@[post]
-pub fn (mut app App) new_article(title string, text string) vweb.Result {
-	if title == '' || text == '' {
-		return app.text('Empty text/title')
-	}
-	article := Article{
-		title: title
-		text: text
-	}
-	println(article)
-	sql app.db {
-		insert article into Article
-	} or { panic(err) }
-	return app.redirect('/')
+@['/new_article'; post]
+pub fn (app &App) new_article(mut ctx Context) veb.Result {
+    title := ctx.form['title'] or { '' }
+    text := ctx.form['text'] or { '' }
+
+    if title == '' || text == '' {
+        return ctx.text('Empty text/title')
+    }
+
+    article := Article{
+        title: title
+        text: text
+    }
+    sql app.db {
+        insert article into Article
+    } or { panic(err) }
+    return ctx.redirect('/')
 }
 ```
 
@@ -370,8 +375,8 @@ Next we need to add the HTML endpoint to our code like we did with `index.html`:
 
 ```v ignore
 @['/new']
-pub fn (mut app App) new() vweb.Result {
-	return $vweb.html()
+pub fn (mut app App) new() veb.Result {
+	return $veb.html()
 }
 ```
 
@@ -384,11 +389,10 @@ to render everything on the client or need an API, creating JSON endpoints
 in V is very simple:
 
 ```v oksyntax
-// article.v
-import vweb
+import veb
 
 @['/articles'; get]
-pub fn (mut app App) articles() vweb.Result {
+pub fn (mut app App) articles() veb.Result {
 	articles := app.find_all_articles()
 	return app.json(articles)
 }
