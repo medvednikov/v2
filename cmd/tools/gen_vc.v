@@ -119,7 +119,8 @@ fn main() {
 	}
 	// webhook server mode
 	if flag_options.serve {
-		veb.run_at[WebhookServer, Context](mut &WebhookServer{}, flag_options.port)
+		mut server := &WebhookServer{}
+		veb.run_at[WebhookServer, Context](mut server, port: flag_options.port)!
 	} else {
 		// cmd mode
 		mut gen_vc := new_gen_vc(flag_options)
@@ -155,7 +156,7 @@ pub fn (mut ws WebhookServer) index() {
 }
 
 // gen webhook
-pub fn (mut ws WebhookServer) genhook() {
+pub fn (mut ws WebhookServer) genhook() veb.Result {
 	// request data
 	// println(ws.vweb.req.data)
 	// TODO: parse request. json or urlencoded
@@ -163,10 +164,9 @@ pub fn (mut ws WebhookServer) genhook() {
 	ws.gen_vc.generate()
 	// error in generate
 	if ws.gen_vc.gen_error {
-		ws.json('{status: "failed"}')
-		return
+		return ctx.json('{status: "failed"}')
 	}
-	ws.json('{status: "ok"}')
+	return ctx.json('{status: "ok"}')
 }
 
 pub fn (ws &WebhookServer) reset() {
