@@ -99,10 +99,10 @@ no routing rules either:
 
 ```v oksyntax
 // blog.v
-import vweb
+import veb
 import time
 
-fn (mut app App) time() vweb.Result {
+fn (mut app App) time() veb.Result {
 	return app.text(time.now().format())
 }
 ```
@@ -139,7 +139,7 @@ and update our `index()` action so that it returns the HTML view we just created
 // blog.v
 pub fn (mut app App) index() veb.Result {
 	message := 'Hello, world from Vweb!'
-	return $vweb.html()
+	return $veb.html()
 }
 ```
 
@@ -163,7 +163,7 @@ to modify any data from a view. `<b>@foo.bar()</b>` will only work if the `bar()
 doesn't modify `foo`.
 
 The HTML template is compiled to V during the compilation of the website,
-that's done by the `$vweb.html()` line.
+that's done by the `$veb.html()` line.
 (`$` always means compile time actions in V.) offering the following benefits:
 
 - Great performance, since the templates don't need to be compiled
@@ -359,7 +359,7 @@ pub fn (app &App) new_article(mut ctx Context) veb.Result {
 }
 ```
 
-The decorator on our function tells vweb that it is an HTTP POST type operation.
+The decorator on our function tells Veb that it is an HTTP POST type operation.
 
 This time Vweb parses the HTTP form and assigns correct values with correct types to
 function arguments, which saves a lot of typing (e.g. `title := app.form['title']` is
@@ -422,10 +422,10 @@ Run
 v -d use_openssl -o blog -prod . && strip ./blog
 ```
 
-This will result in a ~400KB binary. `-d use_openssl` tells vweb to link to OpenSSL.
+This will result in a ~400KB binary. `-d use_openssl` tells Veb to link to OpenSSL.
 Without this flag mbedtls will be embedded, and the binary size will increase to ~700KB.
 
 
 ### To be continued...
 
-For an example of a more sophisticated web app written in V, check out Vorum: https://github.com/vlang/vorum
+For an example of a more sophisticated web app written in V, check out Gitly: https://github.com/vlang/gitly
