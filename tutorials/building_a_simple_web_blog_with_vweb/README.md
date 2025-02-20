@@ -203,28 +203,28 @@ since a DB connection doesn't have to be set up for each request.
 ```v oksyntax
 // blog.v
 fn main() {
-	mut app := App{
-		db: sqlite.connect(':memory:')!
-	}
-	sql app.db {
-		create table Article
-	}!
+    mut app := &App{
+        db: sqlite.connect(':memory:')!
+    }
+    sql app.db {
+        create table Article
+    }!
 
-	first_article := Article{
-		title: 'Hello, world!'
-		text:  'V is great.'
-	}
+    first_article := Article{
+        title: 'Hello, world!'
+        text: 'V is great.'
+    }
 
-	second_article := Article{
-		title: 'Second post.'
-		text:  'Hm... what should I write about?'
-	}
+    second_article := Article{
+        title: 'Second post.'
+        text: 'Hm... what should I write about?'
+    }
 
-	sql app.db {
-		insert first_article into Article
-		insert second_article into Article
-	}!
-	vweb.run(app, 8080)
+    sql app.db {
+        insert first_article into Article
+        insert second_article into Article
+    }!
+    veb.run[App, Context](mut app, 8081)
 }
 ```
 
@@ -255,9 +255,9 @@ Let's fetch the articles in the `index()` action:
 
 ```v ignore
 // blog.v
-pub fn (app &App) index() vweb.Result {
+pub fn (app &App) index() veb.Result {
 	articles := app.find_all_articles()
-	return $vweb.html()
+	return $veb.html()
 }
 ```
 
@@ -310,7 +310,7 @@ bad queries will always be handled by the developer:
 ```v ignore
 // article.v
 article := app.retrieve_article() or {
-	return app.text('Article not found')
+	return ctx.text('Article not found')
 }
 ```
 
