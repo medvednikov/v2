@@ -1,28 +1,24 @@
-## Building a 400 KB web blog in V & SQLite
+# Building a 400 KB Web Blog in V & SQLite with Veb
 
 Hello,
 
-In this guide, we'll build a simple web blog in V.
+In this guide, we'll build a simple web blog using V and the Veb framework.
 
-The benefits of using V for web:
+The benefits of using V and Veb for web development:
 
-- A safe, fast, language with the development agility of Python or Ruby and
-  the performance of C.
-- Zero dependencies: everything you need for web development comes with the language
-  in a 1 MB package.
-- Very small resulting binaries: the blog we'll create in this tutorial is about 150 KB.
-- Easy deployments: a single binary file that even includes the precompiled templates.
-- Runs on the cheapest hardware with minimum footprint: for most apps a $3 instance
-  is enough.
-- Fast development without any boilerplate.
+- A safe, fast language with the development agility of Python or Ruby and the performance of C
+- Zero dependencies: everything needed comes in a 1 MB package
+- Very small binaries: this blog will be about 150 KB
+- Easy deployments: single binary including precompiled templates
+- Runs on minimal hardware: $3 instance sufficient for most apps
+- Fast development with minimal boilerplate
 
 > [!NOTE]
-> V and Vweb are at a very early stage and are changing rapidly.
+> V and Veb are at an early stage and evolving rapidly.
 
 The code is available [here](./code/blog).
 
-### Installing V
-
+## Installing V
 ```
 wget https://github.com/vlang/v/releases/latest/download/v_linux.zip
 unzip v_linux.zip
