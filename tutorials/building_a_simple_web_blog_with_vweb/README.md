@@ -66,7 +66,6 @@ fn main() {
     veb.run[App, Context](mut app, 8081)
 }
 
-@['/index']
 pub fn (app &App) index(mut ctx Context) veb.Result {
     return ctx.text('Hello world from Veb!')
 }
@@ -79,17 +78,20 @@ v run blog.v
 ```
 
 ```
-Running a Vweb app on http://localhost:8081 ...
+Running a Veb app on http://localhost:8081 ...
 ```
 
-Vweb helpfully provided a link, open http://localhost:8081/ in your browser:
+Veb helpfully provided a link, open http://localhost:8081/ in your browser:
 
 <img width=662 src="https://github.com/vlang/v/blob/master/tutorials/building_a_simple_web_blog_with_vweb/img/hello.png?raw=true">
 
-The `App` struct is an entry point of our web application. If you have experience
-with an MVC web framework, you can think of it as a controller. (Vweb is
-not an MVC framework however.) It embeds the vweb Context object, that's why we get access
-to methods like `.text()`.
+The App struct holds shared application data, while Context handles per-request data and embeds
+`veb.Context` for response methods like `.text()`.
+
+If you have experiencewith an MVC web framework, you can think of it as a controller. (Veb is
+not an MVC framework however.)
+
+
 
 As you can see, there are no routing rules. The `index()` action handles the `/` request by default.
 Vweb often uses convention over configuration and adding a new action requires
@@ -104,6 +106,8 @@ fn (mut app App) time() vweb.Result {
 	return app.text(time.now().format())
 }
 ```
+
+Custom routes can be defined using attributes like @['/index'].
 
 <img width=662 src="https://github.com/vlang/v/blob/master/tutorials/building_a_simple_web_blog_with_vweb/img/time.png?raw=true">
 
