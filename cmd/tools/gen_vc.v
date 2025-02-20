@@ -4,7 +4,7 @@ import os
 import log
 import flag
 import time
-import vweb
+import veb
 import net.urllib
 
 // This tool regenerates V's bootstrap .c files
@@ -79,9 +79,12 @@ mut:
 
 // webhook server
 struct WebhookServer {
-	vweb.Context
 mut:
 	gen_vc &GenVC = unsafe { nil } // initialized in init_server
+}
+
+struct Context {
+	veb.Context
 }
 
 // storage for flag options
@@ -116,7 +119,7 @@ fn main() {
 	}
 	// webhook server mode
 	if flag_options.serve {
-		vweb.run[WebhookServer](&WebhookServer{}, flag_options.port)
+		veb.run_at[WebhookServer, Context](mut &WebhookServer{}, flag_options.port)
 	} else {
 		// cmd mode
 		mut gen_vc := new_gen_vc(flag_options)
