@@ -12,6 +12,12 @@ pub mut:
 	user_id string
 }
 
+struct Article {
+	id    int @[primary; sql: serial]
+	title string
+	text  string
+}
+
 fn main() {
 	mut app := App{
 		db: sqlite.connect('blog.db') or { panic(err) }
@@ -75,4 +81,10 @@ pub fn (mut app App) articles() vweb.Result {
 
 fn (mut app App) time() {
 	app.text(time.now().format())
+}
+
+pub fn (app &App) find_all_articles() []Article {
+	return sql app.db {
+		select from Article
+	} or { panic(err) }
 }
