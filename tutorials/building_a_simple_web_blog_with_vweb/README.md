@@ -137,7 +137,7 @@ and update our `index()` action so that it returns the HTML view we just created
 
 ```v ignore
 // blog.v
-pub fn (mut app App) index() vweb.Result {
+pub fn (mut app App) index() veb.Result {
 	message := 'Hello, world from Vweb!'
 	return $vweb.html()
 }
@@ -186,12 +186,12 @@ Add a SQLite handle to `App`:
 ```v oksyntax
 // blog.v
 import db.sqlite
-import vweb
+import veb
 
 struct App {
-	vweb.Context
-pub mut:
+	...
 	db sqlite.DB
+	...
 }
 ```
 
