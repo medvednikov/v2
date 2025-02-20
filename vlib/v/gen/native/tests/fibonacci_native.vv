@@ -19,5 +19,4 @@ fn main() {
 		// Print the new term
 		println(c)
 	}
-	println('DONE')
 }
