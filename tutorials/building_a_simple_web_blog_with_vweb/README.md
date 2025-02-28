@@ -56,18 +56,18 @@ module main
 import veb
 
 pub struct Context {
-    veb.Context
+	veb.Context
 }
 
 pub struct App {}
 
 fn main() {
-    mut app := &App{}
-    veb.run[App, Context](mut app, 8081)
+	mut app := &App{}
+	veb.run[App, Context](mut app, 8081)
 }
 
 pub fn (app &App) index(mut ctx Context) veb.Result {
-    return ctx.text('Hello world from Veb!')
+	return ctx.text('Hello world from Veb!')
 }
 ```
 
@@ -123,12 +123,12 @@ Let's return an HTML view instead. Create `index.html` in the same directory:
 ```html
 <html>
   <head>
-    <title>V Blog</title>
+	<title>V Blog</title>
   </head>
   <body>
-    <b>@message</b>
-    <br />
-    <img src="https://vlang.io/img/v-logo.png" width="100" />
+	<b>@message</b>
+	<br />
+	<img src="https://vlang.io/img/v-logo.png" width="100" />
   </body>
 </html>
 ```
@@ -203,28 +203,28 @@ since a DB connection doesn't have to be set up for each request.
 ```v oksyntax
 // blog.v
 fn main() {
-    mut app := &App{
-        db: sqlite.connect(':memory:')!
-    }
-    sql app.db {
-        create table Article
-    }!
+	mut app := &App{
+		db: sqlite.connect(':memory:')!
+	}
+	sql app.db {
+		create table Article
+	}!
 
-    first_article := Article{
-        title: 'Hello, world!'
-        text: 'V is great.'
-    }
+	first_article := Article{
+		title: 'Hello, world!'
+		text: 'V is great.'
+	}
 
-    second_article := Article{
-        title: 'Second post.'
-        text: 'Hm... what should I write about?'
-    }
+	second_article := Article{
+		title: 'Second post.'
+		text: 'Hm... what should I write about?'
+	}
 
-    sql app.db {
-        insert first_article into Article
-        insert second_article into Article
-    }!
-    veb.run[App, Context](mut app, 8081)
+	sql app.db {
+		insert first_article into Article
+		insert second_article into Article
+	}!
+	veb.run[App, Context](mut app, 8081)
 }
 ```
 
@@ -235,7 +235,7 @@ Create a new file `article.v`:
 module main
 
 struct Article {
-	id    int @[primary; sql: serial]
+	id	int @[primary; sql: serial]
 	title string
 	text  string
 }
@@ -267,8 +267,8 @@ Finally, let's update our view:
 <body>
   @for article in articles
   <div>
-    <b>@article.title</b> <br />
-    @article.text
+	<b>@article.title</b> <br />
+	@article.text
   </div>
   @end
 </body>
@@ -321,14 +321,14 @@ Create `new.html`:
 ```html
 <html>
   <head>
-    <title>V Blog</title>
+	<title>V Blog</title>
   </head>
   <body>
-    <form action="/new_article" method="post">
-      <input type="text" placeholder="Title" name="title" /> <br />
-      <textarea placeholder="Text" name="text"></textarea>
-      <input type="submit" />
-    </form>
+	<form action="/new_article" method="post">
+	  <input type="text" placeholder="Title" name="title" /> <br />
+	  <textarea placeholder="Text" name="text"></textarea>
+	  <input type="submit" />
+	</form>
   </body>
 </html>
 ```
@@ -336,26 +336,26 @@ Create `new.html`:
 ```v ignore
 @['/new']
 pub fn (app &App) new(mut ctx Context) veb.Result {
-    return $veb.html()
+	return $veb.html()
 }
 
 @['/new_article'; post]
 pub fn (app &App) new_article(mut ctx Context) veb.Result {
-    title := ctx.form['title'] or { '' }
-    text := ctx.form['text'] or { '' }
+	title := ctx.form['title'] or { '' }
+	text := ctx.form['text'] or { '' }
 
-    if title == '' || text == '' {
-        return ctx.text('Empty text/title')
-    }
+	if title == '' || text == '' {
+		return ctx.text('Empty text/title')
+	}
 
-    article := Article{
-        title: title
-        text: text
-    }
-    sql app.db {
-        insert article into Article
-    } or { panic(err) }
-    return ctx.redirect('/')
+	article := Article{
+		title: title
+		text: text
+	}
+	sql app.db {
+		insert article into Article
+	} or { panic(err) }
+	return ctx.redirect('/')
 }
 ```
 
