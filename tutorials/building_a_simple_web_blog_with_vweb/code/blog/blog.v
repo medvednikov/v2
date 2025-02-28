@@ -88,18 +88,3 @@ pub fn (app &App) articles(mut ctx Context) veb.Result {
 pub fn (app &App) time(mut ctx Context) veb.Result {
 	return ctx.text(time.now().format())
 }
-
-// Assuming this helper function exists
-fn (app &App) find_all_articles() []Article {
-	// Implementation would be needed here
-	return sql app.db {
-		select from Article
-	} or { []Article{} }
-}
-
-// Assuming Article struct is defined
-struct Article {
-	id    int @[primary; sql: serial]
-	title string
-	text  string
-}
