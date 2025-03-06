@@ -3367,15 +3367,17 @@ fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 	}
 	c.check_any_type(to_type, to_sym, node.pos)
 
-	if (to_sym.is_number() && from_sym.name == 'JS.Number')
-		|| (to_sym.is_number() && from_sym.name == 'JS.BigInt')
-		|| (to_sym.is_string() && from_sym.name == 'JS.String')
-		|| (to_type.is_bool() && from_sym.name == 'JS.Boolean')
-		|| (from_type.is_bool() && to_sym.name == 'JS.Boolean')
-		|| (from_sym.is_number() && to_sym.name == 'JS.Number')
-		|| (from_sym.is_number() && to_sym.name == 'JS.BigInt')
-		|| (from_sym.is_string() && to_sym.name == 'JS.String') {
-		return to_type
+	if c.pref.backend.is_js() {
+		if (to_sym.is_number() && from_sym.name == 'JS.Number')
+			|| (to_sym.is_number() && from_sym.name == 'JS.BigInt')
+			|| (to_sym.is_string() && from_sym.name == 'JS.String')
+			|| (to_type.is_bool() && from_sym.name == 'JS.Boolean')
+			|| (from_type.is_bool() && to_sym.name == 'JS.Boolean')
+			|| (from_sym.is_number() && to_sym.name == 'JS.Number')
+			|| (from_sym.is_number() && to_sym.name == 'JS.BigInt')
+			|| (from_sym.is_string() && to_sym.name == 'JS.String') {
+			return to_type
+		}
 	}
 
 	if !c.expected_type.has_flag(.generic) && to_sym.name.len == 1
@@ -3595,6 +3597,9 @@ fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 	if to_type.is_ptr() && to_sym.kind == .alias && from_sym.kind == .map {
 		c.error('cannot cast to alias pointer `${c.table.type_to_str(to_type)}` because `${c.table.type_to_str(from_type)}` is a value',
 			node.pos)
+	}
+	if final_to_sym.kind == .function && final_from_sym.is_int() {
+		c.warn('kek', node.pos)
 	}
 
 	if to_type == ast.string_type {
