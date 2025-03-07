@@ -3598,9 +3598,6 @@ fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 		c.error('cannot cast to alias pointer `${c.table.type_to_str(to_type)}` because `${c.table.type_to_str(from_type)}` is a value',
 			node.pos)
 	}
-	if final_to_sym.kind == .function && final_from_sym.is_int() {
-		c.warn('kek', node.pos)
-	}
 
 	if to_type == ast.string_type {
 		if from_type in [ast.u8_type, ast.bool_type] {
