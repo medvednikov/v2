@@ -112,7 +112,7 @@ fn get_all_modules() []string {
 		// get the index of the end of anchor (a) opening tag
 		// we use the previous start_index to make sure we are getting a module and not just a random 'a' tag
 		start_token = '>'
-		start_index = s.index_after(start_token, start_index) + start_token.len or { break }
+		start_index = s.index_after(start_token, start_index) or { break } + start_token.len
 
 		// get the index of the end of module entry
 		end_index := s.index_after(end_token, start_index) or { break }

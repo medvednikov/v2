@@ -817,9 +817,9 @@ pub fn (s string) trim_space() string {
 	return res
 }
 
-pub fn (s string) index_after(p string, start int) int {
+pub fn (s string) index_after(p string, start int) ?int {
 	if p.len > s.len {
-		return -1
+		return none
 	}
 
 	mut strt := start
@@ -827,7 +827,7 @@ pub fn (s string) index_after(p string, start int) int {
 		strt = 0
 	}
 	if start >= s.len {
-		return -1
+		return none
 	}
 	mut i := strt
 
@@ -844,7 +844,7 @@ pub fn (s string) index_after(p string, start int) int {
 		}
 		i++
 	}
-	return -1
+	return none
 }
 
 pub fn (s string) split_into_lines() []string {
