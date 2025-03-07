@@ -1,5 +1,9 @@
-a := true
-b := false
-println(a || b)  // true
-println(b || a)  // true 
-println(b || b)  // false
+fn create_file(path string) ? {
+	return error('failed to create file')
+}
+
+create_file('test.txt') or {
+	println('error creating file: $err')
+}
+
+println('done')

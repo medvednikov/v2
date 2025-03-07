@@ -580,9 +580,22 @@ pub fn (mut e Eval) expr(expr ast.Expr, expecting ast.Type) Object {
 			e.error('unhandled index expression ${left}[ ${index} ]')
 		}
 		ast.OrExpr {
-			left := e.expr(expr.left, ast.bool_type_idx)
-			right := e.expr(expr.right, ast.bool_type_idx)
-			return (left as bool) || (right as bool)
+			// Evaluate the left expression
+			left := e.expr(expr.left, expr.left_type)
+			
+			// If left is not an error, return it
+			if left is Object && !(left is ast.NodeError) {
+				return left
+			}
+			
+			// If we have a block, execute it
+			if expr.block.stmts.len > 0 {
+				e.stmts(expr.block.stmts)
+				return empty
+			}
+			
+			// No block, just return empty
+			return empty
 		}
 		ast.AnonFn, ast.ArrayDecompose, ast.AsCast, ast.Assoc, ast.AtExpr, ast.CTempVar,
 		ast.ChanInit, ast.Comment, ast.ComptimeCall, ast.ComptimeSelector, ast.ComptimeType,
