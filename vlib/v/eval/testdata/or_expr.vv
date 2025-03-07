@@ -1,0 +1,5 @@
+a := true
+b := false
+println(a || b)  // true
+println(b || a)  // true 
+println(b || b)  // false
