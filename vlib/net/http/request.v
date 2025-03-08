@@ -258,6 +258,7 @@ fn (req &Request) build_request_cookies_header() string {
 	return sb_cookie.str()
 }
 
+// No SSL
 fn (req &Request) http_do(host string, method Method, path string) !Response {
 	host_name, port := net.split_address(host)!
 	s := req.build_request_headers(method, host_name, port, path)

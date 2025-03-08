@@ -14,6 +14,7 @@ fn (req &Request) ssl_do(port int, method Method, host_name string, path string)
 }
 
 fn net_ssl_do(req &Request, port int, method Method, host_name string, path string) !Response {
+	println('ssl do(${path})')
 	mut ssl_conn := ssl.new_ssl_conn(
 		verify:                 req.verify
 		cert:                   req.cert
