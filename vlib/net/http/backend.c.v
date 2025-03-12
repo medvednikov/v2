@@ -53,7 +53,7 @@ fn (req &Request) do_request(req_headers string, mut ssl_conn ssl.SSLConn) !Resp
 	ssl_conn.write_string(req_headers) or { return err }
 	mut content := strings.new_builder(4096)
 	req.receive_all_data_from_cb_in_builder(mut content, voidptr(ssl_conn), read_from_ssl_connection_cb)!
-	// ssl_conn.shutdown()!
+	ssl_conn.shutdown()!
 	response_text := content.str()
 	$if trace_http_response ? {
 		eprint('< ')
@@ -63,8 +63,5 @@ fn (req &Request) do_request(req_headers string, mut ssl_conn ssl.SSLConn) !Resp
 	if req.on_finish != unsafe { nil } {
 		req.on_finish(req, u64(response_text.len))!
 	}
-	resp := parse_response(response_text)!
-	println('\n\nSSL RESP=${resp}')
-	ssl_conn.shutdown()!
-	return resp
+	return parse_response(response_text)
 }
