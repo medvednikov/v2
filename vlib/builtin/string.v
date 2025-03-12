@@ -392,10 +392,7 @@ pub fn (s string) replace(rep string, with string) string {
 	}
 	mut idx := 0
 	for {
-		idx = s.index_after(rep, idx)
-		if idx == -1 {
-			break
-		}
+		idx = s.index_after(rep, idx) or { break }
 		unsafe {
 			pidxs[pidxs_len] = idx
 			pidxs_len++
@@ -463,10 +460,7 @@ pub fn (s string) replace_each(vals []string) string {
 		with := vals[rep_i + 1]
 
 		for {
-			idx = s_.index_after(rep, idx)
-			if idx == -1 {
-				break
-			}
+			idx = s_.index_after(rep, idx) or { break }
 			// The string already found is set to `/del`, to avoid duplicate searches.
 			for i in 0 .. rep.len {
 				unsafe {
@@ -1352,16 +1346,16 @@ fn (s string) index_last_(p string) int {
 
 // index_after returns the position of the input string, starting search from `start` position.
 @[direct_array_access]
-pub fn (s string) index_after(p string, start int) int {
+pub fn (s string) index_after(p string, start int) ?int {
 	if p.len > s.len {
-		return -1
+		return none
 	}
 	mut strt := start
 	if start < 0 {
 		strt = 0
 	}
 	if start >= s.len {
-		return -1
+		return none
 	}
 	mut i := strt
 	for i < s.len {
@@ -1376,7 +1370,7 @@ pub fn (s string) index_after(p string, start int) int {
 		}
 		i++
 	}
-	return -1
+	return none
 }
 
 // index_u8 returns the index of byte `c` if found in the string.
@@ -1429,10 +1423,7 @@ pub fn (s string) count(substr string) int {
 
 	mut i := 0
 	for {
-		i = s.index_after(substr, i)
-		if i == -1 {
-			return n
-		}
+		i = s.index_after(substr, i) or { return n }
 		i += substr.len
 		n++
 	}
