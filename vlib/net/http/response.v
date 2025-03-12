@@ -35,18 +35,13 @@ pub fn (resp Response) bytestr() string {
 
 // Parse a raw HTTP response into a Response object
 pub fn parse_response(resp string) !Response {
-	println('PARSE RESPONSE resp=${resp}')
 	version, status_code, status_msg := parse_status_line(resp.all_before('\r\n'))!
 	// Build resp header map and separate the body
 	start_idx, end_idx := find_headers_range(resp)!
 	header := parse_headers(resp.substr(start_idx, end_idx))!
 	mut body := resp.substr(end_idx, resp.len)
 	if header.get(.transfer_encoding) or { '' } == 'chunked' {
-		println('GOT CHUNKED, decoding')
-		println(body)
 		body = chunked.decode(body)!
-		println('after decoding:')
-		println(body)
 	}
 	return Response{
 		http_version: version
