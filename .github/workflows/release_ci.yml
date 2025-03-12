@@ -47,8 +47,13 @@ jobs:
             cflags: -cflags "-target arm64-apple-darwin"
           - os: windows-latest
             cc: msvc
-            target: windows
-            artifact: v_windows.zip
+            target: windows_x64
+            artifact: v_windows_x64.zip
+          - os: windows-latest
+            runner-arch: arm64
+            cc: msvc
+            target: windows_arm64
+            artifact: v_windows_arm64.zip
       fail-fast: false
     steps:
       - uses: actions/checkout@v4
@@ -64,11 +69,12 @@ jobs:
           ./v -cc ${{ matrix.cc }} ${{ matrix.cflags }} -prod cmd/tools/vdoctor.v
       - name: Compile release binaries (Windows)
         if: runner.os == 'Windows'
+        shell: cmd
         run: |
-          ./make.bat -msvc
-          ./v -prod -cc msvc -o cmd/vprod.exe cmd/v
-          ./v -prod -cc msvc cmd/tools/vup.v
-          ./v -prod -cc msvc cmd/tools/vdoctor.v
+          call make.bat -msvc
+          v -prod -cc msvc -o cmd/vprod.exe cmd/v
+          v -prod -cc msvc cmd/tools/vup.v
+          v -prod -cc msvc cmd/tools/vdoctor.v
           del *.exe
           del *.tmp.obj
           move cmd/vprod.exe v.exe
@@ -116,7 +122,8 @@ jobs:
         uses: actions/ncipollo/release-action@v1
         with:
           artifacts: |
-            ~/work/v/v/windows/v_windows.zip
+            ~/work/v/v/windows_x64/v_windows_x64.zip
+            ~/work/v/v/windows_arm64/v_windows_arm64.zip
             ~/work/v/v/linux_x86_64/v_linux_x86_64.zip
             ~/work/v/v/linux_arm64/v_linux_arm64.zip
             ~/work/v/v/macos_arm64/v_macos_arm64.zip
