@@ -392,9 +392,7 @@ pub fn (s string) replace(rep string, with string) string {
 	}
 	mut idx := 0
 	for {
-		idx = s.index_after(rep, idx) or {
-			break
-		}
+		idx = s.index_after(rep, idx) or { break }
 		unsafe {
 			pidxs[pidxs_len] = idx
 			pidxs_len++
@@ -462,9 +460,7 @@ pub fn (s string) replace_each(vals []string) string {
 		with := vals[rep_i + 1]
 
 		for {
-			idx = s_.index_after(rep, idx) or {
-				break
-			}
+			idx = s_.index_after(rep, idx) or { break }
 			// The string already found is set to `/del`, to avoid duplicate searches.
 			for i in 0 .. rep.len {
 				unsafe {
@@ -1427,9 +1423,7 @@ pub fn (s string) count(substr string) int {
 
 	mut i := 0
 	for {
-		i = s.index_after(substr, i) or {
-			return n
-		}
+		i = s.index_after(substr, i) or { return n }
 		i += substr.len
 		n++
 	}
