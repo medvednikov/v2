@@ -847,6 +847,36 @@ pub fn (s string) index_after(p string, start int) ?int {
 	return none
 }
 
+pub fn (s string) index_after_(p string, start int) int {
+	if p.len > s.len {
+		return -1
+	}
+
+	mut strt := start
+	if start < 0 {
+		strt = 0
+	}
+	if start >= s.len {
+		return -1
+	}
+	mut i := strt
+
+	for i < s.len {
+		mut j := 0
+		mut ii := i
+		for j < p.len && s[ii] == p[j] {
+			j++
+			ii++
+		}
+
+		if j == p.len {
+			return i
+		}
+		i++
+	}
+	return -1
+}
+
 pub fn (s string) split_into_lines() []string {
 	mut res := []string{}
 	if s.len == 0 {
