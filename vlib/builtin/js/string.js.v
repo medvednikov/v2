@@ -707,7 +707,7 @@ pub fn (s string) replace_each(vals []string) string {
 		with_ = with_
 
 		for {
-			idx = s_.index_after(rep, idx)
+			idx = s_.index_after_(rep, idx)
 			if idx == -1 {
 				break
 			}
