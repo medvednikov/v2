@@ -1373,6 +1373,35 @@ pub fn (s string) index_after(p string, start int) ?int {
 	return none
 }
 
+// index_after_ returns the position of the input string, starting search from `start` position.
+@[direct_array_access]
+pub fn (s string) index_after_(p string, start int) int {
+	if p.len > s.len {
+		return -1
+	}
+	mut strt := start
+	if start < 0 {
+		strt = 0
+	}
+	if start >= s.len {
+		return -1
+	}
+	mut i := strt
+	for i < s.len {
+		mut j := 0
+		mut ii := i
+		for j < p.len && unsafe { s.str[ii] == p.str[j] } {
+			j++
+			ii++
+		}
+		if j == p.len {
+			return i
+		}
+		i++
+	}
+	return -1
+}
+
 // index_u8 returns the index of byte `c` if found in the string.
 // index_u8 returns -1 if the byte can not be found.
 @[direct_array_access]
