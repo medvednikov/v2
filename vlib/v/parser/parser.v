@@ -2839,6 +2839,21 @@ fn (mut p Parser) name_expr() ast.Expr {
 		// `table.type_idxs`, but that was a bad idea. What if the C. definition wasn't declared yet.
 		// And it didn't help with the stat() issue.
 		if language == .c && prev_tok_kind != .amp {
+			expr := p.expr(0)
+			node = ast.CallOrCastExpr{
+				expr:    expr
+				arg:     arg
+				has_arg: has_arg
+				pos:     start_pos.extend(end_pos)
+			}
+			node = ast.CallExpr{
+				left:           node
+				args:           args
+				pos:            pos
+				scope:          p.scope
+				or_block:       or_block
+				is_return_used: p.expecting_value
+			}
 		}
 		is_js_cast := language == .js && name.all_after_last('.')[0].is_capital()
 		// type cast. TODO: finish
