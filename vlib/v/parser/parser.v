@@ -2591,6 +2591,7 @@ fn (mut p Parser) is_generic_cast() bool {
 }
 
 fn (mut p Parser) alias_array_type() ast.Type {
+	/*
 	full_name := p.prepend_mod(p.tok.lit)
 
 	if idx := p.table.type_idxs[full_name] {
@@ -2607,6 +2608,7 @@ fn (mut p Parser) alias_array_type() ast.Type {
 			}
 		}
 	}
+	*/
 	return ast.void_type
 }
 
