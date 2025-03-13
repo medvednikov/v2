@@ -2830,14 +2830,15 @@ fn (mut p Parser) name_expr() ast.Expr {
 		name := if mod != '' { '${mod}.${original_name}' } else { original_name }
 		name_w_mod := p.prepend_mod(name)
 		is_c_pointer_cast := language == .c && prev_tok_kind == .amp // `&C.abc(x)` is *always* a cast
-		is_c_type_cast := language == .c
-			&& (original_name in ['intptr_t', 'uintptr_t'] || (original_name[0].is_capital()))
+		is_c_type_cast := language == .c && (original_name in ['intptr_t', 'uintptr_t']
+			|| (name in p.table.type_idxs && original_name[0].is_capital()))
 		// Ambiguous. Can be a `C.myfn()` function call or `C.mytype()` cast
 		// In same cases it can be both! e.g. `C.stat()`
 		// So just return CallOrCast and figure it out in the checker.
 		// Previously the parser wasn't context free and handled this by looking up the name in
 		// `table.type_idxs`, but that was a bad idea. What if the C. definition wasn't declared yet.
 		// And it didn't help with the stat() issue.
+		/*
 		if language == .c && prev_tok_kind != .amp {
 			expr := p.expr(0)
 			node = ast.CallOrCastExpr{
@@ -2854,7 +2855,9 @@ fn (mut p Parser) name_expr() ast.Expr {
 				or_block:       or_block
 				is_return_used: p.expecting_value
 			}
+			return node
 		}
+		*/
 		is_js_cast := language == .js && name.all_after_last('.')[0].is_capital()
 		// type cast. TODO: finish
 		// if name in ast.builtin_type_names_to_idx {

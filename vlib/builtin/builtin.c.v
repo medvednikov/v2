@@ -334,7 +334,7 @@ pub fn println(s string) {
 		C.android_print(C.stdout, c'%.*s\n', s.len, s.str)
 		return
 	} $else $if ios {
-		//C.WrappedNSLog(s.str)
+		C.WrappedNSLog(s.str)
 		return
 	} $else $if freestanding {
 		bare_print(s.str, u64(s.len))
