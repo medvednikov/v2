@@ -2905,7 +2905,7 @@ pub fn (s string) wrap(config WrapConfig) string {
 	if words.len == 0 {
 		return ''
 	}
-	// defer { unsafe { words.free() } }
+	defer { unsafe { words.free() } }
 	mut sb := strings.new_builder(s.len)
 	sb.write_string(words[0])
 	mut space_left := config.width - words[0].len
