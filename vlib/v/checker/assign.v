@@ -550,7 +550,7 @@ fn (mut c Checker) assign_stmt(mut node ast.AssignStmt) {
 		if mut left is ast.PrefixExpr {
 			if c.fileis('zz.v') {
 				if left_type.nr_muls() != right_type.nr_muls() {
-					c.error('cannot use `${right_sym}` (right side) as `${left_sym}` (left side) in assignment',
+					c.error('cannot use `${right_sym.str_with_correct_nr_muls(right_type.nr_muls())}` (right side) as `${left_sym.str_with_correct_nr_muls(left_type.nr_muls())}` (left side) in assignment',
 						node.pos)
 					println('LL=${left_type.nr_muls()} ${left_sym} RR=${right_type.nr_muls()} ${right_sym}')
 				}
