@@ -186,6 +186,7 @@ fn (mut c Checker) assign_stmt(mut node ast.AssignStmt) {
 				&& ((left.info as ast.IdentVar).share == .shared_t || left_type.has_flag(.shared_f))
 				&& c.table.sym(left_type).kind in [.array, .map, .struct]
 		}
+
 		if c.comptime.comptime_for_field_var != '' && mut left is ast.ComptimeSelector {
 			if c.comptime.has_different_types && node.right[i].is_literal()
 				&& !c.comptime.inside_comptime_if {
@@ -545,6 +546,17 @@ fn (mut c Checker) assign_stmt(mut node ast.AssignStmt) {
 			c.error('use `${mut_str}array2 ${node.op.str()} array1.clone()` instead of `${mut_str}array2 ${node.op.str()} array1` (or use `unsafe`)',
 				node.pos)
 		}
+
+		if mut left is ast.PrefixExpr {
+			if c.fileis('zz.v') {
+				if left_type.nr_muls() != right_type.nr_muls() {
+					c.error('cannot use `${right_sym}` (right side) as `${left_sym}` (left side) in assignment',
+						node.pos)
+					println('LL=${left_type.nr_muls()} ${left_sym} RR=${right_type.nr_muls()} ${right_sym}')
+				}
+			}
+		}
+
 		if left_sym.kind == .array && right_sym.kind == .array {
 			right_info := right_sym.info as ast.Array
 			right_elem_type := c.table.unaliased_type(right_info.elem_type)
