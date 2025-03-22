@@ -547,13 +547,12 @@ fn (mut c Checker) assign_stmt(mut node ast.AssignStmt) {
 				node.pos)
 		}
 
+		// Do not allow auto (de)reference in PrefixExpr
+		// e.g. `*ptr1 = ptr2`
 		if mut left is ast.PrefixExpr {
-			if c.fileis('zz.v') {
-				if left_type.nr_muls() != right_type.nr_muls() {
-					c.error('cannot use `${right_sym.str_with_correct_nr_muls(right_type.nr_muls())}` (right side) as `${left_sym.str_with_correct_nr_muls(left_type.nr_muls())}` (left side) in assignment',
-						node.pos)
-					println('LL=${left_type.nr_muls()} ${left_sym} RR=${right_type.nr_muls()} ${right_sym}')
-				}
+			if left_type.nr_muls() != right_type.nr_muls() {
+				c.warn('cannot use `${right_sym.str_with_correct_nr_muls(right_type.nr_muls())}` (right side) as `${left_sym.str_with_correct_nr_muls(left_type.nr_muls())}` (left side) in assignment',
+					node.pos)
 			}
 		}
 
