@@ -551,7 +551,9 @@ fn (mut c Checker) assign_stmt(mut node ast.AssignStmt) {
 		// e.g. `*ptr1 = ptr2`
 		if mut left is ast.PrefixExpr {
 			if left_type.nr_muls() != right_type.nr_muls() {
-				c.warn('cannot use `${right_sym.str_with_correct_nr_muls(right_type.nr_muls())}` (right side) as `${left_sym.str_with_correct_nr_muls(left_type.nr_muls())}` (left side) in assignment',
+				r := right_sym.str_with_correct_nr_muls(right_type.nr_muls())
+				l := left_sym.str_with_correct_nr_muls(left_type.nr_muls())
+				c.warn('cannot use `${r}` (right side) as `${l}` (left side) in assignment',
 					node.pos)
 			}
 		}
