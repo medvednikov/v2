@@ -550,7 +550,8 @@ fn (mut c Checker) assign_stmt(mut node ast.AssignStmt) {
 		// Do not allow auto (de)reference in PrefixExpr
 		// e.g. `*ptr1 = ptr2`
 		if mut left is ast.PrefixExpr {
-			if left_type.nr_muls() != right_type.nr_muls() {
+			if left_type.nr_muls() != right_type.nr_muls() && !left_type.is_voidptr()
+				&& !right_type.is_voidptr() {
 				r := right_sym.str_with_correct_nr_muls(right_type.nr_muls())
 				l := left_sym.str_with_correct_nr_muls(left_type.nr_muls())
 				c.error('cannot use `${r}` (right side) as `${l}` (left side) in assignment',
