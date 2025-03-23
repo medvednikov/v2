@@ -12,3 +12,10 @@ vlib/v/checker/tests/invalid_prefix_left_side_assign_stmt_err.vv:4:2: error: can
       |     ^
     5 |     println(x)
     6 | }
+vlib/v/checker/tests/invalid_prefix_left_side_assign_stmt_err.vv:4:5: error: cannot use `nil` (right side) as `&int` (left side) in assignment
+    2 |     mut x := 0
+    3 |     ~x = 34
+    4 |     &x = unsafe { nil }
+      |        ^
+    5 |     println(x)
+    6 | }
