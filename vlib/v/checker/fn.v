@@ -2721,6 +2721,11 @@ fn (mut c Checker) spawn_expr(mut node ast.SpawnExpr) ast.Type {
 			node.call_expr.left.pos())
 	}
 
+	c.table.fns_called_concurrently[c.table.full_call_expr_fn_name(node.call_expr)] = true
+	if c.fileis('race.v') {
+		println('cal ${node.call_expr.name}')
+	}
+
 	if c.pref.backend.is_js() {
 		return c.table.find_or_register_promise(c.unwrap_generic(ret_type))
 	} else {

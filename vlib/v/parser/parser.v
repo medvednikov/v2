@@ -113,6 +113,7 @@ mut:
 	script_mode_start_token  token.Token
 	generic_type_level       int  // to avoid infinite recursion segfaults due to compiler bugs in ensure_type_exists
 	main_already_defined     bool // TODO move to checker
+	// inside_go                bool // for race detector
 pub mut:
 	scanner &scanner.Scanner = unsafe { nil }
 	table   &ast.Table       = unsafe { nil }

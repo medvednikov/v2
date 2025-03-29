@@ -14,6 +14,7 @@ import v.markused
 import v.depgraph
 import v.callgraph
 import v.dotgraph
+import v.racedetector
 
 pub struct Builder {
 pub:
@@ -133,6 +134,19 @@ pub fn (mut b Builder) middle_stages() ! {
 	if b.pref.dump_defines != '' {
 		b.dump_defines()
 	}
+
+	util.timing_start('RACE_DETECTOR')
+	mut rd := racedetector.RaceDetector{
+		pref:  b.pref
+		table: b.table
+		files: b.parsed_files
+		file:  b.parsed_files[0]
+	}
+	rd.run()
+	b.checker.errors << rd.errors
+	b.checker.nr_errors += rd.errors.len
+	util.timing_measure('RACE_DETECTOR')
+
 	b.print_warnings_and_errors()
 	if b.checker.should_abort {
 		return error('too many errors/warnings/notices')

@@ -635,6 +635,7 @@ pub mut:
 	end_pos     token.Pos // end position
 	//
 	is_expand_simple_interpolation bool // true, when @[expand_simple_interpolation] is used on a fn. It should have a single string argument.
+	is_called_concurrently         bool // for race detector
 }
 
 pub fn (f &FnDecl) new_method_with_receiver_type(new_type_ Type) FnDecl {
@@ -1566,7 +1567,7 @@ pub:
 	has_len       bool
 	has_cap       bool
 	has_init      bool
-	has_index     bool // true if temp variable index is used	
+	has_index     bool // true if temp variable index is used
 pub mut:
 	exprs        []Expr // `[expr, expr]` or `[expr]Type{}` for fixed array
 	len_expr     Expr   // len: expr

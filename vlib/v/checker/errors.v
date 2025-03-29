@@ -164,7 +164,7 @@ fn (mut c Checker) warn_or_error(message string, pos token.Pos, warn bool) {
 		if kpos !in c.error_lines {
 			c.error_lines[kpos] = true
 			err := errors.Error{
-				reporter:  errors.Reporter.checker
+				reporter:  .checker
 				pos:       pos
 				file_path: c.file.path
 				message:   message

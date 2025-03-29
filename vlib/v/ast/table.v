@@ -96,10 +96,11 @@ pub mut:
 	// cache for type_to_str_using_aliases
 	cached_type_to_str shared map[u64]string
 	// counters and maps for anon structs and unions, to avoid name conflicts.
-	anon_struct_names   map[string]int // anon struct name -> struct sym idx
-	anon_struct_counter int
-	anon_union_names    map[string]int // anon union name -> union sym idx
-	anon_union_counter  int
+	anon_struct_names       map[string]int // anon struct name -> struct sym idx
+	anon_struct_counter     int
+	anon_union_names        map[string]int // anon union name -> union sym idx
+	anon_union_counter      int
+	fns_called_concurrently map[string]bool // for race detector
 }
 
 // used by vls to avoid leaks
@@ -2703,4 +2704,21 @@ pub fn (mut t Table) get_veb_result_type_idx() int {
 
 	t.veb_res_idx_cache = t.find_type('veb.Result')
 	return t.veb_res_idx_cache
+}
+
+pub fn (mut t Table) full_call_expr_fn_name(node CallExpr) string {
+	if node.is_method {
+		ts := t.sym(node.receiver_type)
+		return ts.name + '.' + node.name
+	}
+	return node.name
+}
+
+pub fn (t &Table) fn_is_called_concurrently(node FnDecl) bool {
+	if node.is_method {
+		ts := t.sym(node.receiver.typ)
+		return t.fns_called_concurrently[ts.name + '.' + node.name]
+	}
+	// println('AZAZA ${node.name} r=${ts.name}')
+	return t.fns_called_concurrently[node.name]
 }

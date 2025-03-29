@@ -1111,6 +1111,7 @@ fn (mut c Checker) fail_if_immutable(mut expr ast.Expr) (string, token.Pos) {
 		}
 	}
 	if explicit_lock_needed {
+		print_backtrace()
 		c.error('`${to_lock}` is `shared` and needs explicit lock for `${expr.type_name()}`',
 			pos)
 		to_lock = ''
