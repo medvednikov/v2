@@ -105,11 +105,15 @@ pub fn (mut r RaceDetector) array_append(node ast.InfixExpr) {
 		sel := node.left
 		println('vvvvvvv')
 		println(sel.field_name)
+		println('sel type')
+		receiver_sym := r.table.sym(sel.expr_type) // `Table` in `Table.data`
+		r.error_if_not_shared(node.left_type, node.pos, receiver_sym.name + '.' + sel.field_name)
+		return
 	}
-	r.error_if_not_shared(node.left_type, node.pos)
+	r.error_if_not_shared(node.left_type, node.pos, '')
 }
 
-pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos) {
+pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos, should_be_shared string) {
 	if typ.share() != .shared_t {
 		sym := r.table.sym(typ)
 		println('RACE ERROR for typ=${sym}')
@@ -117,7 +121,7 @@ pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos) {
 			reporter:  .checker
 			pos:       pos
 			file_path: r.file.path
-			message:   'potential data race detected. should be shared'
+			message:   'potential data race detected. `${should_be_shared}` should be declared as `shared`'
 			// details:   details
 		}
 		r.errors << err
