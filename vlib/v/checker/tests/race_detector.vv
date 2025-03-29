@@ -1,0 +1,159 @@
+// Test cases for the race detector
+module main
+
+import time // Only needed if we add waits in main, checker runs before execution
+import sync // Needed for spawn
+
+struct Data {
+mut:
+	items []int
+}
+
+struct SharedData {
+mut:
+	shared_items shared []int
+}
+
+// --- Test Functions Called Concurrently ---
+
+// FAIL: Append to non-shared local array
+@[spawn]
+fn concurrent_append_local() {
+	mut arr := [1, 2]
+	arr << 3 // Race detector should flag this line
+}
+
+// FAIL: Set non-shared local array element
+@[spawn]
+fn concurrent_set_local() {
+	mut arr := [1, 2, 3]
+	if arr.len > 0 { // Ensure index is valid
+		arr[0] = 0 // Race detector should flag this line
+	}
+}
+
+// FAIL: Append to non-shared field via local struct instance
+@[spawn]
+fn concurrent_append_field() {
+	mut d := Data{}
+	d.items << 4 // Race detector should flag this line
+}
+
+// FAIL: Set non-shared field element via local struct instance
+@[spawn]
+fn concurrent_set_field() {
+	mut d := Data{ items: [1, 2] }
+	if d.items.len > 0 { // Ensure index is valid
+		d.items[0] = 5 // Race detector should flag this line
+	}
+}
+
+// FAIL: Set non-shared nested array element
+@[spawn]
+fn concurrent_set_nested() {
+	mut nested_arr := [[1], [2]]
+	if nested_arr.len > 0 && nested_arr[0].len > 0 { // Ensure index is valid
+		nested_arr[0][0] = 99 // Race detector should flag this line (base `nested_arr`)
+	}
+}
+
+// PASS: Append to shared local array
+@[spawn]
+fn concurrent_append_local_shared() {
+	shared shared_arr := [1, 2]
+	shared_arr << 3 // OK
+}
+
+// PASS: Set shared local array element
+@[spawn]
+fn concurrent_set_local_shared() {
+	shared mut shared_arr := [1, 2, 3]
+	if shared_arr.len > 0 { // Ensure index is valid
+		shared_arr[0] = 0 // OK
+	}
+}
+
+// PASS: Append to shared field via local struct instance
+@[spawn]
+fn concurrent_append_field_shared() {
+	mut sd := SharedData{}
+	sd.shared_items << 4 // OK
+}
+
+// PASS: Set shared field element via local struct instance
+@[spawn]
+fn concurrent_set_field_shared() {
+	mut sd := SharedData{ shared_items: [1, 2] }
+	if sd.shared_items.len > 0 { // Ensure index is valid
+		sd.shared_items[0] = 5 // OK
+	}
+}
+
+// --- Test Functions NOT Called Concurrently ---
+
+// PASS: Append to non-shared local array (should not be checked)
+fn non_concurrent_append_local() {
+	mut arr := [1, 2]
+	arr << 3 // OK (not concurrent)
+}
+
+// PASS: Set non-shared local array element (should not be checked)
+fn non_concurrent_set_local() {
+	mut arr := [1, 2, 3]
+	if arr.len > 0 { // Ensure index is valid
+		arr[0] = 0 // OK (not concurrent)
+	}
+}
+
+// PASS: Append to non-shared field (should not be checked)
+fn non_concurrent_append_field() {
+	mut d := Data{}
+	d.items << 4 // OK (not concurrent)
+}
+
+// PASS: Set non-shared field element (should not be checked)
+fn non_concurrent_set_field() {
+	mut d := Data{ items: [1, 2] }
+	if d.items.len > 0 { // Ensure index is valid
+		d.items[0] = 5 // OK (not concurrent)
+	}
+}
+
+// --- Main Function to Trigger Checks ---
+
+fn main() {
+	// Launch concurrent functions using spawn
+	// Store handles if needed, otherwise just launch
+	_ := spawn concurrent_append_local()
+	_ := spawn concurrent_set_local()
+	_ := spawn concurrent_append_field()
+	_ := spawn concurrent_set_field()
+	_ := spawn concurrent_set_nested()
+
+	// These should pass the race detector check
+	_ := spawn concurrent_append_local_shared()
+	_ := spawn concurrent_set_local_shared()
+	_ := spawn concurrent_append_field_shared()
+	_ := spawn concurrent_set_field_shared()
+
+	// Call non-concurrent functions directly (detector should ignore these)
+	non_concurrent_append_local()
+	non_concurrent_set_local()
+	non_concurrent_append_field()
+	non_concurrent_set_field()
+
+	// Wait for spawned tasks to potentially finish (optional for checker)
+	// This requires storing the handles and using .wait()
+	// For just triggering the checker analysis, waiting isn't strictly required.
+	// handles := [
+	// 	spawn concurrent_append_local(),
+	// 	spawn concurrent_set_local(),
+	// 	// ... add all other handles
+	// ]
+	// for handle in handles {
+	// 	handle.wait()
+	// }
+	// time.sleep(10 * time.millisecond) // Alternative simple wait
+
+	println('Race detector tests launched with spawn (check checker output for errors)')
+}

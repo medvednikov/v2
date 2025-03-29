@@ -126,11 +126,8 @@ pub fn (mut r RaceDetector) stmt(stmt ast.Stmt) {
 				r.stmt(s)
 			}
 		}
-		// --- Removed incorrect Expr variants from Stmt match ---
 		// ast.IfExpr, ast.MatchExpr, ast.GoExpr, ast.SpawnExpr, ast.LockExpr
 		// are handled via ExprStmt -> r.expr()
-
-		// Add other relevant *statement* types if needed
 		ast.AssertStmt {
 			r.expr(stmt.expr)
 			// r.expr(stmt.extra) // Check extra message expr if necessary
@@ -243,9 +240,15 @@ pub fn (mut r RaceDetector) expr(expr ast.Expr) {
 				r.expr(item_expr)
 			}
 			// Check len/cap/init expressions if they exist
-			if expr.has_len { r.expr(expr.len_expr) }
-			if expr.has_cap { r.expr(expr.cap_expr) }
-			if expr.has_init { r.expr(expr.init_expr) }
+			if expr.has_len {
+				r.expr(expr.len_expr)
+			}
+			if expr.has_cap {
+				r.expr(expr.cap_expr)
+			}
+			if expr.has_init {
+				r.expr(expr.init_expr)
+			}
 		}
 		ast.MapInit {
 			for key_expr in expr.keys {
@@ -436,7 +439,6 @@ pub fn (mut r RaceDetector) array_set(node ast.IndexExpr) {
 	r.error_if_not_shared(array_type, node.pos, should_be_shared)
 }
 
-
 // Error reporting function
 pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos, target_name string) {
 	if typ.share() != .shared_t {
@@ -450,7 +452,8 @@ pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos, tar
 			target_desc = 'variable/field of type `${sym.name}` ' // Fallback if name couldn't be determined
 		}
 
-		println('RACE ERROR DETECTED: Type=${sym.name} (${sym.kind}) at ${r.file.path}:${pos.line_nr + 1}:${pos.col + 1}, Target=${target_name}')
+		println('RACE ERROR DETECTED: Type=${sym.name} (${sym.kind}) at ${r.file.path}:${
+			pos.line_nr + 1}:${pos.col + 1}, Target=${target_name}')
 		details := 'Variable or field ${target_desc}is modified concurrently but is not declared as `shared`.'
 
 		err := errors.Error{
