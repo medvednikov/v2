@@ -103,9 +103,9 @@ pub fn (mut r RaceDetector) array_append(node ast.InfixExpr) {
 	}
 	if node.left is ast.SelectorExpr {
 		sel := node.left
-		println('vvvvvvv')
-		println(sel.field_name)
-		println('sel type')
+		// println('vvvvvvv')
+		// println(sel.field_name)
+		// println('sel type')
 		receiver_sym := r.table.sym(sel.expr_type) // `Table` in `Table.data`
 		r.error_if_not_shared(node.left_type, node.pos, receiver_sym.name + '.' + sel.field_name)
 		return
@@ -126,5 +126,17 @@ pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos, sho
 		}
 		r.errors << err
 		r.file.errors << err
+		//
+		/*
+		err2 := errors.Error{
+			reporter:  .checker
+			pos:       token.Pos{
+			file_path: 'race.v'
+			message:   'function called concurrently here'
+			// details:   details
+		}
+		r.errors << err
+		r.file.errors << err
+		*/
 	}
 }
