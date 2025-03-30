@@ -10,8 +10,7 @@ import v.token
 // but is accessed in multiple threads/coroutines.
 pub struct RaceDetector {
 pub mut:
-	pref &pref.Preferences
-	// index &IndexState
+	pref   &pref.Preferences
 	table  &ast.Table = unsafe { nil }
 	files  []&ast.File
 	file   &ast.File // current file
