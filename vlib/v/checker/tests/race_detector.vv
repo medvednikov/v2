@@ -11,7 +11,7 @@ mut:
 
 struct SharedData {
 mut:
-	shared_items shared []int
+	shared_items shared []int // Keep shared on the type declaration within the struct
 }
 
 // --- Test Functions Called Concurrently ---
@@ -60,14 +60,24 @@ fn concurrent_set_nested() {
 // PASS: Append to shared local array
 @[spawn]
 fn concurrent_append_local_shared() {
-	shared shared_arr := [1, 2]
+	// Use `shared` without `mut` for the variable declaration.
+	// Note: V requires `mut` here to allow modification (`<<`) even if it's shared.
+	// If this causes a compile error *before* the race detector runs,
+	// we might need `shared mut`. Let's try without first.
+	// If V complains, we'll revert this specific change.
+	// *** Update based on V syntax: `shared` variables intended for modification still need `mut`. ***
+	// *** Reverting this specific change back to `shared mut`. ***
+	shared mut shared_arr := [1, 2] // Needs `mut` to allow `<<` operation
 	shared_arr << 3 // OK
 }
 
 // PASS: Set shared local array element
 @[spawn]
 fn concurrent_set_local_shared() {
-	shared mut shared_arr := [1, 2, 3]
+	// Use `shared` without `mut` for the variable declaration.
+	// *** Update based on V syntax: Needs `mut` for assignment `shared_arr[0] = 0`. ***
+	// *** Reverting this specific change back to `shared mut`. ***
+	shared mut shared_arr := [1, 2, 3] // Needs `mut` to allow `[0] =` operation
 	if shared_arr.len > 0 { // Ensure index is valid
 		shared_arr[0] = 0 // OK
 	}
@@ -76,21 +86,24 @@ fn concurrent_set_local_shared() {
 // PASS: Append to shared field via local struct instance
 @[spawn]
 fn concurrent_append_field_shared() {
+	// Struct instance `sd` itself doesn't need to be shared, only the field access matters.
+	// The field `shared_items` is already declared `shared []int` in the struct definition.
 	mut sd := SharedData{}
-	sd.shared_items << 4 // OK
+	sd.shared_items << 4 // OK (modifies shared field)
 }
 
 // PASS: Set shared field element via local struct instance
 @[spawn]
 fn concurrent_set_field_shared() {
+	// Struct instance `sd` itself doesn't need to be shared.
 	mut sd := SharedData{ shared_items: [1, 2] }
 	if sd.shared_items.len > 0 { // Ensure index is valid
-		sd.shared_items[0] = 5 // OK
+		sd.shared_items[0] = 5 // OK (modifies shared field)
 	}
 }
 
 // --- Test Functions NOT Called Concurrently ---
-
+// (These remain unchanged)
 // PASS: Append to non-shared local array (should not be checked)
 fn non_concurrent_append_local() {
 	mut arr := [1, 2]
@@ -120,10 +133,9 @@ fn non_concurrent_set_field() {
 }
 
 // --- Main Function to Trigger Checks ---
-
+// (Remains unchanged from previous version using spawn)
 fn main() {
 	// Launch concurrent functions using spawn
-	// Store handles if needed, otherwise just launch
 	_ := spawn concurrent_append_local()
 	_ := spawn concurrent_set_local()
 	_ := spawn concurrent_append_field()
@@ -141,19 +153,6 @@ fn main() {
 	non_concurrent_set_local()
 	non_concurrent_append_field()
 	non_concurrent_set_field()
-
-	// Wait for spawned tasks to potentially finish (optional for checker)
-	// This requires storing the handles and using .wait()
-	// For just triggering the checker analysis, waiting isn't strictly required.
-	// handles := [
-	// 	spawn concurrent_append_local(),
-	// 	spawn concurrent_set_local(),
-	// 	// ... add all other handles
-	// ]
-	// for handle in handles {
-	// 	handle.wait()
-	// }
-	// time.sleep(10 * time.millisecond) // Alternative simple wait
 
 	println('Race detector tests launched with spawn (check checker output for errors)')
 }
