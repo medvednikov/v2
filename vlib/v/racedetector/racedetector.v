@@ -52,7 +52,6 @@ pub fn (mut r RaceDetector) fn_decl(node ast.FnDecl) {
 	for stmt in node.stmts {
 		r.stmt(stmt)
 	}
-	// println('!!!fn ${node.name}')
 }
 
 // Process statements within a concurrent function
@@ -178,7 +177,6 @@ pub fn (mut r RaceDetector) expr(expr ast.Expr) {
 			r.expr(expr.expr)
 		}
 		ast.IfExpr { // Check conditions/bodies of if/else if/else
-			// Note: This is an If *Expression*
 			for branch in expr.branches {
 				r.expr(branch.cond)
 				for s in branch.stmts { // Check statements in branch body
@@ -187,7 +185,6 @@ pub fn (mut r RaceDetector) expr(expr ast.Expr) {
 			}
 		}
 		ast.MatchExpr { // Check condition/bodies of match
-			// Note: This is a Match *Expression*
 			r.expr(expr.cond)
 			for branch in expr.branches {
 				// Check expressions on the left side of the branch if needed
