@@ -31,16 +31,10 @@ pub fn RaceDetector.new(p &pref.Preferences) &RaceDetector {
 */
 
 pub fn (mut r RaceDetector) run() {
-	println('RaceDetector.run2()')
 	// Ensure table is initialized if this is the entry point
-	if isnil(r.table) {
-		println('Warning: RaceDetector.table is nil. Cannot run.')
-		return
-	}
-	println(r.table.fns_called_concurrently)
+	// println(r.table.fns_called_concurrently)
 	for file in r.files {
 		r.file = file
-		// Example filter, adjust as needed
 		// if !file.path.contains('race.v') && !file.path.contains('concurrent') {
 		// 	continue
 		// }
@@ -439,7 +433,7 @@ pub fn (mut r RaceDetector) array_set(node ast.IndexExpr) {
 	r.error_if_not_shared(array_type, node.pos, should_be_shared)
 }
 
-// Error reporting function
+// Error reporting function (details removed)
 pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos, target_name string) {
 	if typ.share() != .shared_t {
 		sym := r.table.sym(typ)
@@ -452,19 +446,19 @@ pub fn (mut r RaceDetector) error_if_not_shared(typ ast.Type, pos token.Pos, tar
 			target_desc = 'variable/field of type `${sym.name}` ' // Fallback if name couldn't be determined
 		}
 
-		println('RACE ERROR DETECTED: Type=${sym.name} (${sym.kind}) at ${r.file.path}:${
-			pos.line_nr + 1}:${pos.col + 1}, Target=${target_name}')
-		details := 'Variable or field ${target_desc}is modified concurrently but is not declared as `shared`.'
+		if r.pref.is_verbose {
+			println('RACE ERROR DETECTED: Type=${sym.name} (${sym.kind}) at ${r.file.path}:${
+				pos.line_nr + 1}:${pos.col + 1}, Target=${target_name}')
+		}
 
 		err := errors.Error{
 			reporter:  .checker
 			pos:       pos
 			file_path: r.file.path
 			message:   'potential data race detected: ${target_desc}should be declared as `shared`'
-			details:   details
+			// No 'details' field assigned here anymore
 		}
 		// Avoid duplicate errors for the same position (simple check)
-		// TODO: Consider a more robust duplicate detection (e.g., hash of location+message)
 		if !r.errors.any(it.pos == err.pos && it.message == err.message) {
 			r.errors << err
 			// Also add to file errors if that's standard practice
