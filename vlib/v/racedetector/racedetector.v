@@ -16,19 +16,7 @@ pub mut:
 	files  []&ast.File
 	file   &ast.File // current file
 	errors []errors.Error
-	// is_assert   bool
-	// inside_dump bool
-	//
-	// strings_builder_type ast.Type = ast.no_type
 }
-
-/*
-pub fn RaceDetector.new(p &pref.Preferences) &RaceDetector {
-	return &RaceDetector{
-		pref: p
-	}
-}
-*/
 
 pub fn (mut r RaceDetector) run() {
 	// Ensure table is initialized if this is the entry point

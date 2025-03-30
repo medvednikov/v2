@@ -253,7 +253,8 @@ pub mut:
 	// forwards compatibility settings:
 	relaxed_gcc14 bool = true // turn on the generated pragmas, that make gcc versions > 14 a lot less pedantic. The default is to have those pragmas in the generated C output, so that gcc-14 can be used on Arch etc.
 	//
-	subsystem Subsystem // the type of the window app, that is going to be generated; has no effect on !windows
+	subsystem     Subsystem // the type of the window app, that is going to be generated; has no effect on !windows
+	race_detector bool      // enable the experimental race detector pass
 }
 
 pub struct LineInfo {
@@ -573,6 +574,10 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 			'-autofree' {
 				res.autofree = true
 				res.gc_mode = .no_gc
+				res.build_options << arg
+			}
+			'-race-detector' {
+				res.race_detector = true
 				res.build_options << arg
 			}
 			'-print_autofree_vars' {
