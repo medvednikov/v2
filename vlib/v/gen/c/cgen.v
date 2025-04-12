@@ -277,7 +277,7 @@ pub:
 	header           string          // produced output for out.h (-parallel-cc)
 	res_builder      strings.Builder // produced output (complete)
 	out_str          string          // produced output from g.out
-	out0_str         string          // helpers output (auto fns, dump fns) for out_0.c (-parallel-cc)	
+	out0_str         string          // helpers output (auto fns, dump fns) for out_0.c (-parallel-cc)
 	extern_str       string          // extern chunk for (-parallel-cc)
 	out_fn_start_pos []int           // fn decl positions
 }
@@ -520,14 +520,20 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) GenO
 			if idx in [0, 31] {
 				continue
 			}
-			g.definitions.writeln('int _v_type_idx_${sym.cname}();')
+			if g.pref.path.contains('/toml') && sym.cname.contains('map[string]') {
+				continue
+			}
+			g.definitions.writeln('int _v_type_idx_${sym.cname}(); // 1build module ${g.pref.path}')
 		}
 	} else if g.pref.use_cache {
 		for idx, sym in g.table.type_symbols {
 			if idx in [0, 31] {
 				continue
 			}
-			g.definitions.writeln('int _v_type_idx_${sym.cname}() { return ${idx}; };')
+			if g.pref.path.contains('/toml') && sym.cname.contains('map[string]') {
+				continue
+			}
+			g.definitions.writeln('int _v_type_idx_${sym.cname}() { return ${idx}; }; //lol ${g.pref.path}')
 		}
 	}
 
