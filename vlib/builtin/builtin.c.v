@@ -636,7 +636,7 @@ pub fn vcalloc(n isize) &u8 {
 	if n < 0 {
 		_memory_panic(@FN, n)
 	} else if n == 0 {
-		return &u8(0)
+		return &u8(unsafe { nil })
 	}
 	$if prealloc {
 		return unsafe { prealloc_calloc(n) }
@@ -645,7 +645,7 @@ pub fn vcalloc(n isize) &u8 {
 	} $else {
 		return unsafe { C.calloc(1, n) }
 	}
-	return &u8(0) // not reached, TODO: remove when V's checker is improved
+	return &u8(unsafe { nil }) // not reached, TODO: remove when V's checker is improved
 }
 
 // special versions of the above that allocate memory which is not scanned
@@ -673,7 +673,7 @@ pub fn vcalloc_noscan(n isize) &u8 {
 	} $else {
 		return unsafe { vcalloc(n) }
 	}
-	return &u8(0) // not reached, TODO: remove when V's checker is improved
+	return &u8(unsafe { nil }) // not reached, TODO: remove when V's checker is improved
 }
 
 // free allows for manually freeing memory allocated at the address `ptr`.
