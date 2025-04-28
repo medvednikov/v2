@@ -26,11 +26,11 @@ pub fn (mut ed EmbedFileData) free() {
 		ed.compression_type.free()
 		if ed.free_compressed {
 			free(ed.compressed)
-			ed.compressed = &u8(unsafe { nil })
+			ed.compressed = &u8(nil)
 		}
 		if ed.free_uncompressed {
 			free(ed.uncompressed)
-			ed.uncompressed = &u8(unsafe { nil })
+			ed.uncompressed = &u8(nil)
 		}
 	}
 }

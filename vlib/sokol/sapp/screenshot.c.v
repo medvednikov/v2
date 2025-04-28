@@ -29,7 +29,7 @@ pub fn screenshot_window() &Screenshot {
 pub fn (mut ss Screenshot) free() {
 	unsafe {
 		free(ss.pixels)
-		ss.pixels = &u8(unsafe { nil })
+		ss.pixels = &u8(nil)
 	}
 }
 

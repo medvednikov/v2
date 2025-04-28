@@ -19,7 +19,7 @@ fn fast_string_eq(a string, b string) bool {
 
 fn map_hash_string(pkey voidptr) u64 {
 	key := *unsafe { &string(pkey) }
-	// XTODO remove unsafe once virtual C.consts can be declared
+	// XTODO remove voidptr cast once virtual C.consts can be declared
 	return C.wyhash(key.str, u64(key.len), 0, &u64(voidptr(C._wyp)))
 }
 
