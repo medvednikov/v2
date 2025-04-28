@@ -7,7 +7,7 @@ __global g_start_time = u64(0)
 
 @[markused]
 pub fn on_call(fname string) {
-	mut volatile pfbase := unsafe { &u8(unsafe { nil }) }
+	mut volatile pfbase := &u8(unsafe { nil })
 	volatile fbase := u8(0)
 	ns := current_time() - g_start_time
 	mut ssize := u64(0)
