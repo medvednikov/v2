@@ -3600,7 +3600,7 @@ fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 		&& !c.file.is_translated {
 		if from_sym.language != .c {
 			// TODO make an error
-			c.warn('node=${node} cannot cast a number to a type reference, use `nil` or a voidptr cast first: `&Type(voidptr(123))`',
+			c.warn('cannot cast a number to a type reference, use `nil` or a voidptr cast first: `&Type(voidptr(123))`',
 				node.pos)
 		}
 	}
