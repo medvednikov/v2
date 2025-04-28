@@ -1,5 +1,5 @@
 fn test_isnil_byteptr() {
-	pb := &u8(0)
+	pb := &u8(unsafe { nil })
 	assert isnil(pb)
 }
 

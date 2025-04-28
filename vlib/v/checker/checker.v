@@ -3595,7 +3595,7 @@ fn (mut c Checker) cast_expr(mut node ast.CastExpr) ast.Type {
 	}
 
 	// if from_type == ast.voidptr_type_idx && !c.inside_unsafe && !c.pref.translated
-	// Do not allow `&u8(0)` etc, force nil or voidptr cast
+	// Do not allow `&u8(unsafe { nil })` etc, force nil or voidptr cast
 	if from_type.is_number() && to_type.is_ptr() && !c.inside_unsafe && !c.pref.translated
 		&& !c.file.is_translated {
 		if from_sym.language != .c {
