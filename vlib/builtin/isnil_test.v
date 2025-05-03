@@ -9,7 +9,7 @@ fn test_isnil_voidptr() {
 }
 
 fn test_isnil_charptr() {
-	pc := &char(0)
+	pc := &char(unsafe { nil })
 	assert isnil(pc)
 }
 
