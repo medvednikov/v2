@@ -293,9 +293,9 @@ pub fn execute(cmd string) Result {
 // user provided escape sequences.
 @[unsafe]
 pub fn raw_execute(cmd string) Result {
-	mut child_stdin := &u32(0)
-	mut child_stdout_read := &u32(0)
-	mut child_stdout_write := &u32(0)
+	mut child_stdin := &u32(unsafe { nil })
+	mut child_stdout_read := &u32(unsafe { nil })
+	mut child_stdout_write := &u32(unsafe { nil })
 	mut sa := SecurityAttributes{}
 	sa.n_length = sizeof(C.SECURITY_ATTRIBUTES)
 	sa.b_inherit_handle = true
