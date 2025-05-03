@@ -35,7 +35,7 @@ fn close_valid_handle(p voidptr) {
 	if *h != &u32(unsafe { nil }) {
 		C.CloseHandle(*h)
 		unsafe {
-			*h = &u32(unsafe { nil })
+			*h = &u32(nil)
 		}
 	}
 }
