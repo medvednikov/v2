@@ -3540,25 +3540,6 @@ fn (mut g Gen) expr(node_ ast.Expr) {
 		ast.ArrayInit {
 			g.array_init(node, '')
 		}
-		ast.ArrayOrStructInit {
-			if node.is_array {
-			g.array_init(node.array_init, '')
-
- }
-else {
-	// XTODO copypasta
-			if node.struct_init.unresolved {
-				g.expr(g.table.resolve_init(node.struct_init, g.unwrap_generic(node.struct_init.typ)))
-			} else {
-				// `user := User{name: 'Bob'}`
-				g.inside_struct_init = true
-				g.cur_struct_init_typ = node.struct_init.typ
-				g.struct_init(node.struct_init)
-				g.cur_struct_init_typ = 0
-				g.inside_struct_init = false
-			}
-			}
-		}
 		ast.AsCast {
 			g.as_cast(node)
 		}
