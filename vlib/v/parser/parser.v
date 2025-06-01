@@ -113,6 +113,7 @@ mut:
 	script_mode_start_token  token.Token
 	generic_type_level       int  // to avoid infinite recursion segfaults due to compiler bugs in ensure_type_exists
 	main_already_defined     bool // TODO move to checker
+	is_vls                   bool = true
 pub mut:
 	scanner &scanner.Scanner = unsafe { nil }
 	table   &ast.Table       = unsafe { nil }
@@ -2119,7 +2120,7 @@ fn (mut p Parser) note(s string) {
 }
 
 fn (mut p Parser) error_with_pos(s string, pos token.Pos) ast.NodeError {
-	// print_backtrace()
+	print_backtrace()
 	mut kind := 'error:'
 	if p.pref.fatal_errors {
 		util.show_compiler_message(kind, pos: pos, file_path: p.file_path, message: s)
@@ -3338,6 +3339,10 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	mut field_name := ''
 	// check if the name is on the same line as the dot
 	if p.prev_tok.pos().line_nr == name_pos.line_nr || p.tok.kind != .name {
+		if p.is_vls && p.tok.kind == .rpar {
+			println('VLS .) SKIPPING')
+			return left
+		}
 		field_name = p.check_name()
 	} else {
 		p.name_error = true
