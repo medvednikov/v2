@@ -2427,11 +2427,10 @@ fn (mut g Gen) stmt(node ast.Stmt) {
 			if !node.is_unsafe {
 				g.writeln('{')
 			} else {
-		if g.pref.is_prod  {
-				g.writeln('{')
-				}
-				else {
-				g.writeln('{ // Unsafe block')
+				if g.pref.is_prod {
+					g.writeln('{')
+				} else {
+					g.writeln('{ // Unsafe block')
 				}
 			}
 			g.stmts(node.stmts)
@@ -2639,10 +2638,10 @@ fn (mut g Gen) stmt(node ast.Stmt) {
 fn (mut g Gen) write_defer_stmts() {
 	for i := g.defer_stmts.len - 1; i >= 0; i-- {
 		defer_stmt := g.defer_stmts[i]
-		if !g.pref.is_prod  {
-		g.writeln('// Defer begin')
+		if !g.pref.is_prod {
+			g.writeln('// Defer begin')
 		}
-g.writeln( 'if (${g.defer_flag_var(defer_stmt)}) {')
+		g.writeln('if (${g.defer_flag_var(defer_stmt)}) {')
 
 		//		g.indent++
 		if defer_stmt.ifdef.len > 0 {
@@ -2654,9 +2653,9 @@ g.writeln( 'if (${g.defer_flag_var(defer_stmt)}) {')
 		}
 		//		g.indent--
 		g.writeln('}')
-		if !g.pref.is_prod  {
-g.writeln('// Defer end')
-}
+		if !g.pref.is_prod {
+			g.writeln('// Defer end')
+		}
 	}
 }
 
@@ -3925,9 +3924,9 @@ fn (mut g Gen) expr(node_ ast.Expr) {
 			sym := g.table.sym(typ)
 			sidx := g.type_sidx(typ)
 			g.write('${sidx}')
-		if !g.pref.is_prod  {
-g.write(' /* ${sym.name} */')
-}
+			if !g.pref.is_prod {
+				g.write(' /* ${sym.name} */')
+			}
 		}
 		ast.TypeOf {
 			g.typeof_expr(node)
@@ -4731,11 +4730,10 @@ fn (mut g Gen) enum_decl(node ast.EnumDecl) {
 		} else {
 			cur_enum_expr
 		}
-		if   g.pref.is_prod   {
-		g.enum_typedefs.writeln(',')
-		}
-		else {
-		g.enum_typedefs.writeln(', // ${cur_value}')
+		if g.pref.is_prod {
+			g.enum_typedefs.writeln(',')
+		} else {
+			g.enum_typedefs.writeln(', // ${cur_value}')
 		}
 		cur_enum_offset++
 	}
@@ -6660,18 +6658,18 @@ fn (mut g Gen) write_types(symbols []&ast.TypeSymbol) {
 				struct_names[name] = true
 				g.typedefs.writeln('typedef struct ${name} ${name};')
 				mut idxs := []int{}
-				if !g.pref.is_prod  {
+				if !g.pref.is_prod {
 					// Do not print union sum type coment in prod mode
-				g.type_definitions.writeln('')
-				g.type_definitions.writeln('// Union sum type ${name} = ')
-				for variant in sym.info.variants {
-					if variant in idxs {
-						continue
+					g.type_definitions.writeln('')
+					g.type_definitions.writeln('// Union sum type ${name} = ')
+					for variant in sym.info.variants {
+						if variant in idxs {
+							continue
+						}
+						g.type_definitions.writeln('//          | ${variant:4d} = ${g.styp(variant.idx_type())}')
+						idxs << variant
 					}
-					g.type_definitions.writeln('//          | ${variant:4d} = ${g.styp(variant.idx_type())}')
-					idxs << variant
-				}
-				idxs.clear()
+					idxs.clear()
 				}
 				g.type_definitions.writeln('struct ${name} {')
 				g.type_definitions.writeln('\tunion {')
@@ -7711,7 +7709,7 @@ fn (mut g Gen) interface_table() string {
 		}
 		mut cast_functions := strings.new_builder(100)
 		mut methods_wrapper := strings.new_builder(100)
-		if !g.pref.is_prod  {
+		if !g.pref.is_prod {
 			methods_wrapper.writeln('// Methods wrapper for interface "${interface_name}"')
 		}
 		mut already_generated_mwrappers := map[string]int{}
@@ -7778,8 +7776,8 @@ fn (mut g Gen) interface_table() string {
 			cast_struct.write_string('\t}')
 			cast_struct_str := cast_struct.str()
 
-		if   !g.pref.is_prod   {
-			cast_functions.writeln('
+			if !g.pref.is_prod {
+				cast_functions.writeln('
 // Casting functions for converting "${cctype}" to interface "${interface_name}"')
 			}
 
@@ -8004,7 +8002,7 @@ return ${cast_shared_struct_str};
 			}
 			conversion_functions.writeln2('\treturn (${vsym.cname}){0};', '}')
 		}
-		if !g.pref.is_prod  {
+		if !g.pref.is_prod {
 			sb.writeln('// ^^^ number of types for interface ${interface_name}: ${current_iinidx - iinidx_minimum_base}')
 		}
 		if iname_table_length == 0 {
