@@ -2279,7 +2279,7 @@ fn (mut p Parser) parse_multi_expr(is_top_level bool) ast.Stmt {
 				&& node !in [ast.CallExpr, ast.PostfixExpr, ast.ComptimeCall, ast.SelectorExpr, ast.DumpExpr] {
 				is_complex_infix_expr := node is ast.InfixExpr
 					&& node.op in [.left_shift, .right_shift, .unsigned_right_shift, .arrow]
-				if !is_complex_infix_expr {
+				if !is_complex_infix_expr && !p.is_vls {
 					return p.error_with_pos('expression evaluated but not used', node.pos())
 				}
 			}
@@ -3339,7 +3339,10 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	mut field_name := ''
 	// check if the name is on the same line as the dot
 	if p.prev_tok.pos().line_nr == name_pos.line_nr || p.tok.kind != .name {
-		if p.is_vls && p.tok.kind == .rpar {
+		if p.is_vls && p.tok.kind in [.rpar, .rcbr] {
+			// Simplify the dot expression for VLS, so that the parser doesn't error
+			// `println(x.)` => `println(x)`
+			// `x. }` => `x }` etc
 			println('VLS .) SKIPPING')
 			return left
 		}
