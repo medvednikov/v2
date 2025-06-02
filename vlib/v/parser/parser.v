@@ -1044,6 +1044,13 @@ fn (mut p Parser) stmt(is_top_level bool) ast.Stmt {
 					pos:  spos.extend(p.tok.pos())
 				}
 			} else if p.peek_tok.kind == .name {
+				if p.is_vls {
+					// So that a line with a simple `var_name` works
+					p.next()
+					return ast.ExprStmt{
+						expr: p.ident(.v)
+					}
+				}
 				return p.unexpected(got: 'name `${p.tok.lit}`')
 			} else if !p.inside_if_expr && !p.inside_match_body && !p.inside_or_expr
 				&& p.peek_tok.kind in [.rcbr, .eof] && !p.scope.mark_var_as_used(p.tok.lit) {
