@@ -113,7 +113,7 @@ mut:
 	script_mode_start_token  token.Token
 	generic_type_level       int  // to avoid infinite recursion segfaults due to compiler bugs in ensure_type_exists
 	main_already_defined     bool // TODO move to checker
-	is_vls                   bool = true
+	is_vls                   bool
 pub mut:
 	scanner &scanner.Scanner = unsafe { nil }
 	table   &ast.Table       = unsafe { nil }
@@ -178,6 +178,7 @@ pub fn parse_text(text string, path string, mut table ast.Table, comments_mode s
 		scanner:  scanner.new_scanner(text, comments_mode, pref_)
 		table:    table
 		pref:     pref_
+		is_vls: pref_.is_vls
 		scope:    &ast.Scope{
 			start_pos: 0
 			parent:    table.global_scope
@@ -3346,12 +3347,20 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	mut field_name := ''
 	// check if the name is on the same line as the dot
 	if p.prev_tok.pos().line_nr == name_pos.line_nr || p.tok.kind != .name {
-		if p.is_vls && p.tok.kind in [.rpar, .rcbr] {
-			// Simplify the dot expression for VLS, so that the parser doesn't error
-			// `println(x.)` => `println(x)`
-			// `x. }` => `x }` etc
-			println('VLS .) SKIPPING')
+		if p.is_vls {
+
+			if p.tok.kind in [.rpar, .rcbr] {
+				// Simplify the dot expression for VLS, so that the parser doesn't error
+				// `println(x.)` => `println(x)`
+				// `x. }` => `x }` etc
+				println('VLS .) SKIPPING')
+				return left
+			}
+			else if name_pos.line_nr != p.tok.line_nr  {
+			println('AAAA next line ')
 			return left
+
+			}
 		}
 		field_name = p.check_name()
 	} else {
