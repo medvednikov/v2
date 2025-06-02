@@ -178,7 +178,7 @@ pub fn parse_text(text string, path string, mut table ast.Table, comments_mode s
 		scanner:  scanner.new_scanner(text, comments_mode, pref_)
 		table:    table
 		pref:     pref_
-		is_vls: pref_.is_vls
+		is_vls:   pref_.is_vls
 		scope:    &ast.Scope{
 			start_pos: 0
 			parent:    table.global_scope
@@ -2128,7 +2128,7 @@ fn (mut p Parser) note(s string) {
 }
 
 fn (mut p Parser) error_with_pos(s string, pos token.Pos) ast.NodeError {
-	print_backtrace()
+	// print_backtrace()
 	mut kind := 'error:'
 	if p.pref.fatal_errors {
 		util.show_compiler_message(kind, pos: pos, file_path: p.file_path, message: s)
@@ -3348,18 +3348,15 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	// check if the name is on the same line as the dot
 	if p.prev_tok.pos().line_nr == name_pos.line_nr || p.tok.kind != .name {
 		if p.is_vls {
-
 			if p.tok.kind in [.rpar, .rcbr] {
 				// Simplify the dot expression for VLS, so that the parser doesn't error
 				// `println(x.)` => `println(x)`
 				// `x. }` => `x }` etc
 				println('VLS .) SKIPPING')
 				return left
-			}
-			else if name_pos.line_nr != p.tok.line_nr  {
-			println('AAAA next line ')
-			return left
-
+			} else if name_pos.line_nr != p.tok.line_nr {
+				println('AAAA next line ')
+				return left
 			}
 		}
 		field_name = p.check_name()
