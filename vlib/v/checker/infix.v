@@ -631,10 +631,7 @@ fn (mut c Checker) infix_expr(mut node ast.InfixExpr) ast.Type {
 		.left_shift {
 			if left_final_sym.kind == .array
 				|| c.table.sym(c.unwrap_generic(left_type)).kind == .array {
-				// START
 				return c.check_append(mut node, left_type, right_type, right_final_sym)
-
-				// END
 			} else {
 				node.promoted_type = c.check_shift(mut node, left_type, right_type)
 				return node.promoted_type

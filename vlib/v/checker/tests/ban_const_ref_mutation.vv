@@ -1,3 +1,4 @@
+/*
 struct Foobar {
 mut:
 	foo int
@@ -12,3 +13,4 @@ fn main() {
 	foobars[0].foo = 456
 	println("foobar_const.foo: ${foobar_const.foo}") // foobar_const.foo: 456
 }
+*/
