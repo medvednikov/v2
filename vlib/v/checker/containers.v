@@ -785,6 +785,8 @@ fn (mut c Checker) check_append(mut node ast.InfixExpr, left_type ast.Type, righ
 		c.error('unwrapped Option cannot be used in an infix expression', node.pos)
 	}
 	right_pos := node.right.pos()
+	mut right_sym := c.table.sym(right_type)
+	mut left_sym := c.table.sym(left_type)
 	// `array << elm`
 	c.check_expr_option_or_result_call(node.right, right_type)
 	node.auto_locked, _ = c.fail_if_immutable(mut node.left)
