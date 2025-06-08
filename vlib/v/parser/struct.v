@@ -518,7 +518,9 @@ fn (mut p Parser) struct_init(typ_str string, kind ast.StructInitKind, is_option
 				//  field: name.`
 
 				if p.tok.kind != .colon {
-					goto end
+					unsafe {
+						goto end
+					}
 				}
 			}
 			p.check(.colon)
