@@ -557,6 +557,11 @@ fn (mut p Parser) parse_block_no_scope(is_top_level bool) []ast.Stmt {
 			stmts << p.stmt(is_top_level)
 			count++
 			if count % 100000 == 0 {
+				if p.is_vls {
+					// Stuck in VLS mode, exit
+					println('stuck')
+					return []
+				}
 				eprintln('parsed ${count} statements so far from fn ${p.cur_fn_name} ...')
 			}
 			if count > 1000000 {
@@ -2134,7 +2139,7 @@ fn (mut p Parser) error_with_pos(s string, pos token.Pos) ast.NodeError {
 		util.show_compiler_message(kind, pos: pos, file_path: p.file_path, message: s)
 		exit(1)
 	}
-	if p.pref.output_mode == .stdout && !p.pref.check_only {
+	if p.pref.output_mode == .stdout && !p.pref.check_only && !p.is_vls {
 		if p.pref.is_verbose {
 			print_backtrace()
 			kind = 'parser error:'
