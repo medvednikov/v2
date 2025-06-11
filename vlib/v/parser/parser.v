@@ -559,7 +559,7 @@ fn (mut p Parser) parse_block_no_scope(is_top_level bool) []ast.Stmt {
 			if count % 100000 == 0 {
 				if p.is_vls {
 					// Stuck in VLS mode, exit
-					println('stuck')
+					// println('stuck')
 					return []
 				}
 				eprintln('parsed ${count} statements so far from fn ${p.cur_fn_name} ...')
@@ -3357,10 +3357,10 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 				// Simplify the dot expression for VLS, so that the parser doesn't error
 				// `println(x.)` => `println(x)`
 				// `x. }` => `x }` etc
-				println('VLS .) SKIPPING')
+				// println('VLS .) SKIPPING')
 				return left
 			} else if name_pos.line_nr != p.tok.line_nr {
-				println('AAAA next line ')
+				// println('AAAA next line ')
 				return left
 			}
 		}
