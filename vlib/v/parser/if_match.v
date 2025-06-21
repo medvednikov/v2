@@ -380,15 +380,16 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 	}
 	// return ast.StructInit{}
 	pos.update_last_line(p.prev_tok.line_nr)
-	if p.fileis('match.v') {
-		println('END OF MATCH ${p.tok}')
-	}
+	// if p.fileis('match.v') {
+	// println('END OF MATCH ${p.tok}')
+	//}
 	return ast.MatchExpr{
 		branches:    branches
 		cond:        cond
 		is_sum_type: is_sum_type
 		pos:         pos
 		comments:    comments
+		no_lcbr:     no_lcbr
 	}
 }
 
