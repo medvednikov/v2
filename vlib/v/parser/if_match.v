@@ -375,11 +375,14 @@ fn (mut p Parser) match_expr() ast.MatchExpr {
 		len:     match_last_pos.pos - match_first_pos.pos + match_last_pos.len
 		col:     match_first_pos.col
 	}
-	if p.tok.kind == .rcbr {
+	if p.tok.kind == .rcbr && !no_lcbr {
 		p.check(.rcbr)
 	}
 	// return ast.StructInit{}
 	pos.update_last_line(p.prev_tok.line_nr)
+	if p.fileis('match.v') {
+		println('END OF MATCH ${p.tok}')
+	}
 	return ast.MatchExpr{
 		branches:    branches
 		cond:        cond
