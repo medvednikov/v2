@@ -15,10 +15,11 @@ mut:
 }
 
 pub struct C.sockaddr_in {
-mut:
+pub mut:
 	sin_family u16
 	sin_port   u16
 	sin_addr   u32
+	sin_zero   [8]u8
 }
 
 pub struct C.sockaddr_in6 {
