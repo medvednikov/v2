@@ -33,12 +33,12 @@ pub mut:
 	takeover bool
 	// These fields are kept for API compatibility but have limited function.
 	// return_type will be set, but the server does not stream files.
-	return_type           ContextReturnType = .normal
-	return_file           string
+	return_type ContextReturnType = .normal
+	return_file string
 	// if true the `Connection: close` header will be added to the response
 	client_wants_to_close bool
-	req               http.Request
-	custom_mime_types map[string]string
+	req                   http.Request
+	custom_mime_types     map[string]string
 	// TCP connection to client. Only for advanced usage!
 	conn &net.TcpConn = unsafe { nil }
 	// Map containing query params for the route.
@@ -52,7 +52,6 @@ pub mut:
 	// use form_error to pass errors from the context to your frontend
 	form_error                  string
 	livereload_poll_interval_ms int = 250 // Kept for API compatibility
-
 pub:
 	// time.ticks() from start of veb connection handle.
 	// You can use it to determine how much time is spent on your request.
