@@ -9,10 +9,10 @@ pub:
 
 pub struct HttpRequest {
 pub mut:
-	buffer  []u8
-	method  Slice
-	path    Slice
-	version Slice
+	buffer         []u8
+	method         Slice
+	path           Slice
+	version        Slice
 	client_conn_fd int
 }
 
