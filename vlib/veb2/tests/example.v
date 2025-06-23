@@ -34,7 +34,6 @@ pub fn (mut app App) user_endpoint(mut ctx Context, user string) veb.Result {
 	})
 }
 
-/*
 pub fn (mut app App) index() veb.Result {
 	mut c := 0
 	lock app.state {
@@ -51,11 +50,9 @@ pub fn (mut app App) index() veb.Result {
 	return $veb.html()
 }
 
-
 pub fn (mut app App) custom_template(mut ctx Context) veb.Result {
 	return $veb.html('custom.html')
 }
-*/
 
 pub fn (mut app App) show_text(mut ctx Context) veb.Result {
 	return ctx.text('Hello world from veb')
@@ -75,8 +72,6 @@ fn main() {
 	println('veb example')
 	// veb.run(&App{}, port)
 	mut app := &App{}
-	//veb.run_at[App, Context](mut app, port: port, family: .ip, timeout_in_seconds: 2) or {
-	veb.run[App, Context](mut app, port) or {
-		panic(err)
-	}
+	// veb.run_at[App, Context](mut app, port: port, family: .ip, timeout_in_seconds: 2) or {
+	veb.run[App, Context](mut app, port) or { panic(err) }
 }
