@@ -10,7 +10,7 @@ $if !windows {
 }
 
 // C Interop - Identical to original
-//fn C.socket(socket_family int, socket_type int, protocol int) int
+// fn C.socket(socket_family int, socket_type int, protocol int) int
 fn C.bind(sockfd int, addr &C.sockaddr_in, addrlen u32) int
 fn C.send(__fd int, __buf voidptr, __n usize, __flags int) int
 fn C.recv(__fd int, __buf voidptr, __n usize, __flags int) int
@@ -33,7 +33,7 @@ struct C.in_addr {
 struct C.sockaddr_in {
 	sin_family u16
 	sin_port   u16
-	sin_addr   u32//C.in_addr
+	sin_addr   u32 // C.in_addr
 	sin_zero   [8]u8
 }
 
@@ -59,11 +59,9 @@ mut:
 	threads   [max_thread_pool_size]thread
 }
 
-const (
-	tiny_bad_request_response = 'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.bytes()
-	max_connection_size       = 1024
-	max_thread_pool_size      = 8
-)
+const tiny_bad_request_response = 'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.bytes()
+const max_connection_size = 1024
+const max_thread_pool_size = 8
 
 pub fn (mut server Server) run() {
 	$if windows {
@@ -149,7 +147,7 @@ fn create_server_socket(port int) int {
 
 fn add_fd_to_epoll(epoll_fd int, fd int, events u32) int {
 	mut ev := C.epoll_event{
-		events: events,
+		events: events
 	}
 	ev.data.fd = fd
 	if C.epoll_ctl(epoll_fd, C.EPOLL_CTL_ADD, fd, &ev) == -1 {
@@ -206,8 +204,7 @@ fn process_events(mut server Server, epoll_fd int) {
 			}
 			if events[i].events & u32(C.EPOLLIN) != 0 {
 				request_buffer := [140]u8{}
-				bytes_read := C.recv(client_conn_fd, &request_buffer[0],
-					140 - 1, 0)
+				bytes_read := C.recv(client_conn_fd, &request_buffer[0], 140 - 1, 0)
 				if bytes_read > 0 {
 					mut readed_request_buffer := []u8{cap: bytes_read}
 					unsafe {
@@ -215,18 +212,21 @@ fn process_events(mut server Server, epoll_fd int) {
 					}
 					mut decoded_http_request := decode_http_request(readed_request_buffer) or {
 						eprintln('Error decoding request ${err}')
-						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
+						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len,
+							0)
 						handle_client_closure(server, client_conn_fd)
 						continue
 					}
 					decoded_http_request.client_conn_fd = client_conn_fd
 					response_buffer := server.request_handler(decoded_http_request) or {
 						eprintln('Error handling request ${err}')
-						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
+						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len,
+							0)
 						handle_client_closure(server, client_conn_fd)
 						continue
 					}
-					C.send(client_conn_fd, response_buffer.data, response_buffer.len, 0)
+					C.send(client_conn_fd, response_buffer.data, response_buffer.len,
+						0)
 					handle_client_closure(server, client_conn_fd)
 				} else if bytes_read == 0
 					|| (bytes_read < 0 && C.errno != C.EAGAIN && C.errno != C.EWOULDBLOCK) {
