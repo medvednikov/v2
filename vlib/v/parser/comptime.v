@@ -141,7 +141,7 @@ fn (mut p Parser) comptime_call() ast.ComptimeCall {
 			}
 			p.register_used_import('vweb')
 		} else if name == 'veb' {
-			if 'veb' !in import_mods {
+			if 'veb' !in import_mods && 'veb2' !in import_mods {
 				p.error_with_pos('`\$veb` cannot be used without importing veb', start_pos.extend(p.prev_tok.pos()))
 				return err_node
 			}
