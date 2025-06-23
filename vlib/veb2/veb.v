@@ -5,8 +5,8 @@
 // This version is refactored to use `vanilla_http_server` exclusively.
 module veb2
 
-//import vanilla_http_server.http_server
-//import vanilla_http_server.request_parser
+// import vanilla_http_server.http_server
+// import vanilla_http_server.request_parser
 import fasthttp
 import net
 import net.http
@@ -39,7 +39,7 @@ mut:
 
 struct RequestParams {
 	global_app         voidptr
-	controllers_sorted        []&ControllerPath
+	controllers_sorted []&ControllerPath
 	routes             &map[string]Route
 	/*
 	timeout_in_seconds int
@@ -57,7 +57,7 @@ mut:
 
 // run - start a new veb server using the parallel vanilla_http_server backend.
 pub fn run[A, X](mut global_app A, port int) ! {
-//gapp = global_app
+	// gapp = global_app
 	if port <= 0 || port > 65535 {
 		return error('invalid port number `${port}`, it should be between 1 and 65535')
 	}
@@ -66,13 +66,12 @@ pub fn run[A, X](mut global_app A, port int) ! {
 	routes := generate_routes[A, X](global_app)!
 	controllers_sorted := check_duplicate_routes_in_controllers[A](global_app, routes)!
 
-	gparams = &RequestParams {
-	global_app: global_app
-	controllers_sorted:controllers_sorted
-	routes: &routes
-	//timeout_in_seconds: 
+	gparams = &RequestParams{
+		global_app:         global_app
+		controllers_sorted: controllers_sorted
+		routes:             &routes
+		// timeout_in_seconds:
 	}
-
 
 	/*
 	// This closure is the "glue". It will be executed in parallel by worker threads
@@ -83,14 +82,13 @@ pub fn run[A, X](mut global_app A, port int) ! {
 
 	// Configure and run the vanilla_http_server.
 	mut server := fasthttp.Server{
-		port: port
-		request_handler: kek_handler[A,X]
+		port:            port
+		request_handler: kek_handler[A, X]
 	}
 	println('[veb] Running multi-threaded app on http://localhost:${port}/')
 	flush_stdout()
 	server.run()
 }
-
 
 //__global gapp voidptr
 __global gparams RequestParams
@@ -98,30 +96,28 @@ __global gparams RequestParams
 const http_ok_response = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n'.bytes()
 
 fn kek_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
-	//println('kek_handler')
+	// println('kek_handler')
 
 	// println('handle_request() params.routes=${params.routes}')
-	//mut global_app := unsafe { &A(params.global_app) }
+	// mut global_app := unsafe { &A(params.global_app) }
 	//
-	//mut global_app := unsafe { &A(gapp) }
+	// mut global_app := unsafe { &A(gapp) }
 	mut global_app := unsafe { &A(gparams.global_app) }
 
-	//println('global_app=$global_app')
+	// println('global_app=$global_app')
 
-	//println('params=$gparams')
+	// println('params=$gparams')
 
-	//println('req=$req')
+	// println('req=$req')
 
-	//println('buffer=${req.buffer.bytestr()}')
+	// println('buffer=${req.buffer.bytestr()}')
 	s := req.buffer.bytestr()
-	
-
 
 	method := unsafe { tos(&req.buffer[req.method.start], req.method.len) }
 	path := unsafe { tos(&req.buffer[req.path.start], req.path.len) }
 
 	req_bytes := req.buffer
-	client_fd:=req.client_conn_fd
+	client_fd := req.client_conn_fd
 
 	/*
 
@@ -132,44 +128,35 @@ fn kek_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 		}
 		*/
 
-	       //println('OLOO')
-		req2:=http.parse_request_head_str(s) or {
-			eprintln('[veb] Failed to parse request: ${err}')
-			//println('s=')
-			//println(s)
-			return http_ok_response// http_server.tiny_bad_request_response
-			}
-
-
-		//println('parsed req: $req')
-
-		// 2. Create and populate the `veb.Context`.
-		completed_context := handle_request_and_route[A, X](mut global_app, req2, client_fd, gparams.routes, gparams.controllers_sorted)
-
-		// 3. Serialize the final `http.Response` into a byte array.
-		// Check for limitations of this synchronous backend.
-		if completed_context.takeover {
-			eprintln('[veb] WARNING: ctx.takeover_conn() was called, but this is not supported by this server backend. The connection will be closed after this response.')
-		}
-
-		// The vanilla_http_server expects a complete response buffer to be returned.
-		return completed_context.res.bytes()
-
-
-
-
-
-
-	//return  http_ok_response
+	// println('OLOO')
+	req2 := http.parse_request_head_str(s) or {
+		eprintln('[veb] Failed to parse request: ${err}')
+		// println('s=')
+		// println(s)
+		return http_ok_response // http_server.tiny_bad_request_response
 	}
 
+	// println('parsed req: $req')
+
+	// 2. Create and populate the `veb.Context`.
+	completed_context := handle_request_and_route[A, X](mut global_app, req2, client_fd,
+		gparams.routes, gparams.controllers_sorted)
+
+	// 3. Serialize the final `http.Response` into a byte array.
+	// Check for limitations of this synchronous backend.
+	if completed_context.takeover {
+		eprintln('[veb] WARNING: ctx.takeover_conn() was called, but this is not supported by this server backend. The connection will be closed after this response.')
+	}
+
+	// The vanilla_http_server expects a complete response buffer to be returned.
+	return completed_context.res.bytes()
+
+	// return  http_ok_response
+}
 
 // handle_request_and_route is a unified function that creates the context,
 // runs middleware, and finds the correct route for a request.
 fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, routes &map[string]Route, controllers []&ControllerPath) &Context {
-
-
-
 	// Create a `net.TcpConn` from the file descriptor for context compatibility.
 	mut conn := &net.TcpConn{
 		sock:        net.tcp_socket_from_handle_raw(client_fd)
@@ -180,13 +167,19 @@ fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, ro
 	// Create and populate the `veb.Context` from the request.
 	mut url := urllib.parse(req.url) or {
 		// This should be rare if http.parse_request succeeded.
-		mut bad_ctx := &Context{req: req, conn: conn}
+		mut bad_ctx := &Context{
+			req:  req
+			conn: conn
+		}
 		bad_ctx.not_found()
 		return bad_ctx
 	}
 	query := parse_query_from_url(url)
 	form, files := parse_form_from_request(req) or {
-		mut bad_ctx := &Context{req: req, conn: conn}
+		mut bad_ctx := &Context{
+			req:  req
+			conn: conn
+		}
 		bad_ctx.request_error('Failed to parse form data: ${err.msg()}')
 		return bad_ctx
 	}
@@ -230,8 +223,8 @@ fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, ro
 // handle_route finds and executes the correct handler for a given URL.
 // This is adapted from the original `veb` but with simplified cleanup.
 fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string, routes &map[string]Route) {
-////println('handle_route() url=$url host=$host')
-//println('AZAZA routes=$routes')
+	////println('handle_route() url=$url host=$host')
+	// println('AZAZA routes=$routes')
 	mut route := Route{}
 	mut middleware_has_sent_response := false
 	mut not_found := false
@@ -245,7 +238,7 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 				validate_middleware[X](mut user_context, app.Middleware.get_global_handlers_after[X]())
 				validate_middleware[X](mut user_context, route.after_middlewares)
 			}
-					//println('user_context2=${user_context} was_done=${was_done}')
+			// println('user_context2=${user_context} was_done=${was_done}')
 			if !was_done && !user_context.Context.done {
 				eprintln('[veb] handler for route "${url.path}" does not send any data! LOL')
 				user_context.server_error('Handler did not produce a response.')
@@ -276,9 +269,9 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 	}
 
 	// Route matching logic (identical to original)
-	//println("FINDING ROUTE")
+	// println("FINDING ROUTE")
 	$for method in A.methods {
-		//println('method $method.name')
+		// println('method $method.name')
 		$if method.return_type is Result {
 			route = (*routes)[method.name] or { return }
 			if user_context.Context.req.method in route.methods {
@@ -291,17 +284,21 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 							return
 						}
 						if method.args.len > 1 && can_have_data_args {
-							data := if user_context.Context.req.method == .get { user_context.Context.query } else { user_context.Context.form }
+							data := if user_context.Context.req.method == .get {
+								user_context.Context.query
+							} else {
+								user_context.Context.form
+							}
 							mut args := []string{cap: method.args.len + 1}
 							for param in method.args[1..] {
 								args << data[param.name]
 							}
-							//println('FOUND 1')
+							// println('FOUND 1')
 							app.$method(mut user_context, args)
 						} else {
-							//println('FOUND 2 $method.name')
+							// println('FOUND 2 $method.name')
 							app.$method(mut user_context)
-							//println('END OF METHOD CALLED')
+							// println('END OF METHOD CALLED')
 						}
 						return
 					}
@@ -310,7 +307,7 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 							middleware_has_sent_response = true
 							return
 						}
-							//println('FOUND 3')
+						// println('FOUND 3')
 						app.$method(mut user_context)
 						return
 					}
@@ -319,7 +316,7 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 							middleware_has_sent_response = true
 							return
 						}
-							//println('FOUND 4')
+						// println('FOUND 4')
 						app.$method(mut user_context, params)
 						return
 					}
@@ -327,7 +324,7 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 			}
 		}
 	}
-	//println('not found')
+	// println('not found')
 
 	user_context.not_found()
 	not_found = true
