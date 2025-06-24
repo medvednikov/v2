@@ -50,9 +50,11 @@ pub:
 	port            int = 3000
 	request_handler fn (HttpRequest) ![]u8 @[required]
 mut:
-	socket_fd int
-	poll_fds  [max_thread_pool_size]int
-	threads   [max_thread_pool_size]thread
+	socket_fd       int
+	poll_fds        [max_thread_pool_size]int
+	threads         [max_thread_pool_size]thread
+	// A channel for each worker to receive new connections safely.
+	new_connections [max_thread_pool_size]chan int
 }
 
 const tiny_bad_request_response = 'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.bytes()
@@ -65,22 +67,18 @@ pub fn (mut server Server) run() {
 	if server.socket_fd < 0 {
 		return
 	}
-
-	// Create a poller instance for each worker thread.
-	// We DO NOT add the listening socket to these worker pollers.
 	for i := 0; i < max_thread_pool_size; i++ {
 		server.poll_fds[i] = poller_create() or {
 			C.perror(c'poller_create failed')
 			close_socket(server.socket_fd)
 			return
 		}
-		// Spawn a worker thread to process events for its poller.
+		server.new_connections[i] = chan int{cap: max_connection_size}
 		server.threads[i] = spawn process_events(mut server, server.poll_fds[i])
+		spawn add_new_connections_loop(server.poll_fds[i], server.new_connections[i])
 	}
 
 	println('listening on http://localhost:${server.port}/')
-	// The main thread's only job is to accept new connections and
-	// distribute them to the worker threads.
 	server.handle_accept_loop()
 }
 
@@ -103,34 +101,24 @@ fn create_server_socket(port int) int {
 	}
 	$if linux {
 		server_addr := C.sockaddr_in{
-			sin_family: u16(C.AF_INET),
-			sin_port: C.htons(u16(port)),
-			sin_addr: u32(C.INADDR_ANY),
-			sin_zero: [8]u8{},
+			sin_family: u16(C.AF_INET), sin_port: C.htons(u16(port)),
+			sin_addr: u32(C.INADDR_ANY), sin_zero: [8]u8{},
 		}
 		if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
-			C.perror(c'Bind failed')
-			close_socket(server_fd)
-			return -1
+			C.perror(c'Bind failed'); close_socket(server_fd); return -1
 		}
 	} $else {
 		mut server_addr := C.sockaddr_in{
-			sin_family: u8(C.AF_INET),
-			sin_port: C.htons(u16(port)),
-			sin_addr: u32(C.INADDR_ANY),
-			sin_zero: [8]char{},
+			sin_family: u8(C.AF_INET), sin_port: C.htons(u16(port)),
+			sin_addr: u32(C.INADDR_ANY), sin_zero: [8]char{},
 		}
 		server_addr.sin_len = u8(sizeof(server_addr))
 		if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
-			C.perror(c'Bind failed')
-			close_socket(server_fd)
-			return -1
+			C.perror(c'Bind failed'); close_socket(server_fd); return -1
 		}
 	}
 	if C.listen(server_fd, max_connection_size) < 0 {
-		C.perror(c'Listen failed')
-		close_socket(server_fd)
-		return -1
+		C.perror(c'Listen failed'); close_socket(server_fd); return -1
 	}
 	return server_fd
 }
@@ -140,12 +128,21 @@ fn (mut server Server) handle_accept_loop() {
 		client_fd := C.accept(server.socket_fd, C.NULL, C.NULL)
 		if client_fd < 0 {
 			C.perror(c'Accept failed')
-			return // Stop the loop on accept error
+			return
 		}
-		// Distribute the new client FD to a worker using round-robin
-		poll_fd := server.poll_fds[client_fd % max_thread_pool_size]
+		server.new_connections[client_fd % max_thread_pool_size] <- client_fd
+	}
+}
 
-		// Use level-triggering (`edge_triggered: false`). It's simpler and robust.
+// FIXED: This now uses the idiomatic V loop for reading from a channel.
+fn add_new_connections_loop(poll_fd int, new_conn_chan chan int) {
+	for {
+		client_fd := <-new_conn_chan or {
+			// This block executes if the channel is closed.
+			// In our current design, it will never be, but this is the
+			// correct and safe way to write the loop.
+			break
+		}
 		poller_add_fd(poll_fd, client_fd, false) or {
 			eprintln('Failed to add client fd to poller: ${err}')
 			close_socket(client_fd)
@@ -158,8 +155,6 @@ fn handle_client_closure(poll_fd int, client_fd int) {
 	close_socket(client_fd)
 }
 
-// This function runs in the worker threads.
-// It uses a simple, single-read logic suitable for level-triggered polling.
 fn process_events(mut server Server, poll_fd int) {
 	mut events := [max_connection_size]Event{}
 	for {
@@ -199,7 +194,6 @@ fn process_events(mut server Server, poll_fd int) {
 				C.send(client_conn_fd, response_buffer.data, response_buffer.len, 0)
 				handle_client_closure(poll_fd, client_conn_fd)
 			} else {
-				// bytes_read == 0 (client closed) or < 0 (real error).
 				handle_client_closure(poll_fd, client_conn_fd)
 			}
 		}
