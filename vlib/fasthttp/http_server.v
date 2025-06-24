@@ -17,12 +17,25 @@ fn C.accept(sockfd int, address &C.sockaddr_in, addrlen &u32) int
 fn C.htons(__hostshort u16) u16
 fn C.fcntl(fd int, cmd int, arg int) int
 
-// --- C Structs (Common POSIX) ---
-struct C.sockaddr_in {
-	sin_family u16
-	sin_port   u16
-	sin_addr   u32 // C.in_addr
-	sin_zero   [8]u8
+// --- C Structs (Platform-specific) ---
+// The sockaddr_in struct definition varies between Linux and BSD/macOS.
+$if linux {
+	// Linux version
+	struct C.sockaddr_in {
+		sin_family u16
+		sin_port   u16
+		sin_addr   u32 // C.in_addr
+		sin_zero   [8]u8
+	}
+} $else {
+	// BSD / macOS version
+	struct C.sockaddr_in {
+		sin_len    u8
+		sin_family u8
+		sin_port   u16
+		sin_addr   u32 // C.in_addr
+		sin_zero   [8]char
+	}
 }
 
 // --- Platform Abstraction ---
@@ -36,7 +49,6 @@ pub:
 
 // These poller functions are implemented in the platform-specific files:
 // http_server_linux.v and http_server_darwin.v
-// V will automatically compile and link the correct file for the target OS.
 fn poller_create() !int
 fn poller_add_fd(poll_fd int, fd int, edge_triggered bool) !
 fn poller_remove_fd(poll_fd int, fd int)
@@ -93,8 +105,6 @@ fn create_server_socket(port int) int {
 		return -1
 	}
 
-	// Allow multiple sockets to bind to the same port.
-	// This is useful for zero-downtime restarts.
 	opt := 1
 	if C.setsockopt(server_fd, C.SOL_SOCKET, C.SO_REUSEADDR, &opt, sizeof(opt)) < 0 {
 		C.perror(c'setsockopt SO_REUSEADDR failed')
@@ -102,19 +112,33 @@ fn create_server_socket(port int) int {
 		return -1
 	}
 
-	server_addr := C.sockaddr_in{
-		//sin_family: u16(C.AF_INET) // LINUX
-		sin_family: u8(C.AF_INET)
-		sin_port:   C.htons(u16(port))
-		sin_addr:   u32(C.INADDR_ANY)
-		//sin_zero:   [8]u8{} // LINUX
-		sin_zero:   [8]char{}
-	}
-
-	if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
-		C.perror(c'Bind failed')
-		close_socket(server_fd)
-		return -1
+	// Use conditional compilation to create the correct sockaddr_in for the OS.
+	$if linux {
+		server_addr := C.sockaddr_in{
+			sin_family: u16(C.AF_INET)
+			sin_port:   C.htons(u16(port))
+			sin_addr:   u32(C.INADDR_ANY)
+			sin_zero:   [8]u8{}
+		}
+		if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
+			C.perror(c'Bind failed')
+			close_socket(server_fd)
+			return -1
+		}
+	} $else {
+		// BSD/macOS requires sin_len to be set.
+		mut server_addr := C.sockaddr_in{
+			sin_family: u8(C.AF_INET)
+			sin_port:   C.htons(u16(port))
+			sin_addr:   u32(C.INADDR_ANY)
+			sin_zero:   [8]char{}
+		}
+		server_addr.sin_len = u8(sizeof(server_addr))
+		if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
+			C.perror(c'Bind failed')
+			close_socket(server_fd)
+			return -1
+		}
 	}
 
 	if C.listen(server_fd, max_connection_size) < 0 {
@@ -131,12 +155,10 @@ fn (mut server Server) handle_accept_loop() {
 	for {
 		client_fd := C.accept(server.socket_fd, C.NULL, C.NULL)
 		if client_fd < 0 {
-			// This can happen on server shutdown, so we just exit.
 			C.perror(c'Accept failed')
 			return
 		}
 
-		// Distribute the new client to a worker thread's poller via round-robin.
 		poll_fd := server.poll_fds[client_fd % max_thread_pool_size]
 		poller_add_fd(poll_fd, client_fd, true) or {
 			eprintln('Failed to add client fd to poller: ${err}')
@@ -145,18 +167,17 @@ fn (mut server Server) handle_accept_loop() {
 	}
 }
 
-// Correctly handles closing a client connection and removing it from its poller.
 fn handle_client_closure(poll_fd int, client_fd int) {
 	poller_remove_fd(poll_fd, client_fd)
 	close_socket(client_fd)
 }
 
-// This function runs in each worker thread.
 fn process_events(mut server Server, poll_fd int) {
 	mut events := [max_connection_size]Event{}
 	for {
 		// Wait for events on the client FDs assigned to this poller.
-		num_events := poller_wait(mut events, poll_fd) or {
+		// FIXED: The arguments were swapped. Correct order is (poll_fd, mut events).
+		num_events := poller_wait(poll_fd, mut events) or {
 			eprintln('poller_wait error: ${err}')
 			continue
 		}
@@ -194,11 +215,8 @@ fn process_events(mut server Server, poll_fd int) {
 				}
 
 				C.send(client_conn_fd, response_buffer.data, response_buffer.len, 0)
-				// Close connection after sending response for this simple server.
 				handle_client_closure(poll_fd, client_conn_fd)
 			} else {
-				// bytes_read == 0 means client closed connection.
-				// bytes_read < 0 means an error occurred.
 				handle_client_closure(poll_fd, client_conn_fd)
 			}
 		}
