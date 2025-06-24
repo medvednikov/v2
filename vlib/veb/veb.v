@@ -73,13 +73,6 @@ pub fn run[A, X](mut global_app A, port int) ! {
 		// timeout_in_seconds:
 	}
 
-	/*
-	// This closure is the "glue". It will be executed in parallel by worker threads
-	// for each incoming request.
-	request_handler := fn [mut global_app, routes, controllers_sorted](req_bytes []u8, client_fd int) ![]u8 {
-	}
-	*/
-
 	// Configure and run the vanilla_http_server.
 	mut server := fasthttp.Server{
 		port:            port
@@ -108,7 +101,7 @@ fn kek_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 
 	// println('params=$gparams')
 
-	// println('req=$req')
+	println('veb handler fasthttp.HttpRequest=$req')
 
 	// println('buffer=${req.buffer.bytestr()}')
 	s := req.buffer.bytestr()
