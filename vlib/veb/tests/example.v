@@ -1,6 +1,6 @@
 module main
 
-import veb2 as veb
+import veb as veb
 import rand
 
 const port = 8082
