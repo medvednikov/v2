@@ -26,7 +26,7 @@ mut:
 }
 
 pub struct C.sockaddr_in {
-mut:
+pub mut:
 	sin_len    u8
 	sin_family u8
 	sin_port   u16
