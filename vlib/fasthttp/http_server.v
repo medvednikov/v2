@@ -1,9 +1,11 @@
 // fasthttp/http_server.v
 module fasthttp
+import strings
 
 #include <fcntl.h>
 #include <errno.h>
 #include <netinet/in.h>
+
 
 // --- C Interop (Common POSIX) ---
 fn C.bind(sockfd int, addr &C.sockaddr_in, addrlen u32) int
@@ -18,35 +20,32 @@ fn C.htons(__hostshort u16) u16
 fn C.fcntl(fd int, cmd int, arg int) int
 
 // --- C Structs (Platform-specific) ---
-// The sockaddr_in struct definition varies between Linux and BSD/macOS.
 $if linux {
-	// Linux version
 	struct C.sockaddr_in {
 		sin_family u16
 		sin_port   u16
-		sin_addr   u32 // C.in_addr
+		sin_addr   u32
 		sin_zero   [8]u8
 	}
 } $else {
-	// BSD / macOS version
 	struct C.sockaddr_in {
 		sin_len    u8
 		sin_family u8
 		sin_port   u16
-		sin_addr   u32 // C.in_addr
+		sin_addr   u32
 		sin_zero   [8]char
 	}
 }
 
 // --- Platform Abstraction ---
 
-// Event represents a ready file descriptor from the poller.
 pub struct Event {
 pub:
 	fd       int
 	is_error bool
 }
 
+// NOTE: The poller functions are implemented in platform-specific files.
 
 // --- Server Definition ---
 
@@ -63,30 +62,37 @@ mut:
 const tiny_bad_request_response = 'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.bytes()
 const max_connection_size = 1024
 const max_thread_pool_size = 8
+const read_buffer_size = 4096
 
 pub fn (mut server Server) run() {
 	server.socket_fd = create_server_socket(server.port)
 	if server.socket_fd < 0 {
 		return
 	}
-
-	// Create a poller instance for each worker thread.
 	for i := 0; i < max_thread_pool_size; i++ {
 		server.poll_fds[i] = poller_create() or {
 			C.perror(c'poller_create failed')
 			close_socket(server.socket_fd)
 			return
 		}
-		// Spawn a worker thread to process events for its poller.
 		server.threads[i] = spawn process_events(mut server, server.poll_fds[i])
 	}
-
 	println('listening on http://localhost:${server.port}/')
-	// The main thread now exclusively handles accepting new connections.
 	server.handle_accept_loop()
 }
 
 // --- Internal Functions ---
+
+// Sets a file descriptor to non-blocking mode. Crucial for edge-triggered polling.
+fn set_non_blocking(fd int) ! {
+	flags := C.fcntl(fd, C.F_GETFL, 0)
+	if flags == -1 {
+		return error_with_code('fcntl F_GETFL failed', C.errno)
+	}
+	if C.fcntl(fd, C.F_SETFL, flags | C.O_NONBLOCK) == -1 {
+		return error_with_code('fcntl F_SETFL failed', C.errno)
+	}
+}
 
 fn close_socket(fd int) {
 	C.close(fd)
@@ -98,21 +104,18 @@ fn create_server_socket(port int) int {
 		C.perror(c'Socket creation failed')
 		return -1
 	}
-
 	opt := 1
 	if C.setsockopt(server_fd, C.SOL_SOCKET, C.SO_REUSEADDR, &opt, sizeof(opt)) < 0 {
 		C.perror(c'setsockopt SO_REUSEADDR failed')
 		close_socket(server_fd)
 		return -1
 	}
-
-	// Use conditional compilation to create the correct sockaddr_in for the OS.
 	$if linux {
 		server_addr := C.sockaddr_in{
-			sin_family: u16(C.AF_INET)
-			sin_port:   C.htons(u16(port))
-			sin_addr:   u32(C.INADDR_ANY)
-			sin_zero:   [8]u8{}
+			sin_family: u16(C.AF_INET),
+			sin_port: C.htons(u16(port)),
+			sin_addr: u32(C.INADDR_ANY),
+			sin_zero: [8]u8{},
 		}
 		if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
 			C.perror(c'Bind failed')
@@ -120,12 +123,11 @@ fn create_server_socket(port int) int {
 			return -1
 		}
 	} $else {
-		// BSD/macOS requires sin_len to be set.
 		mut server_addr := C.sockaddr_in{
-			sin_family: u8(C.AF_INET)
-			sin_port:   C.htons(u16(port))
-			sin_addr:   u32(C.INADDR_ANY)
-			sin_zero:   [8]char{}
+			sin_family: u8(C.AF_INET),
+			sin_port: C.htons(u16(port)),
+			sin_addr: u32(C.INADDR_ANY),
+			sin_zero: [8]char{},
 		}
 		server_addr.sin_len = u8(sizeof(server_addr))
 		if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
@@ -134,17 +136,14 @@ fn create_server_socket(port int) int {
 			return -1
 		}
 	}
-
 	if C.listen(server_fd, max_connection_size) < 0 {
 		C.perror(c'Listen failed')
 		close_socket(server_fd)
 		return -1
 	}
-
 	return server_fd
 }
 
-// Main thread's loop to accept new connections and distribute them to workers.
 fn (mut server Server) handle_accept_loop() {
 	for {
 		client_fd := C.accept(server.socket_fd, C.NULL, C.NULL)
@@ -152,7 +151,12 @@ fn (mut server Server) handle_accept_loop() {
 			C.perror(c'Accept failed')
 			return
 		}
-
+		// Set the new client socket to non-blocking before adding to poller.
+		set_non_blocking(client_fd) or {
+			eprintln('Failed to set non-blocking: ${err}')
+			close_socket(client_fd)
+			continue
+		}
 		poll_fd := server.poll_fds[client_fd % max_thread_pool_size]
 		poller_add_fd(poll_fd, client_fd, true) or {
 			eprintln('Failed to add client fd to poller: ${err}')
@@ -166,16 +170,14 @@ fn handle_client_closure(poll_fd int, client_fd int) {
 	close_socket(client_fd)
 }
 
+// REWRITTEN to correctly handle edge-triggered events.
 fn process_events(mut server Server, poll_fd int) {
 	mut events := [max_connection_size]Event{}
 	for {
-		// Wait for events on the client FDs assigned to this poller.
-		// FIXED: Pass a mutable slice `mut events[..]` instead of the array.
 		num_events := poller_wait(poll_fd, mut events[..]) or {
 			eprintln('poller_wait error: ${err}')
 			continue
 		}
-
 		for i := 0; i < num_events; i++ {
 			event := events[i]
 			client_conn_fd := event.fd
@@ -185,34 +187,53 @@ fn process_events(mut server Server, poll_fd int) {
 				continue
 			}
 
-			request_buffer := [1024]u8{}
-			bytes_read := C.recv(client_conn_fd, &request_buffer[0], request_buffer.len - 1, 0)
-
-			if bytes_read > 0 {
-				mut readed_request_buffer := []u8{cap: bytes_read}
-				unsafe {
-					readed_request_buffer.push_many(&request_buffer[0], bytes_read)
+			// Read all data from the socket until it returns EAGAIN/EWOULDBLOCK.
+			mut request_builder := strings.new_builder(read_buffer_size)
+			mut read_buffer := [read_buffer_size]u8{}
+			mut read_error := false
+			for {
+				bytes_read := C.recv(client_conn_fd, &read_buffer[0], read_buffer.len, 0)
+				if bytes_read > 0 {
+					unsafe { request_builder.write_ptr(&read_buffer[0], bytes_read) }
+				} else if bytes_read == 0 {
+					// Client closed the connection gracefully.
+					break
+				} else { // bytes_read < 0
+					if C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK {
+						// We have read all available data from the socket.
+						break
+					}
+					// A real error occurred.
+					C.perror(c'recv error')
+					read_error = true
+					break
 				}
-				mut decoded_http_request := decode_http_request(readed_request_buffer) or {
-					eprintln('Error decoding request: ${err}')
-					C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
-					handle_client_closure(poll_fd, client_conn_fd)
-					continue
-				}
-				decoded_http_request.client_conn_fd = client_conn_fd
-
-				response_buffer := server.request_handler(decoded_http_request) or {
-					eprintln('Error handling request: ${err}')
-					C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
-					handle_client_closure(poll_fd, client_conn_fd)
-					continue
-				}
-
-				C.send(client_conn_fd, response_buffer.data, response_buffer.len, 0)
-				handle_client_closure(poll_fd, client_conn_fd)
-			} else {
-				handle_client_closure(poll_fd, client_conn_fd)
 			}
+
+			if read_error || request_builder.len == 0 {
+				// Close connection on read error or if client sent no data.
+				handle_client_closure(poll_fd, client_conn_fd)
+				continue
+			}
+
+			// Now process the fully-read request.
+			//readed_request_buffer := request_builder.bytes()
+			mut decoded_http_request := decode_http_request(request_builder) or {
+				C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
+				handle_client_closure(poll_fd, client_conn_fd)
+				continue
+			}
+			decoded_http_request.client_conn_fd = client_conn_fd
+
+			response_buffer := server.request_handler(decoded_http_request) or {
+				C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
+				handle_client_closure(poll_fd, client_conn_fd)
+				continue
+			}
+
+			C.send(client_conn_fd, response_buffer.data, response_buffer.len, 0)
+			// For this simple server, we close the connection after responding.
+			handle_client_closure(poll_fd, client_conn_fd)
 		}
 	}
 }
