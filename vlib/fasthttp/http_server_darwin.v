@@ -36,11 +36,11 @@ fn poller_create() !int {
 fn poller_add_fd(poll_fd int, fd int, edge_triggered bool) ! {
 	mut change := C.kevent{
 		ident:  u64(fd)
-		filter: C.EVFILT_READ
+		// FIXED: Explicitly cast C constant to i16.
+		filter: i16(C.EVFILT_READ)
 		flags:  u16(C.EV_ADD | C.EV_ENABLE)
 	}
 	if edge_triggered {
-		// EV_ONESHOT is similar to EPOLLET: it triggers once and must be re-added.
 		change.flags |= u16(C.EV_ONESHOT)
 	}
 
@@ -54,16 +54,15 @@ fn poller_add_fd(poll_fd int, fd int, edge_triggered bool) ! {
 fn poller_remove_fd(poll_fd int, fd int) {
 	change := C.kevent{
 		ident:  u64(fd)
-		filter: C.EVFILT_READ
+		// FIXED: Explicitly cast C constant to i16.
+		filter: i16(C.EVFILT_READ)
 		flags:  u16(C.EV_DELETE)
 	}
-	// We don't check for errors on removal, as it's not critical.
 	C.kevent(poll_fd, &change, 1, C.NULL, 0, C.NULL)
 }
 
 fn poller_wait(poll_fd int, mut events []Event) !int {
 	mut kqueue_events := [max_connection_size]C.kevent{}
-	// Wait indefinitely for an event (NULL timeout).
 	num_events := C.kevent(poll_fd, C.NULL, 0, &kqueue_events[0], kqueue_events.len, C.NULL)
 
 	if num_events < 0 {
@@ -74,7 +73,6 @@ fn poller_wait(poll_fd int, mut events []Event) !int {
 		kqueue_event := kqueue_events[i]
 		events[i] = Event{
 			fd: int(kqueue_event.ident)
-			// Check for End-Of-File condition, which signals disconnection or error.
 			is_error: (kqueue_event.flags & u16(C.EV_EOF)) != 0
 		}
 	}

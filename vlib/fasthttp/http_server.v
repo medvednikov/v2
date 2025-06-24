@@ -47,12 +47,6 @@ pub:
 	is_error bool
 }
 
-// These poller functions are implemented in the platform-specific files:
-// http_server_linux.v and http_server_darwin.v
-fn poller_create() !int
-fn poller_add_fd(poll_fd int, fd int, edge_triggered bool) !
-fn poller_remove_fd(poll_fd int, fd int)
-fn poller_wait(poll_fd int, mut events []Event) !int
 
 // --- Server Definition ---
 
@@ -176,8 +170,8 @@ fn process_events(mut server Server, poll_fd int) {
 	mut events := [max_connection_size]Event{}
 	for {
 		// Wait for events on the client FDs assigned to this poller.
-		// FIXED: The arguments were swapped. Correct order is (poll_fd, mut events).
-		num_events := poller_wait(poll_fd, mut events) or {
+		// FIXED: Pass a mutable slice `mut events[..]` instead of the array.
+		num_events := poller_wait(poll_fd, mut events[..]) or {
 			eprintln('poller_wait error: ${err}')
 			continue
 		}
