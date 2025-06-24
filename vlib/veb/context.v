@@ -1,4 +1,4 @@
-module veb
+module veb2
 
 import json
 import net
@@ -22,29 +22,23 @@ pub enum RedirectType {
 // It has fields for the query, form, files and methods for handling the request and response
 @[heap]
 pub struct Context {
-mut:
+pub mut:
+	// TODO pub
 	// veb will try to infer the content type base on file extension,
 	// and if `content_type` is not empty the `Content-Type` header will always be
-	// set to this value
 	content_type string
-	// done is set to true when a response can be sent over `conn`
+	// done is set to true when a response has been prepared
 	done bool
-	// if true the response should not be sent and the connection should be closed
-	// manually.
+	// if true, a warning will be logged. Connection takeover is not supported by this backend.
 	takeover bool
-	// how the http response should be handled by veb's backend
+	// These fields are kept for API compatibility but have limited function.
+	// return_type will be set, but the server does not stream files.
 	return_type ContextReturnType = .normal
 	return_file string
-	// If the `Connection: close` header is present the connection should always be closed
+	// if true the `Connection: close` header will be added to the response
 	client_wants_to_close bool
-pub:
-	// TODO: move this to `handle_request`
-	// time.ticks() from start of veb connection handle.
-	// You can use it to determine how much time is spent on your request.
-	page_gen_start i64
-pub mut:
-	req               http.Request
-	custom_mime_types map[string]string
+	req                   http.Request
+	custom_mime_types     map[string]string
 	// TCP connection to client. Only for advanced usage!
 	conn &net.TcpConn = unsafe { nil }
 	// Map containing query params for the route.
@@ -57,7 +51,11 @@ pub mut:
 	res   http.Response
 	// use form_error to pass errors from the context to your frontend
 	form_error                  string
-	livereload_poll_interval_ms int = 250
+	livereload_poll_interval_ms int = 250 // Kept for API compatibility
+pub:
+	// time.ticks() from start of veb connection handle.
+	// You can use it to determine how much time is spent on your request.
+	page_gen_start i64
 }
 
 // returns the request header data from the key
@@ -80,22 +78,15 @@ pub fn (mut ctx Context) set_custom_header(key string, value string) ! {
 	ctx.res.header.set_custom(key, value)!
 }
 
-// send_response_to_client finalizes the response headers and sets Content-Type to `mimetype`
-// and the response body to `response`
+// send_response_to_client finalizes the response headers and *prepares* the response object.
+// It NO LONGER sends data. The server loop sends the response after the handler returns.
 pub fn (mut ctx Context) send_response_to_client(mimetype string, response string) Result {
-	if ctx.done && !ctx.takeover {
+	if ctx.done {
 		eprintln('[veb] a response cannot be sent twice over one connection')
 		return Result{}
 	}
-	// ctx.done is only set in this function, so in order to sent a response over the connection
-	// this value has to be set to true. Assuming the user doesn't use `ctx.conn` directly.
 	ctx.done = true
 	ctx.res.body = response
-	$if veb_livereload ? {
-		if mimetype == 'text/html' {
-			ctx.res.body = response.replace('</html>', '<script src="/veb_livereload/${veb_livereload_server_start}/script.js"></script>\n</html>')
-		}
-	}
 
 	// set Content-Type and Content-Length headers
 	mut custom_mimetype := if ctx.content_type.len == 0 { mimetype } else { ctx.content_type }
@@ -107,9 +98,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 	}
 	// send veb's closing headers
 	ctx.res.header.set(.server, 'veb')
-	if !ctx.takeover && ctx.client_wants_to_close {
-		// Only sent the `Connection: close` header when the client wants to close
-		// the connection. This typically happens when the client only supports HTTP 1.0
+	if ctx.client_wants_to_close {
 		ctx.res.header.set(.connection, 'close')
 	}
 	// set the http version
@@ -118,10 +107,6 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 		ctx.res.set_status(.ok)
 	}
 
-	if ctx.takeover {
-		fast_send_resp(mut ctx.conn, ctx.res) or {}
-	}
-	// result is send in `veb.v`, `handle_route`
 	return Result{}
 }
 
@@ -147,7 +132,8 @@ pub fn (mut ctx Context) json_pretty[T](j T) Result {
 	return ctx.send_response_to_client('application/json', json_s)
 }
 
-// Response HTTP_OK with file as payload
+// Response HTTP_OK with file as payload.
+// NOTE: This now reads the ENTIRE file into memory. It does not stream.
 pub fn (mut ctx Context) file(file_path string) Result {
 	if !os.exists(file_path) {
 		eprintln('[veb] file "${file_path}" does not exist')
@@ -170,43 +156,15 @@ pub fn (mut ctx Context) file(file_path string) Result {
 		return ctx.server_error('')
 	}
 
-	return ctx.send_file(content_type, file_path)
-}
+	ctx.return_type = .file
+	ctx.return_file = file_path
 
-fn (mut ctx Context) send_file(content_type string, file_path string) Result {
-	mut file := os.open(file_path) or {
-		eprint('[veb] error while trying to open file: ${err.msg()}')
-		ctx.res.set_status(.not_found)
-		return ctx.text('resource does not exist')
-	}
-
-	// seek from file end to get the file size
-	file.seek(0, .end) or {
+	// Read the entire file into memory and prepare it as a normal response.
+	data := os.read_file(file_path) or {
 		eprintln('[veb] error while trying to read file: ${err.msg()}')
 		return ctx.server_error('could not read resource')
 	}
-	file_size := file.tell() or {
-		eprintln('[veb] error while trying to read file: ${err.msg()}')
-		return ctx.server_error('could not read resource')
-	}
-	file.close()
-
-	if ctx.takeover {
-		// it's a small file so we can send the response directly
-		data := os.read_file(file_path) or {
-			eprintln('[veb] error while trying to read file: ${err.msg()}')
-			return ctx.server_error('could not read resource')
-		}
-		return ctx.send_response_to_client(content_type, data)
-	} else {
-		ctx.return_type = .file
-		ctx.return_file = file_path
-
-		// set response headers
-		ctx.send_response_to_client(content_type, '')
-		ctx.res.header.set(.content_length, file_size.str())
-		return Result{}
-	}
+	return ctx.send_response_to_client(content_type, data)
 }
 
 // Response HTTP_OK with s as payload
@@ -291,10 +249,8 @@ pub fn (mut ctx Context) set_content_type(mime string) {
 
 // takeover_conn prevents veb from automatically sending a response and closing
 // the connection. You are responsible for closing the connection.
-// In takeover mode if you call a Context method the response will be directly
-// send over the connection and you can send multiple responses.
-// This function is useful when you want to keep the connection alive and/or
-// send multiple responses. Like with the SSE.
+// NOTE: True connection takeover for SSE/WebSockets is not supported by this server backend.
+// This function will only set a flag and the server will log a warning.
 pub fn (mut ctx Context) takeover_conn() {
 	ctx.takeover = true
 }

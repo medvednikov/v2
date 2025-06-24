@@ -1,4 +1,4 @@
-module veb
+module veb2
 
 import compress.gzip
 import net.http
@@ -117,6 +117,38 @@ fn validate_middleware[T](mut ctx T, raw_handlers []voidptr) bool {
 	return true
 }
 
+pub fn encode_gzip[T]() MiddlewareOptions[T] {
+	return MiddlewareOptions[T]{
+		after:   true
+		handler: fn [T](mut ctx T) bool {
+			// Do not attempt to compress a file that was read into memory,
+			// as it might already be a compressed format.
+			if ctx.return_type == .file {
+				return true
+			}
+			// Don't compress empty bodies
+			if ctx.res.body.len == 0 {
+				return true
+			}
+
+			// Compress the existing response body.
+			compressed := gzip.compress(ctx.res.body.bytes()) or {
+				eprintln('[veb] error while compressing with gzip: ${err.msg()}')
+				return true // Fail gracefully, send uncompressed.
+			}
+
+			// Replace the response body and set the correct headers.
+			ctx.res.body = compressed.bytestr()
+			ctx.res.header.add(.content_encoding, 'gzip')
+			ctx.res.header.set(.vary, 'Accept-Encoding')
+			ctx.res.header.set(.content_length, compressed.len.str())
+
+			return true
+		}
+	}
+}
+
+/*
 // encode_gzip adds gzip encoding to the HTTP Response body.
 // This middleware does not encode files, if you return `ctx.file()`.
 // Register this middleware as last!
@@ -153,6 +185,7 @@ pub fn encode_gzip[T]() MiddlewareOptions[T] {
 	}
 }
 
+*/
 // decode_gzip decodes the body of a gzip'ed HTTP request.
 // Register this middleware before you do anything with the request body!
 // Example: app.use(veb.decode_gzip[Context]())

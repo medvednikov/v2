@@ -1,4 +1,4 @@
-module veb2
+module veb
 
 import net.http
 
