@@ -4193,6 +4193,7 @@ user := repo.find_user_by_id(7) or {
 Use `err is ...` to compare errors:
 ```v oksyntax
 import io
+
 x := read() or {
 	if err is io.Eof {
 		println('end of file')
