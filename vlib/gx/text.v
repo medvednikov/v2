@@ -16,6 +16,8 @@ pub:
 	bold           bool
 	mono           bool
 	italic         bool
+	multiline      bool // Draw multiple lines separated by \n
+	line_height    int  // Used in multiline mode
 }
 
 // to_css_string returns a CSS compatible string of the TextCfg `cfg`.

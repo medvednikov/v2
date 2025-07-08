@@ -177,8 +177,8 @@ pub fn (ctx &Context) set_text_cfg(cfg gx.TextCfg) {
 @[params]
 pub struct DrawTextParams {
 pub:
-	x    int
-	y    int
+	x    f32
+	y    f32
 	text string
 
 	color          Color              = gx.black
@@ -190,6 +190,8 @@ pub:
 	bold           bool
 	mono           bool
 	italic         bool
+	multiline      bool // Draw multiple lines separated by \n
+	line_height    int  // Used in multiline mode
 }
 
 pub fn (ctx &Context) draw_text2(p DrawTextParams) {
@@ -203,12 +205,14 @@ pub fn (ctx &Context) draw_text2(p DrawTextParams) {
 		bold:           p.bold
 		mono:           p.mono
 		italic:         p.italic
+		multiline:      p.multiline
+		line_height:    p.line_height
 	}) // TODO: perf once it's the only function to draw text
 }
 
 // draw_text draws the string in `text_` starting at top-left position `x`,`y`.
 // Text settings can be provided with `cfg`.
-pub fn (ctx &Context) draw_text(x int, y int, text_ string, cfg gx.TextCfg) {
+pub fn (ctx &Context) draw_text(x f32, y f32, text_ string, cfg gx.TextCfg) {
 	$if macos {
 		if ctx.native_rendering {
 			if cfg.align == gx.align_right {
@@ -230,6 +234,25 @@ pub fn (ctx &Context) draw_text(x int, y int, text_ string, cfg gx.TextCfg) {
 	// if text.contains('\t') {
 	// text = text.replace('\t', '    ')
 	// }
+	if cfg.max_width > 0 {
+		width := ctx.text_width(text_)
+		// println('DA WIDTH=${width}')
+		if width > cfg.max_width {
+			// println('OUT OF BOUNDS ${text_}')
+		}
+	}
+	// TODO this is very very bad since it results in alloations in each frame
+	// I want to use substr_unsafe to render lines without str.split(), but I can't
+	// right now, since it uses a C lib for rendering, and it expected \0 strings.
+	// Fix this after re-writing text rendering in V.
+	if cfg.multiline {
+		lines := text_.split('\n')
+		for i, line in lines {
+			// println('line="${line}" ${line[line.len - 1]}')
+			ctx.draw_text(x, y + i * cfg.line_height, line, gx.TextCfg{ ...cfg, multiline: false })
+		}
+		return
+	}
 	ctx.set_text_cfg(cfg)
 	scale := if ctx.ft.scale == 0 { f32(1) } else { ctx.ft.scale }
 	ctx.ft.fons.draw_text(x * scale, y * scale, text_) // TODO: check offsets/alignment
@@ -271,6 +294,33 @@ pub fn (ctx &Context) text_width(s string) int {
 		}
 	}
 	return int((buf[2] - buf[0]) / ctx.scale)
+}
+
+// text_width returns the width of the `string` `s` in pixels.
+pub fn (ctx &Context) text_width_f(s string) f32 {
+	$if macos {
+		if ctx.native_rendering {
+			return C.darwin_text_width(s)
+		}
+	}
+	// ctx.set_text_cfg(cfg) TODO
+	if !ctx.font_inited {
+		return 0
+	}
+	mut buf := [4]f32{}
+	ctx.ft.fons.text_bounds(0, 0, s, &buf[0])
+	if s.ends_with(' ') {
+		return int((buf[2] - buf[0]) / ctx.scale) +
+			ctx.text_width('i') // TODO: fix this in fontstash?
+	}
+	res := int((buf[2] - buf[0]) / ctx.scale)
+	// println('TW "$s" = $res')
+	$if macos {
+		if ctx.native_rendering {
+			return res * 2
+		}
+	}
+	return (buf[2] - buf[0]) / ctx.scale
 }
 
 // text_height returns the height of the `string` `s` in pixels.

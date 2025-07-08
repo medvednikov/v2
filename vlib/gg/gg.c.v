@@ -219,7 +219,8 @@ pub mut:
 	pressed_keys      [key_code_max]bool // an array representing all currently pressed keys
 	pressed_keys_edge [key_code_max]bool // true when the previous state of pressed_keys,
 	// *before* the current event was different
-	fps FPSConfig
+	fps         FPSConfig
+	has_started bool
 }
 
 fn gg_init_sokol_window(user_data voidptr) {
@@ -321,6 +322,7 @@ fn gg_init_sokol_window(user_data voidptr) {
 			ctx.image_cache[i].init_sokol_image()
 		}
 	}
+	ctx.has_started = true
 }
 
 fn gg_frame_fn(mut ctx Context) {
