@@ -22,7 +22,7 @@ struct C.kevent {
 }
 
 // Helper to replace the C macro EV_SET
-fn ev_set(ev &C.kevent, ident u64, filter i16, flags u16) {
+fn ev_set(mut ev &C.kevent, ident u64, filter i16, flags u16) {
 	ev.ident = ident
 	ev.filter = filter
 	ev.flags = flags
@@ -40,7 +40,7 @@ fn create_event_loop() int {
 
 fn add_fd_to_event_loop(kqueue_fd int, fd int) int {
 	mut event := C.kevent{}
-	ev_set(&event, u64(fd), C.EVFILT_READ, u16(C.EV_ADD))
+	ev_set(mut &event, u64(fd), C.EVFILT_READ, u16(C.EV_ADD))
 	if C.kevent(kqueue_fd, &event, 1, C.NULL, 0, C.NULL) == -1 {
 		C.perror(c'kevent add')
 		return -1
@@ -50,7 +50,7 @@ fn add_fd_to_event_loop(kqueue_fd int, fd int) int {
 
 fn remove_fd_from_event_loop(kqueue_fd int, fd int) {
 	mut event := C.kevent{}
-	ev_set(&event, u64(fd), C.EVFILT_READ, u16(C.EV_DELETE))
+	ev_set(mut &event, u64(fd), C.EVFILT_READ, u16(C.EV_DELETE))
 	C.kevent(kqueue_fd, &event, 1, C.NULL, 0, C.NULL)
 }
 
@@ -60,7 +60,8 @@ fn process_worker_events(mut server Server, kqueue_fd int) {
 
 	for {
 		// Passing C.NULL as the timeout makes kevent wait indefinitely.
-		num_events := C.kevent(kqueue_fd, C.NULL, 0, &events[0], max_connection_size, C.NULL)
+		num_events := C.kevent(kqueue_fd, C.NULL, 0, &events[0], max_connection_size,
+			C.NULL)
 		if num_events < 0 {
 			if C.errno == C.EINTR {
 				continue
