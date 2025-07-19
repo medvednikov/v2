@@ -193,11 +193,14 @@ fn handle_client_closure(server &Server, client_fd int) {
 }
 
 fn process_events(mut server Server, main_epoll_fd int) {
+	println('handle_accept_loop()')
 	mut next_worker := 0
 	mut event := C.epoll_event{}
 
 	for {
+		println('FOR')
 		num_events := C.epoll_wait(main_epoll_fd, &event, 1, -1)
+		println('num_events=${num_events}')
 		if num_events < 0 {
 			if C.errno == C.EINTR {
 				continue
