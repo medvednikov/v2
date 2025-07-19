@@ -485,6 +485,8 @@ fn parse_request_line(s string) !(Method, urllib.URL, Version) {
 	println('s1s2= ${space1} ${space2}')
 	// if words.len != 3 {
 	if space1 == 0 || space2 == 0 {
+		println('KEKW:')
+		print_backtrace()
 		return error('malformed request line')
 	}
 	method_str := s.substr_unsafe(0, space1)
