@@ -210,6 +210,7 @@ fn process_events(mut server Server, epoll_fd int) {
 					unsafe {
 						readed_request_buffer.push_many(&request_buffer[0], bytes_read)
 					}
+					println('readed_request_buffer: ${readed_request_buffer}')
 					mut decoded_http_request := decode_http_request(readed_request_buffer) or {
 						eprintln('Error decoding request ${err}')
 						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len,
