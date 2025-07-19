@@ -18,6 +18,7 @@ pub mut:
 
 @[direct_array_access]
 fn parse_request_line(mut req HttpRequest) ! {
+	println('fast http parse_request_line')
 	mut i := 0
 	// Parse HTTP method
 	for i < req.buffer.len && req.buffer[i] != ` ` {
