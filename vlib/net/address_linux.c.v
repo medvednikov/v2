@@ -2,6 +2,8 @@ module net
 
 const max_unix_path = 108
 
+pub const C.AF_INET u16
+
 pub struct C.addrinfo {
 mut:
 	ai_family    int
