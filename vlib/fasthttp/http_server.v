@@ -218,6 +218,8 @@ fn process_events(mut server Server, epoll_fd int) {
 						continue
 					}
 					println('AZAZA DECODED HTTP REQUEST ${decoded_http_request}')
+					println('=============')
+					println(decoded_http_request.buffer.bytestr())
 					decoded_http_request.client_conn_fd = client_conn_fd
 					response_buffer := server.request_handler(decoded_http_request) or {
 						eprintln('Error handling request ${err}')
