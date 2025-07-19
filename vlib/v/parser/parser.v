@@ -2424,6 +2424,7 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 			comments:     comments
 			end_comments: end_comments
 			is_markused:  is_markused
+			is_virtual_c: is_virtual_c_const
 		}
 		if is_virtual_c_const {
 			field.typ = typ

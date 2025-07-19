@@ -970,7 +970,8 @@ pub fn (mut f Fmt) const_decl(node ast.ConstDecl) {
 		}
 		f.write('${name} ')
 		if field.is_virtual_c {
-			f.typ(field.typ)
+			// f.typ(field.typ)
+			f.write(f.table.type_to_str(field.typ))
 		} else {
 			f.write('= ')
 			f.expr(field.expr)
