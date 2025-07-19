@@ -435,6 +435,7 @@ pub fn parse_request_head(mut reader io.BufferedReader) !Request {
 
 // parse_request_head parses *only* the header of a raw HTTP request into a Request object
 pub fn parse_request_head_str(s string) !Request {
+	println('parse_request_head_str s ="${s}"')
 	lines := s.split('\n')
 	line0 := lines[0]
 	method, target, version := parse_request_line(line0)!
