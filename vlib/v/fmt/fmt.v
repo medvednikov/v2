@@ -969,8 +969,12 @@ pub fn (mut f Fmt) const_decl(node ast.ConstDecl) {
 			f.write('const ')
 		}
 		f.write('${name} ')
-		f.write('= ')
-		f.expr(field.expr)
+		if field.is_virtual_c {
+			f.typ(field.typ)
+		} else {
+			f.write('= ')
+			f.expr(field.expr)
+		}
 		f.comments(field.end_comments, same_line: true)
 		if node.is_block && fidx < node.fields.len - 1 && node.fields.len > 1 {
 			// old style grouped consts, converted to the new style ungrouped const
