@@ -55,6 +55,22 @@ mut:
 	*/
 }
 
+@[params]
+pub struct RunParams {
+pub:
+	// use `family: .ip, host: 'localhost'` when you want it to bind only to 127.0.0.1
+	family               net.AddrFamily = .ip6
+	host                 string
+	port                 int  = default_port
+	show_startup_message bool = true
+	timeout_in_seconds   int  = 30
+}
+
+@[direct_array_access; manualfree]
+pub fn run_at[A, X](mut global_app A, params RunParams) ! {
+	run[A, X](mut global_app, params.port)!
+}
+
 // run - start a new veb server using the parallel vanilla_http_server backend.
 pub fn run[A, X](mut global_app A, port int) ! {
 	// gapp = global_app
@@ -101,7 +117,7 @@ fn kek_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 
 	// println('params=$gparams')
 
-	println('veb handler fasthttp.HttpRequest=$req')
+	println('veb handler fasthttp.HttpRequest=${req}')
 
 	// println('buffer=${req.buffer.bytestr()}')
 	s := req.buffer.bytestr()
