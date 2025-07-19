@@ -478,11 +478,11 @@ pub fn parse_request_head_str(s string) !Request {
 }
 
 fn parse_request_line(s string) !(Method, urllib.URL, Version) {
-	// println('S=${s}')
+	println('parse_request_line S=${s}')
 	// words := s.split(' ')
 	// println(words)
 	space1, space2 := fast_request_words(s)
-	// println('s1s2= $space1 $space2')
+	println('s1s2= ${space1} ${space2}')
 	// if words.len != 3 {
 	if space1 == 0 || space2 == 0 {
 		return error('malformed request line')
