@@ -56,7 +56,7 @@ mut:
 }
 
 pub fn run_at[A, X](mut global_app A, params RunParams) ! {
-	run(mut global_app, params.port)!
+	run[A, X](mut global_app, params.port)!
 }
 
 @[params]
