@@ -3,7 +3,7 @@
 // that can be found in the LICENSE file.
 //
 // This version is refactored to use `vanilla_http_server` exclusively.
-module veb2
+module veb
 
 // import vanilla_http_server.http_server
 // import vanilla_http_server.request_parser
