@@ -1,6 +1,8 @@
 // fasthttp/http_server.v
 module fasthttp
 
+import net
+
 #include <fcntl.h>
 #include <errno.h>
 
@@ -26,6 +28,7 @@ fn C.epoll_wait(__epfd int, __events &C.epoll_event, __maxevents int, __timeout 
 fn C.fcntl(fd int, cmd int, arg int) int
 
 // C Structs - Identical to original formatting
+/*
 struct C.in_addr {
 	s_addr u32
 }
@@ -36,6 +39,7 @@ struct C.sockaddr_in {
 	sin_addr   u32 // C.in_addr
 	sin_zero   [8]u8
 }
+*/
 
 union C.epoll_data {
 	ptr voidptr
@@ -128,11 +132,18 @@ fn create_server_socket(port int) int {
 		return -1
 	}
 	server_addr := C.sockaddr_in{
-		sin_family: u16(C.AF_INET)
+		// sin_family: u16(C.AF_INET)
+		sin_family: C.AF_INET
 		sin_port:   C.htons(u16(port))
 		sin_addr:   u32(C.INADDR_ANY)
 		sin_zero:   [8]u8{}
 	}
+	//$if linux {
+	// server_addr.sin_family = u16(C.AF_INET)
+	//}
+	//$else if darwin {
+
+	//}
 	if C.bind(server_fd, voidptr(&server_addr), sizeof(server_addr)) < 0 {
 		eprintln(@LOCATION)
 		C.perror(c'Bind failed')
