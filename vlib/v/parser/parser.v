@@ -2368,11 +2368,20 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 			break
 		}
 		pos := p.tok.pos()
-		name := p.check_name()
+		mut name := p.check_name()
 		end_comments << p.eat_comments()
-		if !p.pref.translated && !p.is_translated && util.contains_capital(name) {
-			p.error_with_pos('const names cannot contain uppercase letters, use snake_case instead',
+		if !p.pref.translated && !p.is_translated && util.contains_capital(name) && name != 'C' {
+			p.error_with_pos('1${name} const names cannot contain uppercase letters, use snake_case instead',
 				pos)
+		}
+		// Handle `const C.MY_CONST u16`
+		mut is_virtual_c_const := false
+		if name == 'C' && p.tok.kind == .dot {
+			p.next()
+			name += p.check_name()
+			typ := p.parse_type()
+			println(typ)
+			is_virtual_c_const = true
 		}
 		full_name := p.prepend_mod(name)
 		if p.tok.kind == .comma {
@@ -2383,7 +2392,9 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		if p.tok.kind == .decl_assign {
 			p.check(.decl_assign)
 		} else {
-			p.check(.assign)
+			if !is_virtual_c_const {
+				p.check(.assign)
+			}
 		}
 		end_comments << p.eat_comments()
 		if p.tok.kind == .key_fn {
