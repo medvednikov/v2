@@ -2430,9 +2430,6 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		}
 		fields << field
 		p.table.global_scope.register(field)
-		if is_virtual_c_const {
-			println(p.table.global_scope)
-		}
 		comments = []
 		if is_block {
 			end_comments = []
