@@ -136,7 +136,7 @@ fn create_server_socket(port int) int {
 		sin_family: C.AF_INET
 		sin_port:   C.htons(u16(port))
 		sin_addr:   u32(C.INADDR_ANY)
-		sin_zero:   [8]u8{}
+		// sin_zero:   [8]u8{}
 	}
 	//$if linux {
 	// server_addr.sin_family = u16(C.AF_INET)
