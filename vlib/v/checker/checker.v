@@ -4294,15 +4294,11 @@ fn (mut c Checker) ident(mut node ast.Ident) ast.Type {
 		}
 	}
 	if node.language == .c {
-		if c.fileis('const_u8') {
-			println('LOLW ${node.name}')
-		}
 		if node.name == 'C.NULL' {
 			return ast.voidptr_type
 		}
 		// TODO remove main. to avoid extra concats
 		if x := c.table.global_scope.find_const('main.' + node.name) {
-			println('GOT IT!!!!!!! ${x}')
 			return x.typ
 		}
 		return ast.int_type

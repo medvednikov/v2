@@ -2387,9 +2387,6 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		if p.tok.kind == .comma {
 			p.error_with_pos('const declaration do not support multiple assign yet', p.tok.pos())
 		}
-		// if is_virtual_c_const {
-
-		//}
 		// Allow for `const x := 123`, and for `const x = 123` too.
 		// Supporting `const x := 123` in addition to `const x = 123`, makes extracting local variables to constants
 		// much less annoying, while prototyping:
