@@ -968,6 +968,9 @@ pub fn (mut f Fmt) const_decl(node ast.ConstDecl) {
 			}
 			f.write('const ')
 		}
+		if field.is_virtual_c {
+			f.write('C.')
+		}
 		f.write('${name} ')
 		if field.is_virtual_c {
 			// f.typ(field.typ)
