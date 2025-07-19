@@ -7,6 +7,8 @@ module fasthttp
 fn C.kqueue() int
 fn C.kevent(kq int, changelist &C.kevent, nchanges int, eventlist &C.kevent, nevents int, timeout &C.timespec) int
 
+const C.EVFILT_READ i16
+
 struct C.timespec {
 	tv_sec  i64
 	tv_nsec i64
@@ -22,7 +24,7 @@ struct C.kevent {
 }
 
 // Helper to replace the C macro EV_SET
-fn ev_set(mut ev &C.kevent, ident u64, filter i16, flags u16) {
+fn ev_set(mut ev C.kevent, ident u64, filter i16, flags u16) {
 	ev.ident = ident
 	ev.filter = filter
 	ev.flags = flags
@@ -40,7 +42,7 @@ fn create_event_loop() int {
 
 fn add_fd_to_event_loop(kqueue_fd int, fd int) int {
 	mut event := C.kevent{}
-	ev_set(mut &event, u64(fd), C.EVFILT_READ, u16(C.EV_ADD))
+	ev_set(mut event, u64(fd), C.EVFILT_READ, u16(C.EV_ADD))
 	if C.kevent(kqueue_fd, &event, 1, C.NULL, 0, C.NULL) == -1 {
 		C.perror(c'kevent add')
 		return -1
@@ -50,7 +52,7 @@ fn add_fd_to_event_loop(kqueue_fd int, fd int) int {
 
 fn remove_fd_from_event_loop(kqueue_fd int, fd int) {
 	mut event := C.kevent{}
-	ev_set(mut &event, u64(fd), C.EVFILT_READ, u16(C.EV_DELETE))
+	ev_set(mut event, u64(fd), C.EVFILT_READ, u16(C.EV_DELETE))
 	C.kevent(kqueue_fd, &event, 1, C.NULL, 0, C.NULL)
 }
 
