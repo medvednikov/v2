@@ -2379,9 +2379,8 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		mut typ := ast.void_type
 		if name == 'C' && p.tok.kind == .dot {
 			p.next()
-			name += p.check_name()
+			name += '.' + p.check_name()
 			typ = p.parse_type()
-			println(typ)
 			is_virtual_c_const = true
 		}
 		full_name := p.prepend_mod(name)
@@ -2433,6 +2432,9 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		}
 		fields << field
 		p.table.global_scope.register(field)
+		if is_virtual_c_const {
+			println(p.table.global_scope)
+		}
 		comments = []
 		if is_block {
 			end_comments = []
