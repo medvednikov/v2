@@ -55,6 +55,21 @@ mut:
 	*/
 }
 
+pub fn run_at[A, X](mut global_app A, port int) ! {
+	run(mut global_app, RunParams{ port: port })!
+}
+
+@[params]
+pub struct RunParams {
+pub:
+	// use `family: .ip, host: 'localhost'` when you want it to bind only to 127.0.0.1
+	family               net.AddrFamily = .ip6
+	host                 string
+	port                 int  = default_port
+	show_startup_message bool = true
+	timeout_in_seconds   int  = 30
+}
+
 // run - start a new veb server using the parallel vanilla_http_server backend.
 pub fn run[A, X](mut global_app A, port int) ! {
 	// gapp = global_app
