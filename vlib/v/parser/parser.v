@@ -2376,10 +2376,11 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		}
 		// Handle `const C.MY_CONST u16`
 		mut is_virtual_c_const := false
+		mut typ := ast.void_type
 		if name == 'C' && p.tok.kind == .dot {
 			p.next()
 			name += p.check_name()
-			typ := p.parse_type()
+			typ = p.parse_type()
 			println(typ)
 			is_virtual_c_const = true
 		}
@@ -2387,8 +2388,12 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 		if p.tok.kind == .comma {
 			p.error_with_pos('const declaration do not support multiple assign yet', p.tok.pos())
 		}
+		// if is_virtual_c_const {
+
+		//}
 		// Allow for `const x := 123`, and for `const x = 123` too.
-		// Supporting `const x := 123` in addition to `const x = 123`, makes extracting local variables to constants much less annoying, while prototyping:
+		// Supporting `const x := 123` in addition to `const x = 123`, makes extracting local variables to constants
+		// much less annoying, while prototyping:
 		if p.tok.kind == .decl_assign {
 			p.check(.decl_assign)
 		} else {
@@ -2397,7 +2402,7 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 			}
 		}
 		end_comments << p.eat_comments()
-		if p.tok.kind == .key_fn {
+		if p.tok.kind == .key_fn && !is_virtual_c_const {
 			p.error('const initializer fn literal is not a constant')
 			return ast.ConstDecl{}
 		}
@@ -2405,11 +2410,14 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 			p.unexpected(got: 'eof', expecting: 'an expression')
 			return ast.ConstDecl{}
 		}
-		expr := p.expr(0)
+		mut expr := ast.Expr{}
+		if !is_virtual_c_const {
+			expr = p.expr(0)
+		}
 		if is_block {
 			end_comments << p.eat_comments(same_line: true)
 		}
-		field := ast.ConstField{
+		mut field := ast.ConstField{
 			name:         full_name
 			mod:          p.mod
 			is_pub:       is_pub
@@ -2419,6 +2427,9 @@ fn (mut p Parser) const_decl() ast.ConstDecl {
 			comments:     comments
 			end_comments: end_comments
 			is_markused:  is_markused
+		}
+		if is_virtual_c_const {
+			field.typ = typ
 		}
 		fields << field
 		p.table.global_scope.register(field)
