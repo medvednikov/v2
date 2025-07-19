@@ -62,7 +62,7 @@ mut:
 const tiny_bad_request_response = 'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.bytes()
 const max_connection_size = 1024
 const max_thread_pool_size = 8
-const read_buffer_size          = 4096
+const read_buffer_size = 4096
 
 // --- Server Entry Point ---
 pub fn (mut server Server) run() {
@@ -168,12 +168,12 @@ fn remove_fd_from_epoll(epoll_fd int, fd int) {
 // handle_accept_loop is run by the MAIN thread.
 // Its only job is to accept new connections and distribute them to the worker threads.
 fn (mut server Server) handle_accept_loop() {
-println('handle_accept_loop()')
+	println('handle_accept_loop()')
 	mut next_worker := 0
 	for {
 		println('FOR1')
 		client_conn_fd := C.accept(server.socket_fd, C.NULL, C.NULL)
-		println('client_conn_fd=$client_conn_fd')
+		println('client_conn_fd=${client_conn_fd}')
 		if client_conn_fd < 0 {
 			// This can happen on server shutdown.
 			println('accept failed')
@@ -188,16 +188,15 @@ println('handle_accept_loop()')
 		// Distribute the new connection to a worker thread via round-robin.
 		worker_epoll_fd := server.epoll_fds[next_worker]
 		next_worker = (next_worker + 1) % max_thread_pool_size
-		println('next_worker=$next_worker')
+		println('next_worker=${next_worker}')
 
 		// Add the client to the chosen worker's epoll set.
 		if add_fd_to_epoll(worker_epoll_fd, client_conn_fd, u32(C.EPOLLIN)) < 0 {
 			eprintln('Failed to add client fd ${client_conn_fd} to worker epoll instance. Closing socket.')
 			close_socket(client_conn_fd)
-		}
-		else {
+		} else {
 			println('add_fd_to_epoll OK')
-			}
+		}
 	}
 }
 
@@ -216,7 +215,7 @@ fn handle_client_closure(server &Server, client_fd int) {
 // // process_worker_events is run by each WORKER thread.
 // Its job is to handle reading/writing for the connections it has been assigned.
 fn process_worker_events(mut server Server, epoll_fd int) {
-println('process_worker_events')
+	println('process_worker_events')
 	mut events := [max_connection_size]C.epoll_event{}
 	// Each worker manages its own set of connection buffers.
 	mut connection_buffers := map[int][]u8{}
@@ -225,7 +224,7 @@ println('process_worker_events')
 		println('FOR2')
 		// This worker waits for events ONLY on its own epoll instance.
 		num_events := C.epoll_wait(epoll_fd, &events[0], max_connection_size, -1)
-		println('num_events=$num_events')
+		println('num_events=${num_events}')
 		if num_events < 0 {
 			if C.errno == C.EINTR {
 				continue
@@ -246,7 +245,7 @@ println('process_worker_events')
 
 			// The socket has data to be read.
 			if event.events & u32(C.EPOLLIN) != 0 {
-					println("READING SOCKET DATA")
+				println('READING SOCKET DATA')
 				// FIX: This flag tracks if the client has cleanly closed the connection.
 				mut client_closed_connection := false
 
@@ -258,17 +257,18 @@ println('process_worker_events')
 				// --- CRITICAL FIX: Read in a loop for Edge-Triggered mode ---
 				for {
 					mut read_buf := [read_buffer_size]u8{}
-					bytes_read := C.recv(client_conn_fd, &read_buf[0], read_buffer_size, 0)
-					println('bytes_read=$bytes_read')
+					bytes_read := C.recv(client_conn_fd, &read_buf[0], read_buffer_size,
+						0)
+					println('bytes_read=${bytes_read}')
 
 					if bytes_read > 0 {
-							println('bytes_read > 0; read_buf:')
-							//println(read_buf)
-							//println(read_buf.bytestr())
-							for x in read_buf {
-									print(x.ascii_str())
-									}
-									println('END')
+						println('bytes_read > 0; read_buf:')
+						// println(read_buf)
+						// println(read_buf.bytestr())
+						for x in read_buf {
+							print(x.ascii_str())
+						}
+						println('END')
 						// Append the newly read data to this connection's buffer.
 						connection_buffers[client_conn_fd].push_many(&read_buf[0], bytes_read)
 					} else if bytes_read == 0 {
@@ -293,7 +293,7 @@ println('process_worker_events')
 				} // End of the non-blocking read loop.
 
 				request_buffer := connection_buffers[client_conn_fd]
-				println('request_buffer:$request_buffer')
+				println('request_buffer:${request_buffer}')
 
 				// --- CRITICAL LOGIC FIX ---
 				// Only proceed if we have actually read data OR if the client has disconnected.
@@ -310,7 +310,8 @@ println('process_worker_events')
 					// Now that we have data, try to process it.
 					mut decoded_http_request := decode_http_request(request_buffer) or {
 						eprintln('Error decoding request: ${err}')
-						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
+						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len,
+							0)
 						cleanup_client_connection(epoll_fd, client_conn_fd, mut connection_buffers)
 						continue
 					}
@@ -318,12 +319,14 @@ println('process_worker_events')
 					decoded_http_request.client_conn_fd = client_conn_fd
 					response_buffer := server.request_handler(decoded_http_request) or {
 						eprintln('Error handling request: ${err}')
-						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len, 0)
+						C.send(client_conn_fd, tiny_bad_request_response.data, tiny_bad_request_response.len,
+							0)
 						cleanup_client_connection(epoll_fd, client_conn_fd, mut connection_buffers)
 						continue
 					}
 
-					C.send(client_conn_fd, response_buffer.data, response_buffer.len, 0)
+					C.send(client_conn_fd, response_buffer.data, response_buffer.len,
+						0)
 
 					// The request is fully handled. Clean up all resources for this connection.
 					cleanup_client_connection(epoll_fd, client_conn_fd, mut connection_buffers)
