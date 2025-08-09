@@ -218,6 +218,7 @@ pub:
 	message string
 	line_nr int
 	col     int
+	len     int
 }
 
 pub fn print_json_error(kind string, err errors.CompilerMessage) {
@@ -226,6 +227,7 @@ pub fn print_json_error(kind string, err errors.CompilerMessage) {
 		path:    err.file_path
 		line_nr: err.pos.line_nr + 1
 		col:     err.pos.col + 1
+		len:     err.pos.len
 	}
 	eprintln(json2.encode(e))
 }
