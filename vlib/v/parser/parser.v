@@ -252,13 +252,16 @@ pub fn parse_file(path string, mut table ast.Table, comments_mode scanner.Commen
 		scanner:  scanner.new_scanner_file(path, comments_mode, pref_) or { panic(err) }
 		table:    table
 		pref:     pref_
-		is_vls:   pref_.is_vls
+		is_vls:   pref_.is_vls && path == pref_.path
 		scope:    &ast.Scope{
 			start_pos: 0
 			parent:    table.global_scope
 		}
 		errors:   []errors.Error{}
 		warnings: []errors.Warning{}
+	}
+	if p.is_vls {
+		println('YOOO ${path}')
 	}
 	p.set_path(path)
 	res := p.parse()
@@ -916,6 +919,7 @@ fn (mut p Parser) stmt(is_top_level bool) ast.Stmt {
 			} else if p.peek_tok.kind == .name {
 				if p.is_vls {
 					// So that a line with a simple `var_name` works
+					println('allow name vls')
 					p.next()
 					return ast.ExprStmt{
 						expr: p.ident(.v)
@@ -1113,6 +1117,9 @@ fn (mut p Parser) expr_list(expect_value bool) []ast.Expr {
 
 @[direct_array_access]
 fn (mut p Parser) parse_multi_expr(is_top_level bool) ast.Stmt {
+	if p.fileis('go2') {
+		print_backtrace()
+	}
 	// in here might be 1) multi-expr 2) multi-assign
 	// 1, a, c ... }       // multi-expression
 	// a, mut b ... :=/=   // multi-assign
