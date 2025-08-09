@@ -406,6 +406,10 @@ pub fn parse_args_and_show_errors(known_external_commands []string, args []strin
 			'-check' {
 				res.check_only = true
 			}
+			'-vls-mode' {
+				println('SETTING IS VLS MODe')
+				res.is_vls = true
+			}
 			'-?', '-h', '-help', '--help' {
 				// Note: help is *very important*, just respond to all variations:
 				res.is_help = true
