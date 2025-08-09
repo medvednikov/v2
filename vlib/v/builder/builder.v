@@ -14,6 +14,7 @@ import v.markused
 import v.depgraph
 import v.callgraph
 import v.dotgraph
+import x.json2
 
 pub struct Builder {
 pub:
@@ -519,6 +520,7 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 			}
 		}
 
+		mut json_errors := []util.JsonError{}
 		for file in b.parsed_files {
 			for err in file.errors {
 				kind := if b.pref.is_verbose {
@@ -526,12 +528,22 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 				} else {
 					'error:'
 				}
+
 				if b.pref.json_errors {
-					util.print_json_error(kind, err.CompilerMessage)
+					json_errors << util.JsonError{
+						message: err.message
+						path:    err.file_path
+						line_nr: err.pos.line_nr + 1
+						col:     err.pos.col + 1
+					}
+					// util.print_json_error(kind, err.CompilerMessage)
 				} else {
 					util.show_compiler_message(kind, err.CompilerMessage)
 				}
 			}
+		}
+		if b.pref.json_errors {
+			eprintln(json2.encode(json_errors))
 		}
 
 		if !b.pref.skip_warnings {

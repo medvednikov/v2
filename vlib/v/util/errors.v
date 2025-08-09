@@ -212,7 +212,8 @@ pub fn show_compiler_message(kind string, err errors.CompilerMessage) {
 	}
 }
 
-struct JsonError {
+pub struct JsonError {
+pub:
 	path    string
 	message string
 	line_nr int
