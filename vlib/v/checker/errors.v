@@ -146,7 +146,7 @@ fn (mut c Checker) warn_or_error(message string, pos token.Pos, warn bool) {
 	}
 	if !warn {
 		if c.pref.fatal_errors {
-			util.show_compiler_message('error:', errors.CompilerMessage{
+			util.show_compiler_message('error2:', errors.CompilerMessage{
 				pos:       pos
 				file_path: c.file.path
 				message:   message

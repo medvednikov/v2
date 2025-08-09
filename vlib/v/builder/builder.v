@@ -526,7 +526,11 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 				} else {
 					'error:'
 				}
-				util.show_compiler_message(kind, err.CompilerMessage)
+				if b.pref.json_errors {
+					util.print_json_error(kind, err.CompilerMessage)
+				} else {
+					util.show_compiler_message(kind, err.CompilerMessage)
+				}
 			}
 		}
 
