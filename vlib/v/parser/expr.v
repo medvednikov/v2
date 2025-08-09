@@ -568,16 +568,10 @@ fn (mut p Parser) expr_with_left(left ast.Expr, precedence int, is_stmt_ident bo
 	// Infix
 	for precedence < p.tok.kind.precedence() {
 		if p.tok.kind == .dot {
-			if p.fileis('go2') {
-				println('KK dot')
-			}
 			// no spaces or line break before dot in map_init
 			if (p.inside_map_init || p.inside_array_lit)
 				&& p.tok.pos - p.prev_tok.pos > p.prev_tok.len {
 				return node
-			}
-			if p.fileis('go2') {
-				println('KK dot calling')
 			}
 			node = p.dot_expr(node)
 			if p.name_error {
