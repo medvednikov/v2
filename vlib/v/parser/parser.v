@@ -1991,9 +1991,9 @@ fn (mut p Parser) index_expr(left ast.Expr, is_gated bool) ast.IndexExpr {
 fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	if p.fileis('go2') {
 		println('dot_expr() dot')
-	}
-	if p.pref.is_vls {
-		println('${p.file_path} dot expr ${left}')
+		if p.pref.is_vls {
+			println('${p.file_path} dot expr ${left}')
+		}
 	}
 	prev_line := p.prev_tok.pos().line_nr
 	p.next()
@@ -2017,9 +2017,9 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	// check if the name is on the same line as the dot
 	if p.prev_tok.pos().line_nr == name_pos.line_nr || p.tok.kind != .name {
 		if p.is_vls {
-			// if p.fileis('go2') {
-			println('${p.file_path} lol tok=${p.tok} line=${p.tok.line_nr}')
-			//}
+			if p.fileis('go2') {
+				println('${p.file_path} lol tok=${p.tok} line=${p.tok.line_nr}')
+			}
 			if p.tok.kind in [.rpar, .rcbr] {
 				println('XD')
 				// Simplify the dot expression for VLS, so that the parser doesn't error
