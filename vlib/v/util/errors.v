@@ -9,7 +9,6 @@ import strings
 import term
 import v.errors
 import v.token
-import x.json2
 
 // The filepath:line:col: format is the default C compiler error output format.
 // It allows editors and IDE's like emacs to quickly find the errors in the
@@ -221,6 +220,7 @@ pub:
 	len     int
 }
 
+/*
 pub fn print_json_error(kind string, err errors.CompilerMessage) {
 	e := JsonError{
 		message: err.message
@@ -229,5 +229,6 @@ pub fn print_json_error(kind string, err errors.CompilerMessage) {
 		col:     err.pos.col + 1
 		len:     err.pos.len
 	}
-	eprintln(json2.encode(e))
+	eprintln(json2.encode_pretty(e))
 }
+*/

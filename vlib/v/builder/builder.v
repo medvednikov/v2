@@ -543,7 +543,7 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 			}
 		}
 		if b.pref.json_errors {
-			eprintln(json2.encode(json_errors))
+			eprintln(json2.encode_pretty(json_errors))
 		}
 
 		if !b.pref.skip_warnings {
