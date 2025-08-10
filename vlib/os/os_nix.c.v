@@ -1,7 +1,7 @@
 module os
 
 import strings
-import time
+// import time
 
 #include <dirent.h>
 #include <unistd.h>
@@ -356,7 +356,7 @@ pub fn execute(cmd string) Result {
 }
 
 // TODO `select` doesn't work with time.Duration for some reason
-pub fn execute_with_timeout(cmd string, timeout int) ?Result {
+pub fn execute_with_timeout(cmd string, timeout i64) ?Result {
 	ch := chan Result{cap: 1}
 	spawn fn [cmd] (c chan Result) {
 		res := execute(cmd)
@@ -368,7 +368,9 @@ pub fn execute_with_timeout(cmd string, timeout int) ?Result {
 		}
 		// timeout {
 		// 1000 * time.millisecond {
-		timeout * time.millisecond {
+		// timeout * time.millisecond {
+		timeout * 1_000_000 {
+			println('NOPE')
 			return none
 		}
 	}
