@@ -1,7 +1,6 @@
 module os
 
 import strings
-// import time
 
 #include <dirent.h>
 #include <unistd.h>
