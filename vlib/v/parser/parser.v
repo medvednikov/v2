@@ -262,9 +262,6 @@ pub fn parse_file(path string, mut table ast.Table, comments_mode scanner.Commen
 		errors:   []errors.Error{}
 		warnings: []errors.Warning{}
 	}
-	if p.is_vls {
-		// println('YOOO ${path}')
-	}
 	p.set_path(path)
 	res := p.parse()
 	unsafe { p.free_scanner() }
@@ -921,7 +918,6 @@ fn (mut p Parser) stmt(is_top_level bool) ast.Stmt {
 			} else if p.peek_tok.kind == .name {
 				if p.is_vls {
 					// So that a line with a simple `var_name` works
-					println('allow name vls')
 					p.next()
 					return ast.ExprStmt{
 						expr: p.ident(.v)
@@ -1119,9 +1115,6 @@ fn (mut p Parser) expr_list(expect_value bool) []ast.Expr {
 
 @[direct_array_access]
 fn (mut p Parser) parse_multi_expr(is_top_level bool) ast.Stmt {
-	if p.fileis('go2') {
-		// print_backtrace()
-	}
 	// in here might be 1) multi-expr 2) multi-assign
 	// 1, a, c ... }       // multi-expression
 	// a, mut b ... :=/=   // multi-assign
@@ -1989,14 +1982,6 @@ fn (mut p Parser) index_expr(left ast.Expr, is_gated bool) ast.IndexExpr {
 }
 
 fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
-	/*
-	if p.fileis('go2') {
-		println('dot_expr() dot')
-		if p.pref.is_vls {
-			println('${p.file_path} dot expr ${left}')
-		}
-	}
-	*/
 	prev_line := p.prev_tok.pos().line_nr
 	p.next()
 	if p.tok.kind == .dollar {
@@ -2019,11 +2004,7 @@ fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
 	// check if the name is on the same line as the dot
 	if p.prev_tok.pos().line_nr == name_pos.line_nr || p.tok.kind != .name {
 		if p.is_vls {
-			if p.fileis('go2') {
-				// println('${p.file_path} lol tok=${p.tok} line=${p.tok.line_nr}')
-			}
 			if p.tok.kind in [.rpar, .rcbr] {
-				// println('XD')
 				// Simplify the dot expression for VLS, so that the parser doesn't error
 				// `println(x.)` => `println(x)`
 				// `x. }` => `x }` etc
