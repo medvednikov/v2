@@ -370,7 +370,6 @@ pub fn execute_with_timeout(cmd string, timeout i64) ?Result {
 		// 1000 * time.millisecond {
 		// timeout * time.millisecond {
 		timeout * 1_000_000 {
-			println('NOPE')
 			return none
 		}
 	}
