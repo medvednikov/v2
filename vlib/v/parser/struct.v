@@ -125,8 +125,10 @@ fn (mut p Parser) struct_decl(is_anon bool) ast.StructDecl {
 			}
 		}
 		p.check(.lcbr)
-		if p.pref.is_vls && p.tok.kind == .key_struct { // p.tok.is_key() {
+		// if p.is_vls && p.tok.kind == .key_struct { // p.tok.is_key() {
+		if p.is_vls && p.tok.is_key() {
 			// End parsing after `struct Foo {` in vls mode to avoid lots of junk errors
+			// If next token after { is a key, the struct wasn't finished
 			p.error('expected `}`')
 			p.should_abort = true
 			return ast.StructDecl{
