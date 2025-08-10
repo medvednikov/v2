@@ -220,6 +220,26 @@ pub:
 	len     int
 }
 
+pub fn print_json_errors(errs []JsonError) {
+	// Can't import x.json2 or json, so have to manually generate json
+	eprintln('[')
+	for i, e in errs {
+		msg := e.message.replace('"', '\\"').replace('\n', '\\n')
+		eprintln('{
+"path":"${e.path}",
+"message":"${msg}",
+"line_nr":${e.line_nr},
+"col":${e.col},
+"len":${e.len}
+
+}')
+		if i < errs.len - 1 {
+			eprintln(',')
+		}
+	}
+	eprintln(']')
+}
+
 /*
 pub fn print_json_error(kind string, err errors.CompilerMessage) {
 	e := JsonError{

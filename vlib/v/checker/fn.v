@@ -2012,6 +2012,9 @@ fn (mut c Checker) check_type_and_visibility(name string, type_idx int, expected
 }
 
 fn (mut c Checker) method_call(mut node ast.CallExpr, mut continue_check &bool) ast.Type {
+	// if c.pref.output_cross_c {
+	// println(c.file.path)
+	//}
 	// `(if true { 'foo.bar' } else { 'foo.bar.baz' }).all_after('foo.')`
 	mut left_expr := node.left
 	left_expr = left_expr.remove_par()

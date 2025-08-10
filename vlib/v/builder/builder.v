@@ -14,7 +14,7 @@ import v.markused
 import v.depgraph
 import v.callgraph
 import v.dotgraph
-import x.json2
+// import x.json2
 
 pub struct Builder {
 pub:
@@ -476,7 +476,8 @@ pub fn (b &Builder) show_total_warns_and_errors_stats() {
 			println('checker summary: ${estring} V errors, ${wstring} V warnings, ${nstring} V notices')
 		}
 	}
-	if b.checker.nr_errors > 0 && b.pref.path.ends_with('.v') && os.is_file(b.pref.path) {
+	if !b.pref.is_vls && b.checker.nr_errors > 0 && b.pref.path.ends_with('.v')
+		&& os.is_file(b.pref.path) {
 		if b.checker.errors.any(it.message.starts_with('unknown ')) {
 			// Sometimes users try to `v main.v`, when they have several .v files in their project.
 			// Then, they encounter puzzling errors about missing or unknown types. In this case,
@@ -543,7 +544,8 @@ pub fn (mut b Builder) print_warnings_and_errors() {
 			}
 		}
 		if b.pref.json_errors {
-			eprintln(json2.encode_pretty(json_errors))
+			util.print_json_errors(json_errors)
+			// eprintln(json2.encode_pretty(json_errors))
 		}
 
 		if !b.pref.skip_warnings {
