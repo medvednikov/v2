@@ -354,27 +354,6 @@ pub fn execute(cmd string) Result {
 	}
 }
 
-// TODO `select` doesn't work with time.Duration for some reason
-pub fn execute_with_timeout(cmd string, timeout i64) ?Result {
-	ch := chan Result{cap: 1}
-	spawn fn [cmd] (c chan Result) {
-		res := execute(cmd)
-		c <- res
-	}(ch)
-	select {
-		a := <-ch {
-			return a
-		}
-		// timeout {
-		// 1000 * time.millisecond {
-		// timeout * time.millisecond {
-		timeout * 1_000_000 {
-			return none
-		}
-	}
-	return Result{}
-}
-
 // raw_execute does the same as `execute` on Unix platforms.
 // On Windows raw_execute starts the specified command, waits for it to complete, and returns its output.
 // It's marked as `unsafe` to help emphasize the problems that may arise by allowing, for example,
