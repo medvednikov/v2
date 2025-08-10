@@ -13,7 +13,7 @@ fn (mut p Preferences) parse_line_info(line string) {
 	file_name := vals[0]
 	line_nr := vals[1].int() - 1
 	expr := vals[2]
-	if (!file_name.ends_with('.v') && !file_name.ends_with('.go2')) || line_nr == -1 {
+	if !file_name.ends_with('.v') || line_nr == -1 {
 		eprintln(format_err)
 		return
 	}
