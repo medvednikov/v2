@@ -1120,7 +1120,7 @@ fn (mut p Parser) expr_list(expect_value bool) []ast.Expr {
 @[direct_array_access]
 fn (mut p Parser) parse_multi_expr(is_top_level bool) ast.Stmt {
 	if p.fileis('go2') {
-		print_backtrace()
+		// print_backtrace()
 	}
 	// in here might be 1) multi-expr 2) multi-assign
 	// 1, a, c ... }       // multi-expression
