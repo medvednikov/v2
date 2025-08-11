@@ -25,20 +25,3 @@ fn (mut p Preferences) parse_line_info(line string) {
 		col: col
 	}
 }
-
-/*
-
-pub fn add_line_info_expr_to_program_text(raw_text string, linfo LineInfo) string {
-	lines := raw_text.split('\n')
-	lines_before := lines[..linfo.line_nr].join('\n')
-	mut expr := linfo.expr
-	if !expr.contains('.') {
-		// Single variable, `foo` => `foo.xx`
-		// expr += '.xxx'
-		// expr = '_ = ' + expr
-		expr = 'println(' + expr + ')'
-	}
-	lines_after := lines[linfo.line_nr..].join('\n')
-	return lines_before + '\n' + expr + '\n' + lines_after
-}
-*/

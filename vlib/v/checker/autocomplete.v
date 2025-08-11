@@ -20,7 +20,7 @@ fn abs(a int) int {
 
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
-	if true || c.pref.is_verbose {
+	if c.pref.is_verbose {
 		println(
 			'checker.ident_autocomplete() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
 			' node.col=${node.pos.col} pwd="${os.getwd()}" file="${c.file.path}", ' +
