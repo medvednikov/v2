@@ -39,9 +39,14 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	sym := c.table.sym(c.unwrap_generic(node.obj.typ))
 	// sb.writeln('VAR ${node.name}:${sym.name} ${node.pos.line_nr}')
 	nt := '${node.name}:${sym.name}'
+	sb.writeln('{')
 	if !c.pref.linfo.vars_printed[nt] { // avoid dups
-		sb.writeln('===')
-		sb.writeln('VAR ${nt}') //${node.name}:${sym.name}')
+		// sb.writeln('===')
+		// sb.writeln('VAR ${nt}') //${node.name}:${sym.name}')
+		sb.writeln('\t"name":"${node.name}",')
+		sb.writeln('\t"type":"${sym.name}",')
+		sb.writeln('\t"fields":[')
+
 		// print_backtrace()
 		/*
 		if sym.kind == .alias {
@@ -75,9 +80,14 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 			fields << ACFieldMethod{build_method_summary(method), method_ret_type.name}
 		}
 		fields.sort(a.name < b.name)
-		for field in fields {
-			sb.writeln('${field.name}:${field.typ}')
+		for i, field in fields {
+			// sb.writeln('${field.name}:${field.typ}')
+			sb.write_string('\t\t"${field.name}:${field.typ}"')
+			if i < fields.len - 1 {
+				sb.writeln(', ')
+			}
 		}
+		sb.writeln('\n\t]\n}')
 		res := sb.str().trim_space()
 		if res != '' {
 			println(res)
