@@ -432,6 +432,7 @@ pub fn (mut c Checker) check_files(ast_files []&ast.File) {
 		// c.do_line_info(c.pref.line_info, ast_files)
 		// println('setting is_running=true,  pref.path=${c.pref.linfo.path} curdir' + os.getwd())
 		c.pref.linfo.is_running = true
+		// println('linfo path=${c.pref.linfo.path}')
 		for i, file in ast_files {
 			// println(file.path)
 			if file.path == c.pref.linfo.path {

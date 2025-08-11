@@ -11,21 +11,31 @@ struct ACFieldMethod {
 	typ  string
 }
 
+fn abs(a int) int {
+	if a < 0 {
+		return -a
+	}
+	return a
+}
+
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
-	if c.pref.is_verbose {
+	if true || c.pref.is_verbose {
 		println(
-			'checker.ident() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
-			' pwd="${os.getwd()}" file="${c.file.path}", ' +
-			' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" expr="${c.pref.linfo.expr}"')
+			'checker.ident_autocomplete() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
+			' node.col=${node.pos.col} pwd="${os.getwd()}" file="${c.file.path}", ' +
+			//' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" expr="${c.pref.linfo.expr}"')
+		 ' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" col="${c.pref.linfo.col}"')
 	}
 	// Make sure this ident is on the same line as requeste, in the same file, and has the same name
 	same_line := node.pos.line_nr in [c.pref.linfo.line_nr - 1, c.pref.linfo.line_nr + 1, c.pref.linfo.line_nr]
 	if !same_line {
 		return
 	}
-	same_name := c.pref.linfo.expr == node.name
-	if !same_name {
+	// same_name := c.pref.linfo.expr == node.name
+	same_col := abs(c.pref.linfo.col - node.pos.col) < 3
+	// if !same_name {
+	if !same_col {
 		return
 	}
 	abs_path := os.join_path(os.getwd(), c.file.path)
