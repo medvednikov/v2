@@ -11,6 +11,10 @@ import os
 fn (mut p Parser) call_expr(language ast.Language, mod string) ast.CallExpr {
 	first_pos := p.tok.pos()
 	mut name := if language == .js { p.check_js_name() } else { p.check_name() }
+	if p.fileis('hello.v') {
+		println('CALL EXPR name=${name}')
+		print_backtrace()
+	}
 	mut is_static_type_method := language == .v && name != '' && name[0].is_capital()
 		&& p.tok.kind == .dot
 	if is_static_type_method {

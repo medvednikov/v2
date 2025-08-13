@@ -1490,8 +1490,22 @@ fn (mut p Parser) name_expr() ast.Expr {
 			// prepend the full import
 			mod = p.imports[p.tok.lit]
 		}
+		if p.pref.linfo.is_running {
+			// VLS autocomplete for module fns: `os...`
+			// TODO perf $if
+			// p.module_autocomplete(node)
+		}
+		line_nr := p.tok.line_nr
 		p.next()
 		p.check(.dot)
+		if p.is_vls && p.tok.line_nr != line_nr {
+			println('NOTHING AFTER MOD .')
+			return ast.Ident{
+				name: ''
+				mod:  mod
+			}
+		}
+
 		p.expr_mod = mod
 	}
 	lit0_is_capital := if p.tok.kind != .eof && p.tok.lit.len > 0 {
@@ -1982,6 +1996,9 @@ fn (mut p Parser) index_expr(left ast.Expr, is_gated bool) ast.IndexExpr {
 }
 
 fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
+	if p.fileis('hello.v') {
+		println('DOT EXPR ${left}')
+	}
 	prev_line := p.prev_tok.pos().line_nr
 	p.next()
 	if p.tok.kind == .dollar {
