@@ -141,7 +141,7 @@ fn (mut c Checker) module_autocomplete(node ast.Ident) {
 			if f.name.contains('__static__') {
 				// println(f.name.replace('__static__', '.'))
 			} else {
-				sb.writeln('"${f.name}" ,')
+				sb.writeln('"${f.name}:int" ,')
 			}
 		}
 	}
