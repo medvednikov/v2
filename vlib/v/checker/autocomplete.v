@@ -18,6 +18,10 @@ fn abs(a int) int {
 	return a
 }
 
+pub fn (mut c Checker) run_ac(ast_file &ast.File) {
+	//]
+}
+
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
 	if c.pref.is_verbose {
@@ -67,6 +71,7 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 		*/
 
 		mut fields := []ACFieldMethod{cap: 10}
+		mut methods := []ACFieldMethod{cap: 10}
 		if sym.kind == .struct {
 			// Add fields, but only if it's a struct.
 			struct_info := sym.info as ast.Struct
@@ -85,17 +90,27 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 				fields << ACFieldMethod{'cap', 'int'}
 			}
 			// array_info := sym.info as ast.Array
+		} else if sym.kind == .string {
+			fields << ACFieldMethod{'len', 'int'}
 		}
 		// Aliases and other types can have methods, add them
 		for method in sym.methods {
 			method_ret_type := c.table.sym(method.return_type)
-			fields << ACFieldMethod{build_method_summary(method), method_ret_type.name}
+			methods << ACFieldMethod{build_method_summary(method), method_ret_type.name}
 		}
 		fields.sort(a.name < b.name)
 		for i, field in fields {
 			// sb.writeln('${field.name}:${field.typ}')
 			sb.write_string('\t\t"${field.name}:${field.typ}"')
 			if i < fields.len - 1 {
+				sb.writeln(', ')
+			}
+		}
+		sb.writeln('\n\t], "methods":[')
+
+		for i, method in methods {
+			sb.write_string('\t\t"${method.name}:${method.typ}"')
+			if i < methods.len - 1 {
 				sb.writeln(', ')
 			}
 		}
@@ -111,9 +126,12 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 fn build_method_summary(method ast.Fn) string {
 	mut s := method.name + '('
 	for i, param in method.params {
+		if i == 0 {
+			continue
+		}
 		s += param.name
 		if i < method.params.len - 1 {
-			s += ','
+			s += ', '
 		}
 	}
 	return s + ')'
