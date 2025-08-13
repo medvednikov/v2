@@ -1499,7 +1499,7 @@ fn (mut p Parser) name_expr() ast.Expr {
 		p.next()
 		p.check(.dot)
 		if p.is_vls && p.tok.line_nr != line_nr {
-			println('NOTHING AFTER MOD .')
+			// println('NOTHING AFTER MOD .')
 			return ast.Ident{
 				name: ''
 				mod:  mod

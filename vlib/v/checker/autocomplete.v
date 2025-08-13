@@ -24,13 +24,13 @@ pub fn (mut c Checker) run_ac(ast_file &ast.File) {
 
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
-	// if c.pref.is_verbose {
-	println(
-		'checker.ident_autocomplete() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
-		' node.col=${node.pos.col} pwd="${os.getwd()}" file="${c.file.path}", ' +
-		//' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" expr="${c.pref.linfo.expr}"')
-	 ' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" node.mod="${node.mod}" col="${c.pref.linfo.col}"')
-	//}
+	if c.pref.is_verbose {
+		println(
+			'checker.ident_autocomplete() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
+			' node.col=${node.pos.col} pwd="${os.getwd()}" file="${c.file.path}", ' +
+			//' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" expr="${c.pref.linfo.expr}"')
+		 ' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" node.mod="${node.mod}" col="${c.pref.linfo.col}"')
+	}
 	// Make sure this ident is on the same line as requeste, in the same file, and has the same name
 	same_line := node.pos.line_nr in [c.pref.linfo.line_nr - 1, c.pref.linfo.line_nr + 1, c.pref.linfo.line_nr]
 	if !same_line {
@@ -51,6 +51,8 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	if node.name == '' && node.mod != 'builtin' {
 		println('MODULE AUTOC')
 		c.module_autocomplete(node)
+		return
+	} else if node.name == '' && node.mod == 'builtin' {
 		return
 	}
 	mut sb := strings.new_builder(10)
@@ -131,17 +133,22 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 }
 
 fn (mut c Checker) module_autocomplete(node ast.Ident) {
+	mut sb := strings.new_builder(10)
 	// println(c.table.fns)
+	sb.writeln('{"methods":[')
 	prefix := node.mod + '.'
 	for _, f in c.table.fns {
 		if f.name.starts_with(prefix) {
 			if f.name.contains('__static__') {
-				println(f.name.replace('__static__', '.'))
+				// println(f.name.replace('__static__', '.'))
 			} else {
-				println(f.name)
+				sb.writeln('"${f.name}" ,')
 			}
 		}
 	}
+	sb.go_back(2)
+	sb.writeln(']}')
+	println(sb.str().trim_space())
 }
 
 fn build_method_summary(method ast.Fn) string {
