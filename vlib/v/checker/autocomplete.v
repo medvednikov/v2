@@ -49,7 +49,6 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Module autocomplete
 	// `os. ...`
 	if node.name == '' && node.mod != 'builtin' {
-		println('MODULE AUTOC')
 		c.module_autocomplete(node)
 		return
 	} else if node.name == '' && node.mod == 'builtin' {
