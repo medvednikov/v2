@@ -50,6 +50,8 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// `os. ...`
 	if node.name == '' && node.mod != 'builtin' {
 		println('MODULE AUTOC')
+		c.module_autocomplete(node)
+		return
 	}
 	mut sb := strings.new_builder(10)
 	if node.kind == .unresolved {
@@ -124,6 +126,20 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 		if res != '' {
 			println(res)
 			c.pref.linfo.vars_printed[nt] = true
+		}
+	}
+}
+
+fn (mut c Checker) module_autocomplete(node ast.Ident) {
+	// println(c.table.fns)
+	prefix := node.mod + '.'
+	for _, f in c.table.fns {
+		if f.name.starts_with(prefix) {
+			if f.name.contains('__static__') {
+				println(f.name.replace('__static__', '.'))
+			} else {
+				println(f.name)
+			}
 		}
 	}
 }
