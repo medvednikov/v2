@@ -24,27 +24,32 @@ pub fn (mut c Checker) run_ac(ast_file &ast.File) {
 
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
-	if c.pref.is_verbose {
-		println(
-			'checker.ident_autocomplete() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
-			' node.col=${node.pos.col} pwd="${os.getwd()}" file="${c.file.path}", ' +
-			//' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" expr="${c.pref.linfo.expr}"')
-		 ' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" col="${c.pref.linfo.col}"')
-	}
+	// if c.pref.is_verbose {
+	println(
+		'checker.ident_autocomplete() info.line_nr=${c.pref.linfo.line_nr} node.line_nr=${node.pos.line_nr} ' +
+		' node.col=${node.pos.col} pwd="${os.getwd()}" file="${c.file.path}", ' +
+		//' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" expr="${c.pref.linfo.expr}"')
+	 ' pref.linfo.path="${c.pref.linfo.path}" node.name="${node.name}" node.mod="${node.mod}" col="${c.pref.linfo.col}"')
+	//}
 	// Make sure this ident is on the same line as requeste, in the same file, and has the same name
 	same_line := node.pos.line_nr in [c.pref.linfo.line_nr - 1, c.pref.linfo.line_nr + 1, c.pref.linfo.line_nr]
 	if !same_line {
+		println('not same line')
 		return
 	}
-	// same_name := c.pref.linfo.expr == node.name
 	same_col := abs(c.pref.linfo.col - node.pos.col) < 3
-	// if !same_name {
 	if !same_col {
+		println('not same col')
 		return
 	}
 	abs_path := os.join_path(os.getwd(), c.file.path)
 	if c.pref.linfo.path !in [c.file.path, abs_path] {
 		return
+	}
+	// Module autocomplete
+	// `os. ...`
+	if node.name == '' && node.mod != 'builtin' {
+		println('MODULE AUTOC')
 	}
 	mut sb := strings.new_builder(10)
 	if node.kind == .unresolved {

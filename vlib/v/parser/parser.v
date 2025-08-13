@@ -1503,6 +1503,7 @@ fn (mut p Parser) name_expr() ast.Expr {
 			return ast.Ident{
 				name: ''
 				mod:  mod
+				pos:  p.prev_tok.pos()
 			}
 		}
 
