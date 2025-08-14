@@ -134,16 +134,20 @@ fn (mut c Checker) module_autocomplete(node ast.Ident) {
 	// println(c.table.fns)
 	sb.writeln('{"methods":[')
 	prefix := node.mod + '.'
+	mut empty := true
 	for _, f in c.table.fns {
-		if f.name.starts_with(prefix) {
-			if f.name.contains('__static__') {
-				// println(f.name.replace('__static__', '.'))
-			} else {
-				sb.writeln('"${f.name}:int" ,')
+		mut name := f.name
+		if name.starts_with(prefix) {
+			empty = false
+			if name.contains('__static__') {
+				name = name.replace('__static__', '.')
 			}
+			sb.writeln('"${name}:int" ,')
 		}
 	}
-	sb.go_back(2)
+	if !empty {
+		sb.go_back(2) // remove final ,
+	}
 	sb.writeln(']}')
 	println(sb.str().trim_space())
 }
