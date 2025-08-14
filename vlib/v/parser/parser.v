@@ -1997,9 +1997,6 @@ fn (mut p Parser) index_expr(left ast.Expr, is_gated bool) ast.IndexExpr {
 }
 
 fn (mut p Parser) dot_expr(left ast.Expr) ast.Expr {
-	if p.fileis('hello.v') {
-		println('DOT EXPR ${left}')
-	}
 	prev_line := p.prev_tok.pos().line_nr
 	p.next()
 	if p.tok.kind == .dollar {

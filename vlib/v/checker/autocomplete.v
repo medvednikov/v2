@@ -34,12 +34,10 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Make sure this ident is on the same line as requeste, in the same file, and has the same name
 	same_line := node.pos.line_nr in [c.pref.linfo.line_nr - 1, c.pref.linfo.line_nr + 1, c.pref.linfo.line_nr]
 	if !same_line {
-		println('not same line')
 		return
 	}
 	same_col := abs(c.pref.linfo.col - node.pos.col) < 3
 	if !same_col {
-		println('not same col')
 		return
 	}
 	abs_path := os.join_path(os.getwd(), c.file.path)
