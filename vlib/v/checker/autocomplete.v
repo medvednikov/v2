@@ -19,7 +19,6 @@ fn abs(a int) int {
 }
 
 pub fn (mut c Checker) run_ac(ast_file &ast.File) {
-	//]
 }
 
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
@@ -142,6 +141,7 @@ fn (mut c Checker) module_autocomplete(node ast.Ident) {
 			if name.contains('__static__') {
 				name = name.replace('__static__', '.')
 			}
+			name = name.after('.') // The user already typed `mod.`, so suggest the name without module
 			sb.writeln('"${name}:int" ,')
 		}
 	}

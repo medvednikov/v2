@@ -1499,7 +1499,9 @@ fn (mut p Parser) name_expr() ast.Expr {
 		p.next()
 		p.check(.dot)
 		if p.is_vls && p.tok.line_nr != line_nr {
-			// println('NOTHING AFTER MOD .')
+			// The user typed `os.`, we have to display all possible `os` functions.
+			// Turn this name expression into an Ident, since that is what expected
+			// by `Checker.ident_autocomplete()`
 			return ast.Ident{
 				name: ''
 				mod:  mod
