@@ -29,7 +29,7 @@ pub fn (mut c Checker) autocomplete_for_fn_call_expr() {
 		println('failed to find fn ${fn_name}')
 		return
 	}
-	res := build_method_summary(f)
+	res := c.build_fn_summary(f)
 	println(res)
 }
 
@@ -171,6 +171,17 @@ fn build_method_summary(method ast.Fn) string {
 			continue
 		}
 		s += param.name
+		if i < method.params.len - 1 {
+			s += ', '
+		}
+	}
+	return s + ')'
+}
+
+fn (c &Checker) build_fn_summary(method ast.Fn) string {
+	mut s := method.name + '('
+	for i, param in method.params {
+		s += param.name + ' ' + c.table.type_to_str(param.typ)
 		if i < method.params.len - 1 {
 			s += ', '
 		}
