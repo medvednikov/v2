@@ -12,16 +12,27 @@ fn (mut p Preferences) parse_line_info(line string) {
 	}
 	file_name := vals[0]
 	line_nr := vals[1].int() - 1
-	col := vals[2].int() - 1
-	// expr := vals[2]
+
 	if !file_name.ends_with('.v') || line_nr == -1 {
 		eprintln(format_err)
 		return
 	}
-	p.linfo = LineInfo{
-		line_nr: line_nr
-		path:    file_name
-		// expr:    expr
-		col: col
+
+	// Third value can be a column or expression for autocomplete like `os.create()`
+	third := vals[2]
+	if third[0].is_digit() {
+		col := vals[2].int() - 1
+		p.linfo = LineInfo{
+			line_nr: line_nr
+			path:    file_name
+			col:     col
+		}
+	} else {
+		expr := vals[2]
+		p.linfo = LineInfo{
+			line_nr: line_nr
+			path:    file_name
+			expr:    expr
+		}
 	}
 }
