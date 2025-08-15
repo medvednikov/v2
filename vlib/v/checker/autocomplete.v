@@ -21,6 +21,11 @@ fn abs(a int) int {
 pub fn (mut c Checker) run_ac(ast_file &ast.File) {
 }
 
+pub fn (mut c Checker) autocomplete_for_fn_call_expr() {
+	println('AC ()')
+	println(c.pref.linfo.expr)
+}
+
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
 	if c.pref.is_verbose {

@@ -2,6 +2,16 @@
 // Use of this source code is governed by an MIT license that can be found in the LICENSE file.
 module pref
 
+pub struct LineInfo {
+pub mut:
+	line_nr      int    // a quick single file run when called with v -line-info (contains line nr to inspect)
+	path         string // same, but stores the path being parsed
+	expr         string // "os.foo()" V code (expression) which needs autocomplete, right only function calls
+	col          int
+	is_running   bool            // so that line info is fetched only on the second checker run
+	vars_printed map[string]bool // to avoid dups
+}
+
 fn (mut p Preferences) parse_line_info(line string) {
 	// println("parse_line_info '${line}'")
 	format_err := 'wrong format, use `-line-info "file.v:24:7"'
