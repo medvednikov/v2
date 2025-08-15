@@ -23,10 +23,14 @@ pub fn (mut c Checker) run_ac(ast_file &ast.File) {
 
 pub fn (mut c Checker) autocomplete_for_fn_call_expr() {
 	println('AC ()')
-	println(c.pref.linfo.expr)
+	// println(c.pref.linfo.expr)
 	fn_name := c.pref.linfo.expr.replace('()', '')
-	f := c.table.find_fn(fn_name)
-	println(f)
+	f := c.table.find_fn(fn_name) or {
+		println('failed to find fn ${fn_name}')
+		return
+	}
+	res := build_method_summary(f)
+	println(res)
 }
 
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
