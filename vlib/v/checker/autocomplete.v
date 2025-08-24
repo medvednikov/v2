@@ -35,6 +35,8 @@ pub fn (mut c Checker) autocomplete_for_fn_call_expr() {
 	println(res)
 }
 
+// Separate mode for go to definition. Expressions starts with "gd^"
+// TODO right now it only works with functions. It's trivial to implement it for methods, structs, vars, consts etc
 fn (mut c Checker) ident_gotodef() {
 	mut ident_name := c.pref.linfo.expr.after('gd^').trim_space()
 	mod_name := ident_name.all_before_last('.')
