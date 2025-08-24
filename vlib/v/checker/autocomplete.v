@@ -33,6 +33,15 @@ pub fn (mut c Checker) autocomplete_for_fn_call_expr() {
 	println(res)
 }
 
+fn (mut c Checker) ident_gotodef() {
+	name := c.pref.linfo.expr.after('gd^').trim_space()
+	f := c.table.find_fn(name) or {
+		println('failed to find fn "${name}"')
+		return
+	}
+	println('${f.file}:${f.pos.line_nr}:${f.pos.col}')
+}
+
 // Autocomplete for `myvar. ...`, `os. ...`
 fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	// Mini LS hack (v -line-info "a.v:16")
@@ -140,9 +149,6 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 			c.pref.linfo.vars_printed[nt] = true
 		}
 	}
-}
-
-fn (mut c Checker) ident_gotodef(node ast.Ident) {
 }
 
 fn (mut c Checker) module_autocomplete(node ast.Ident) {
