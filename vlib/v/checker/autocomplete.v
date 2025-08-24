@@ -142,6 +142,9 @@ fn (mut c Checker) ident_autocomplete(node ast.Ident) {
 	}
 }
 
+fn (mut c Checker) ident_gotodef(node ast.Ident) {
+}
+
 fn (mut c Checker) module_autocomplete(node ast.Ident) {
 	mut sb := strings.new_builder(10)
 	// println(c.table.fns)
