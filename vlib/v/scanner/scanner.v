@@ -1275,8 +1275,7 @@ pub fn (mut s Scanner) ident_string() string {
 			}
 		}
 		// ${var} (ignore in vfmt mode) (skip \$)
-		if prevc == `$` && c == `{` && !is_raw
-			&& s.count_symbol_before(s.pos - 2, backslash) & 1 == 0 {
+		if prevc == `$` && c == `{` && !is_raw && !s.is_dollar_escaped(s.pos - 1, start) {
 			s.is_inside_string = true
 			// so that s.pos points to $ at the next step
 			s.pos -= 2
@@ -1284,7 +1283,7 @@ pub fn (mut s Scanner) ident_string() string {
 		}
 		// $var
 		if prevc == `$` && util.name_char_table[c] && !is_raw
-			&& s.count_symbol_before(s.pos - 2, backslash) & 1 == 0 {
+			&& !s.is_dollar_escaped(s.pos - 1, start) {
 			s.is_inside_string = true
 			s.is_inter_start = true
 			s.pos -= 2
@@ -1823,4 +1822,36 @@ pub fn (s Scanner) str_quote() ?u8 {
 		return c
 	}
 	return none
+}
+
+// is_dollar_escaped checks if a dollar sign at `dollar_pos` is preceded by an
+// odd number of effective backslashes. It correctly handles literal backslashes (`\\`),
+// 16-bit (`\u005c`), and 32-bit (`\U0000005c`) unicode escape sequences for a backslash.
+@[direct_array_access]
+fn (s &Scanner) is_dollar_escaped(dollar_pos int, start_of_string int) bool {
+	mut p := dollar_pos - 1
+	mut backslash_count := 0
+	for p >= start_of_string {
+		if s.text[p] == `\\` {
+			backslash_count++
+			p--
+			continue
+		}
+		// Check for \u005c
+		if p >= start_of_string + 5 && s.text[p - 5..p + 1] == r'\u005c' {
+			backslash_count++
+			p -= 6
+			continue
+		}
+		// Check for \U0000005c
+		if p >= start_of_string + 9 && s.text[p - 9..p + 1] == r'\U0000005c' {
+			backslash_count++
+			p -= 10
+			continue
+		}
+		// Found a non-backslash character, so the sequence of escapes ends.
+		break
+	}
+	// An odd number of preceding backslashes means the dollar sign is escaped.
+	return backslash_count & 1 == 1
 }
