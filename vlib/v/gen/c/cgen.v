@@ -618,7 +618,12 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) GenO
 		g.pcs_declarations.writeln('#endif')
 		b.write_string2('\n// V profile counters:\n', g.pcs_declarations.str())
 	}
-	b.write_string2('\n// V includes:\n', g.includes.str())
+	mut includes := g.includes.str()
+	if g.pref.build_mode == .build_module && includes.contains('#define SOKOL_IMPL') {
+		println('GOT SOKOL IMPL in ${g.module_built}')
+		includes = includes.replace('#define SOKOL_IMPL', '')
+	}
+	b.write_string2('\n// V includes:\n', includes)
 	b.writeln('\n// V global/const #define ... :')
 	for var_name in g.sorted_global_const_names {
 		if var := g.global_const_defs[var_name] {
@@ -5933,10 +5938,20 @@ fn (mut g Gen) gen_hash_stmts(mut sb strings.Builder, node &ast.HashStmtNode, se
 			line_nr := node.pos.line_nr + 1
 			match node.kind {
 				'include', 'preinclude', 'postinclude' {
+					/*
+					if node.main.contains('sokol_') && g.pref.build_mode == .build_module { // g.module_built != '' {
+						// Do not include sokol header only in usecache
+						// in non main modules. Otherwise we will get hundreds
+						// of duplicate linker errors. Since each cached module
+						// will include entire sokol code.
+						sb.writeln('// KEKW ${g.module_built}')
+					} else {
+						*/
 					guarded_include := g.hash_stmt_guarded_include(node)
 					sb.writeln('')
-					sb.writeln('// added by module `${node.mod}`, file: ${os.file_name(node.source_file)}:${line_nr}:')
+					sb.writeln('// added by module `${node.mod}`, modbuilt=${g.module_built}  file: ${os.file_name(node.source_file)}:${line_nr}:')
 					sb.writeln(guarded_include)
+					//}
 				}
 				'insert' {
 					sb.writeln('')
