@@ -711,46 +711,6 @@ static inline uint64_t wy2u0k(uint64_t r, uint64_t k){ _wymum(&r,&k); return k; 
 
 #endif
 
-// added by module `time`, file: time.c.v:6:
-
-#if defined(__has_include)
-
-#if __has_include(<time.h>)
-#else
-#error VERROR_MESSAGE Header file <time.h>, needed for module `time` was not found. Please install the corresponding development headers.
-#endif
-
-#else
-#endif
-
-
-// added by module `time`, file: time_darwin.c.v:3:
-
-#if defined(__has_include)
-
-#if __has_include(<mach/mach_time.h>)
-#else
-#error VERROR_MESSAGE Header file <mach/mach_time.h>, needed for module `time` was not found. Please install the corresponding development headers.
-#endif
-
-#else
-#endif
-
-
-// added by module `time`, file: time_nix.c.v:7:
-
-#if defined(__has_include)
-
-#if __has_include(<time.h>)
-#include <time.h>
-#else
-#error VERROR_MESSAGE Header file <time.h>, needed for module `time` was not found. Please install the corresponding development headers.
-#endif
-
-#else
-#include <time.h>
-#endif
-
 
 // added by module `time`, file: time_nix.c.v:8:
 #include <errno.h>
@@ -1164,18 +1124,6 @@ static inline uint64_t wy2u0k(uint64_t r, uint64_t k){ _wymum(&r,&k); return k; 
 
 
 // added by module `os`, file: os_nix.c.v:11:
-
-#if defined(__has_include)
-
-#if __has_include(<utime.h>)
-#include <utime.h>
-#else
-#error VERROR_MESSAGE Header file <utime.h>, needed for module `os` was not found. Please install the corresponding development headers.
-#endif
-
-#else
-#include <utime.h>
-#endif
 
 
 // added by module `os`, file: signal.c.v:3:
