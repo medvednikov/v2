@@ -9,7 +9,9 @@
     // __v_ end
 */
 
+
 // __v_ start
+#ifdef SOKOL_IMPL
 #include <Cocoa/Cocoa.h>
 @interface SokolWindow : NSWindow {
 }
@@ -24,6 +26,7 @@ MyView2* g_view;
 - (BOOL)canBecomeKeyWindow { return YES; } // needed for NSWindowStyleMaskBorderless
 - (BOOL)canBecomeMainWindow { return YES; }
 @end
+#endif
 // __v_ end
 
 
