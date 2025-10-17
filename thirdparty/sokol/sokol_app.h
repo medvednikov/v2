@@ -10,24 +10,6 @@
 */
 
 
-// __v_ start
-#ifdef SOKOL_IMPL
-#include <Cocoa/Cocoa.h>
-@interface SokolWindow : NSWindow {
-}
-@end
-@interface MyView2 : NSView
-@end
-
-MyView2* g_view;
-
-// A custom NSWindow interface to handle events in borderless windows.
-@implementation SokolWindow
-- (BOOL)canBecomeKeyWindow { return YES; } // needed for NSWindowStyleMaskBorderless
-- (BOOL)canBecomeMainWindow { return YES; }
-@end
-#endif
-// __v_ end
 
 
 /*
@@ -2429,6 +2411,26 @@ _SOKOL_PRIVATE void _sapp_timing_external(_sapp_timing_t* t, double now) {
 _SOKOL_PRIVATE double _sapp_timing_get_avg(_sapp_timing_t* t) {
     return t->avg;
 }
+
+
+// __v_ start
+#ifdef SOKOL_IMPL
+#include <Cocoa/Cocoa.h>
+@interface SokolWindow : NSWindow {
+}
+@end
+@interface MyView2 : NSView
+@end
+
+MyView2* g_view;
+
+// A custom NSWindow interface to handle events in borderless windows.
+@implementation SokolWindow
+- (BOOL)canBecomeKeyWindow { return YES; } // needed for NSWindowStyleMaskBorderless
+- (BOOL)canBecomeMainWindow { return YES; }
+@end
+#endif
+// __v_ end
 
 // ███████ ████████ ██████  ██    ██  ██████ ████████ ███████
 // ██         ██    ██   ██ ██    ██ ██         ██    ██

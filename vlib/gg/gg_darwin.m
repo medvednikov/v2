@@ -111,7 +111,7 @@ void darwin_window_refresh() {
 	// update UI on the main thread TODO separate fn
 
 	dispatch_async(dispatch_get_main_queue(), ^{
-	  [g_view setNeedsDisplay:YES];
+	//  [g_view setNeedsDisplay:YES]; KEKW
 	});
 
 	// puts("refresh");
