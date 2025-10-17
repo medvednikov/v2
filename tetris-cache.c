@@ -368,8 +368,7 @@ typedef void (*MapFreeFn)(voidptr);
 
 // c_headers
 typedef int (*qsort_callback_func)(const void*, const void*);
-#include <stdlib.h>
-#include <string.h>
+void *memcpy(void *, const void *, unsigned long);
 #include <stdarg.h> // for va_list
 #ifdef __TERMUX__
 #if defined __BIONIC_AVAILABILITY_GUARD && __BIONIC_AVAILABILITY_GUARD(28)
