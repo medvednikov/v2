@@ -401,10 +401,6 @@ void _vcleanup(void);
 	#error "Unknown architecture endianness"
 #endif
 #ifndef _WIN32
-	#include <ctype.h>
-	#include <locale.h> // tolower
-	#include <sys/time.h>
-	#include <unistd.h> // sleep
 	extern char **environ;
 #endif
 #if defined(__CYGWIN__) && !defined(_WIN32)
