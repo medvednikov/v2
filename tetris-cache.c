@@ -407,8 +407,6 @@ void _vcleanup(void);
 	#error Cygwin is not supported, please use MinGW or Visual Studio.
 #endif
 #if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__DragonFly__) || defined(__vinix__) || defined(__serenity__) || defined(__sun) || defined(__plan9__)
-	#include <sys/types.h>
-	#include <sys/wait.h> // os__wait uses wait on nix
 #endif
 #ifdef __OpenBSD__
 	#include <sys/types.h>
