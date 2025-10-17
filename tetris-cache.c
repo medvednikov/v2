@@ -296,6 +296,16 @@ typedef void (*MapFreeFn)(voidptr);
 	#define E_STRUCT_DECL unsigned char _dummy_pad
 	#define E_STRUCT 0
 #endif
+#ifndef _WIN32
+	#if defined __has_include
+		#if __has_include (<execinfo.h>)
+			#include <execinfo.h>
+		#else
+			// On linux: int backtrace(void **__array, int __size);
+			// On BSD: size_t backtrace(void **, size_t);
+		#endif
+	#endif
+#endif
 #ifdef __TINYC__
 	#define _Atomic volatile
 	#undef E_STRUCT_DECL
