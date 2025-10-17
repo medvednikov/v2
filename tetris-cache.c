@@ -453,7 +453,6 @@ void _vcleanup(void);
 		#pragma comment(lib, "Dbghelp")
 	#endif
 #else
-	#include <pthread.h>
 	#ifndef PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP
 		// musl does not have that
 		#define pthread_rwlockattr_setkind_np(a, b)
@@ -542,7 +541,6 @@ static inline bool _us64_lt(uint64_t a, int64_t b) { return a < INT64_MAX && (in
 #define WYHASH_32BIT_MUM 0
 #endif
 // includes
-#include <stdint.h>
 #if defined(_MSC_VER) && defined(_M_X64)
 	#include <intrin.h>
 	#pragma intrinsic(_umul128)
@@ -672,13 +670,11 @@ static inline uint64_t wy2u0k(uint64_t r, uint64_t k){ _wymum(&r,&k); return k; 
 #if defined(__has_include)
 
 #if __has_include(<sys/mman.h>)
-#include <sys/mman.h>
 #else
 #error VERROR_MESSAGE Header file <sys/mman.h>, needed for module `builtin.closure` was not found. Please install the corresponding development headers.
 #endif
 
 #else
-#include <sys/mman.h>
 #endif
 
 #endif
