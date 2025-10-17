@@ -9,6 +9,24 @@
     // __v_ end
 */
 
+// __v_ start
+#include <Cocoa/Cocoa.h>
+@interface SokolWindow : NSWindow {
+}
+@end
+@interface MyView2 : NSView
+@end
+
+MyView2* g_view;
+
+// A custom NSWindow interface to handle events in borderless windows.
+@implementation SokolWindow
+- (BOOL)canBecomeKeyWindow { return YES; } // needed for NSWindowStyleMaskBorderless
+- (BOOL)canBecomeMainWindow { return YES; }
+@end
+// __v_ end
+
+
 /*
     sokol_app.h -- cross-platform application wrapper
 
@@ -2075,6 +2093,10 @@ inline void sapp_run(const sapp_desc& desc) { return sapp_run(&desc); }
             #endif
             #include <Cocoa/Cocoa.h>
             #include <OpenGL/gl3.h>
+
+
+
+
         #endif
     #elif defined(_SAPP_IOS)
         #import <UIKit/UIKit.h>
@@ -2415,21 +2437,6 @@ _SOKOL_PRIVATE double _sapp_timing_get_avg(_sapp_timing_t* t) {
 #if defined(_SAPP_MACOS)
 
 
-// __v_ start
-@interface SokolWindow : NSWindow {
-}
-@end
-@interface MyView2 : NSView
-@end
-
-MyView2* g_view;
-
-// A custom NSWindow interface to handle events in borderless windows.
-@implementation SokolWindow
-- (BOOL)canBecomeKeyWindow { return YES; } // needed for NSWindowStyleMaskBorderless
-- (BOOL)canBecomeMainWindow { return YES; }
-@end
-// __v_ end
 
 
 @interface _sapp_macos_app_delegate : NSObject<NSApplicationDelegate>
@@ -12251,3 +12258,4 @@ SOKOL_API_IMPL void sapp_html5_ask_leave_site(bool ask) {
 }
 
 #endif /* SOKOL_APP_IMPL */
+
