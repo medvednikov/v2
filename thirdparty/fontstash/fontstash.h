@@ -160,6 +160,8 @@ FONS_DEF void fonsDrawDebug(FONScontext* s, float x, float y);
 #endif // FONS_H
 
 
+int fonsAddFontMem(FONScontext* stash, const char* name, unsigned char* data, int dataSize, int freeData);
+
 #ifdef FONTSTASH_IMPLEMENTATION
 
 #define FONS_NOTUSED(v)  (void)sizeof(v)
