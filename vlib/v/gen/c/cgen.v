@@ -619,9 +619,15 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) GenO
 		b.write_string2('\n// V profile counters:\n', g.pcs_declarations.str())
 	}
 	mut includes := g.includes.str()
-	if g.pref.build_mode == .build_module && includes.contains('#define SOKOL_IMPL') {
-		println('GOT SOKOL IMPL in ${g.module_built}')
-		includes = includes.replace('#define SOKOL_IMPL', '')
+	if g.pref.build_mode == .build_module {
+		if includes.contains('#define SOKOL_IMPL') {
+			println('GOT SOKOL IMPL in ${g.module_built}')
+			includes = includes.replace('#define SOKOL_IMPL', '')
+		}
+		if includes.contains('#define SOKOL_GL_IMPL') {
+			println('GOT SOKOL_GL_IMPL in ${g.module_built}')
+			includes = includes.replace('#define SOKOL_GL_IMPL', '')
+		}
 	}
 	b.write_string2('\n// V includes:\n', includes)
 	b.writeln('\n// V global/const #define ... :')
