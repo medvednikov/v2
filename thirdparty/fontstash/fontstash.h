@@ -210,6 +210,7 @@ static int fons__tt_init()
 
 static int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char *data, int dataSize)
 {
+	puts("LOADING FREETYPE FONT");
 	FT_Error ftError;
 	FONS_NOTUSED(context);
 
@@ -308,6 +309,7 @@ static int fons__tt_init(FONScontext *context)
 
 static int fons__tt_loadFont(FONScontext *context, FONSttFontImpl *font, unsigned char *data, int dataSize)
 {
+	puts("LOADING STB FONT");
 	int stbError;
 	FONS_NOTUSED(dataSize);
 

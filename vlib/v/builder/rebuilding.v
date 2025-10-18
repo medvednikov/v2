@@ -23,6 +23,7 @@ pub fn (mut b Builder) rebuild_modules() {
 		eprintln('> rebuild_modules invalidations: ${invalidations}')
 	}
 	if invalidations.len > 0 {
+		println('invalidations=${invalidations}')
 		vexe := pref.vexe_path()
 		for imp in invalidations {
 			b.v_build_module(vexe, imp)
@@ -72,18 +73,18 @@ pub fn (mut b Builder) find_invalidated_modules_by_files(all_files []string) []s
 		// eprintln('> b.mod_invalidates_paths: $b.mod_invalidates_paths')
 		// eprintln('> b.mod_invalidates_mods: $b.mod_invalidates_mods')
 		// eprintln('> b.path_invalidates_mods: $b.path_invalidates_mods')
-		$if trace_invalidations ? {
-			for k, v in b.mod_invalidates_paths {
-				mut m := map[string]bool{}
-				for mm in b.mod_invalidates_mods[k] {
-					m[mm] = true
-				}
-				eprintln('> module `${k}` invalidates: ${m.keys()}')
-				for fpath in v {
-					eprintln('         ${fpath}')
-				}
+		//$if trace_invalidations ? {
+		for k, v in b.mod_invalidates_paths {
+			mut m := map[string]bool{}
+			for mm in b.mod_invalidates_mods[k] {
+				m[mm] = true
+			}
+			eprintln('> module `${k}` invalidates: ${m.keys()}')
+			for fpath in v {
+				eprintln('         ${fpath}')
 			}
 		}
+		//}
 		mut invalidated_paths := map[string]int{}
 		mut invalidated_mod_paths := map[string]int{}
 		for npath, nhash in new_hashes {
@@ -150,12 +151,16 @@ pub fn (mut b Builder) find_invalidated_modules_by_files(all_files []string) []s
 			}
 			invalidated_paths = new_invalidated_paths.clone()
 		}
+		println('rebuild everything=${rebuild_everything}')
 		if rebuild_everything {
 			invalidated_mod_paths = {}
 			for npath, _ in new_hashes {
 				mpath := os.dir(npath)
 				pimods := b.path_invalidates_mods[npath]
-				if pimods == ['main'] {
+				println('pimods=${pimods} npath=${npath}')
+				// TODO why can it be ['main', 'main']?
+				// if pimods == ['main'] {
+				if pimods[0] == 'main' {
 					continue
 				}
 				invalidated_mod_paths[mpath]++
@@ -166,6 +171,8 @@ pub fn (mut b Builder) find_invalidated_modules_by_files(all_files []string) []s
 			eprintln('rebuild_everything: ${rebuild_everything}')
 		}
 		if invalidated_mod_paths.len > 0 {
+			println('AZAZA')
+			println(invalidated_mod_paths)
 			impaths := invalidated_mod_paths.keys()
 			for imp in impaths {
 				invalidations << imp
