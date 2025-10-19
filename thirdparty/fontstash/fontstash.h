@@ -1749,6 +1749,8 @@ FONS_DEF int fonsResetAtlas(FONScontext* stash, int width, int height)
 	return 1;
 }
 
+// TODO ugly copy pasta hack so that fonstash.h works when FONTSTASH_IMPLEMENTATION is 0.
+// (in cached modules). Unlike in sokol, the declerations are not available if FONTSTASH_IMPLEMENTATION is 0.
 #else
 
 #include "stb_truetype.h"
