@@ -1,5 +1,7 @@
 #include <Cocoa/Cocoa.h>
 
+#ifdef SOKOL_IMPL
+
 NSColor* nscolor(gg__Color c) {
 	float red = (float)c.r / 255.0f;
 	float green = (float)c.g / 255.0f;
@@ -165,3 +167,17 @@ void darwin_draw_circle_empty(float x, float y, float d, gg__Color color) {
 	[circlePath setLineWidth:outlineWidth];
 	[circlePath stroke];
 }
+#else
+void darwin_draw_circle_empty(float x, float y, float d, gg__Color color);
+void darwin_draw_circle(float x, float y, float d, gg__Color color);
+void darwin_draw_image(float x, float y, float w, float h, gg__Image* img);
+NSColor* nscolor(gg__Color c);
+NSString* nsstring(string s);
+gg__Size gg_get_screen_size();
+void darwin_draw_string(int x, int y, string s, gg__TextCfg cfg);
+int darwin_text_width(string s);
+void darwin_draw_rect(float x, float y, float width, float height, gg__Color c);
+void darwin_window_refresh();
+gg__Image darwin_create_image(string path_);
+
+#endif

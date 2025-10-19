@@ -9,8 +9,6 @@
 	}
 #endif
 
-
 #else
 	void v_sapp_gl_read_rgba_pixels(int x, int y, int width, int height, unsigned char* pixels);
-
-#endif
+#endif // SOKOL_IMPL
