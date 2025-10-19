@@ -2,7 +2,6 @@ import os
 import time
 import net
 import term
-import sync
 
 // V's libc module provides access to C standard library functions
 #flag -I @vlib/v/libc
@@ -20,14 +19,41 @@ import sync
 #include <errno.h>
 #include <pthread.h>
 
-const (
-	port        = 8092
-	backlog     = 128
-	buf_size    = 4096
-	num_threads = 8
-	body        = '<b>hello world</b>'
-	body_len    = 18
-)
+// Explicit C function definitions
+fn C.socket(domain int, typ int, protocol int) int
+fn C.setsockopt(sockfd int, level int, optname int, optval voidptr, optlen u32) int
+fn C.bind(sockfd int, addr voidptr, addrlen u32) int
+fn C.listen(sockfd int, backlog int) int
+fn C.accept(sockfd int, addr voidptr, addrlen voidptr) int
+fn C.fcntl(fd int, cmd int, arg int) int
+fn C.kqueue() int
+fn C.kevent(kq int, changelist &C.struct_kevent, nchanges int, eventlist &C.struct_kevent, nevents int, timeout &C.struct_timespec) int
+fn C.pipe(pipefd &int) int
+fn C.close(fd int) int
+fn C.read(fd int, buf voidptr, count int) int
+fn C.write(fd int, buf voidptr, count int) int
+fn C.malloc(size int) voidptr
+fn C.free(ptr voidptr)
+fn C.memset(dest voidptr, ch int, count int) voidptr
+fn C.memcmp(s1 voidptr, s2 voidptr, n int) int
+fn C.memmem(haystack voidptr, haystacklen int, needle voidptr, needlelen int) voidptr
+fn C.strchr(s &u8, c int) &u8
+fn C.snprintf(str voidptr, size int, format string, ...) int
+fn C.perror(s string)
+fn C.pthread_create(thread &C.pthread_t, attr voidptr, start_routine fn (voidptr) voidptr, arg voidptr) int
+fn C.pthread_mutex_init(mutex &C.pthread_mutex_t, attr voidptr) int
+fn C.pthread_mutex_lock(mutex &C.pthread_mutex_t) int
+fn C.pthread_mutex_unlock(mutex &C.pthread_mutex_t) int
+fn C.pthread_cond_init(cond &C.pthread_cond_t, attr voidptr) int
+fn C.pthread_cond_wait(cond &C.pthread_cond_t, mutex &C.pthread_mutex_t) int
+fn C.pthread_cond_signal(cond &C.pthread_cond_t) int
+
+const port = 8092
+const backlog = 128
+const buf_size = 4096
+const num_threads = 8
+const body = '<b>hello world</b>'
+const body_len = 18
 
 struct Conn {
 mut:
@@ -53,13 +79,13 @@ mut:
 	next &Done
 }
 
-struct Worker {
+struct WorkerData {
 mut:
-	task_mutex sync.Mutex
-	task_cond  sync.Cond
+	task_mutex C.pthread_mutex_t
+	task_cond  C.pthread_cond_t
 	task_head  &Task
 	task_tail  &Task
-	done_mutex sync.Mutex
+	done_mutex C.pthread_mutex_t
 	done_head  &Done
 	done_tail  &Done
 	quit       bool
@@ -67,74 +93,73 @@ mut:
 }
 
 fn close_conn(c &Conn) {
-	if c.write_buf != 0 {
-		unsafe { C.free(c.write_buf) }
+	if c.write_buf != unsafe { nil } {
+		C.free(c.write_buf)
 	}
 	C.close(c.fd)
 	unsafe { C.free(c) }
 }
 
-fn worker_func(mut w Worker) {
+fn worker_func(arg voidptr) voidptr {
+	mut w := &WorkerData(arg)
 	for {
-		w.task_mutex.lock()
-		for w.task_head == 0 && !w.quit {
-			w.task_cond.wait(&w.task_mutex)
+		C.pthread_mutex_lock(&w.task_mutex)
+		for w.task_head == unsafe { nil } && !w.quit {
+			C.pthread_cond_wait(&w.task_cond, &w.task_mutex)
 		}
-		if w.quit && w.task_head == 0 {
-			w.task_mutex.unlock()
+		if w.quit && w.task_head == unsafe { nil } {
+			C.pthread_mutex_unlock(&w.task_mutex)
 			break
 		}
 		t := w.task_head
 		w.task_head = t.next
-		if w.task_head == 0 {
-			w.task_tail = 0
+		if w.task_head == unsafe { nil } {
+			w.task_tail = unsafe { nil }
 		}
-		w.task_mutex.unlock()
+		C.pthread_mutex_unlock(&w.task_mutex)
 
 		// Process sleep
 		time.sleep(5 * time.second)
 
 		// Prepare response
-		resp := unsafe { C.malloc(buf_size) }
-		len := C.snprintf(resp, buf_size,
-			'HTTP/1.1 200 OK\r\n' +
-			'Content-Type: text/html\r\n' +
-			'Content-Length: %d\r\n' +
-			'Connection: keep-alive\r\n\r\n' +
-			'%s', body_len, body.str)
+		resp := C.malloc(buf_size)
+		len := C.snprintf(resp, buf_size, 'HTTP/1.1 200 OK\r\n' + 'Content-Type: text/html\r\n' +
+			'Content-Length: %d\r\n' + 'Connection: keep-alive\r\n\r\n' + '%s', body_len,
+			body.str)
 
 		// Enqueue done
-		d := unsafe { &Done(C.malloc(sizeof(Done))) }
+		d := &Done(unsafe { C.malloc(sizeof(Done)) })
 		d.c = t.c
 		d.resp = resp
 		d.len = int(len)
-		d.next = 0
+		d.next = unsafe { nil }
 
-		w.done_mutex.lock()
-		if w.done_tail != 0 {
+		C.pthread_mutex_lock(&w.done_mutex)
+		if w.done_tail != unsafe { nil } {
 			w.done_tail.next = d
 		} else {
 			w.done_head = d
 		}
 		w.done_tail = d
-		w.done_mutex.unlock()
+		C.pthread_mutex_unlock(&w.done_mutex)
 
 		// Wake IO thread
-		x := 'x'
+		x := u8(`x`)
 		C.write(w.wake_pipe[1], &x, 1)
 
 		unsafe { C.free(t) }
 	}
+	return unsafe { nil }
 }
 
-fn process_dones(kq int, mut w Worker) {
-	w.done_mutex.lock()
+fn process_dones(kq int, mut w WorkerData) {
+	C.pthread_mutex_lock(&w.done_mutex)
 	mut local_head := w.done_head
-	w.done_head = 0
-	w.done_tail = 0
-	w.done_mutex.unlock()
+	w.done_head = unsafe { nil }
+	w.done_tail = unsafe { nil }
+	C.pthread_mutex_unlock(&w.done_mutex)
 
-	for local_head != 0 {
+	for local_head != unsafe { nil } {
 		d := local_head
 		local_head = d.next
 
@@ -156,15 +181,17 @@ fn process_dones(kq int, mut w Worker) {
 		if c.write_pos < c.write_len {
 			// Add write event
 			ev := C.struct_kevent{}
-			C.EV_SET(&ev, c.fd, C.EVFILT_WRITE, C.EV_ADD | C.EV_EOF, 0, 0, c)
-			C.kevent(kq, &ev, 1, 0, 0, 0)
+			C.EV_SET(&ev, u64(c.fd), u16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_EOF), u32(0),
+				isize(0), c)
+			C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 		} else {
-			unsafe { C.free(c.write_buf) }
-			c.write_buf = 0
+			C.free(c.write_buf)
+			c.write_buf = unsafe { nil }
 			// Add back read event
 			ev := C.struct_kevent{}
-			C.EV_SET(&ev, c.fd, C.EVFILT_READ, C.EV_ADD | C.EV_EOF, 0, 0, c)
-			C.kevent(kq, &ev, 1, 0, 0, 0)
+			C.EV_SET(&ev, u64(c.fd), u16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF), u32(0),
+				isize(0), c)
+			C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 			c.read_len = 0
 		}
 
@@ -209,29 +236,37 @@ fn main() {
 	}
 
 	ev := C.struct_kevent{}
-	C.EV_SET(&ev, server_fd, C.EVFILT_READ, C.EV_ADD, 0, 0, 0)
-	C.kevent(kq, &ev, 1, 0, 0, 0)
+	C.EV_SET(&ev, u64(server_fd), u16(C.EVFILT_READ), u16(C.EV_ADD), u32(0), isize(0),
+		unsafe { nil })
+	C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
+
+	// Initialize worker data
+	mut worker_data := WorkerData{}
+	C.pthread_mutex_init(&worker_data.task_mutex, unsafe { nil })
+	C.pthread_cond_init(&worker_data.task_cond, unsafe { nil })
+	C.pthread_mutex_init(&worker_data.done_mutex, unsafe { nil })
 
 	// Create wake pipe
-	mut worker := Worker{}
-	if C.pipe(&worker.wake_pipe[0]) < 0 {
+	if C.pipe(&worker_data.wake_pipe[0]) < 0 {
 		C.perror('pipe')
 		return
 	}
-	C.fcntl(worker.wake_pipe[0], C.F_SETFL, C.O_NONBLOCK)
-	C.fcntl(worker.wake_pipe[1], C.F_SETFL, C.O_NONBLOCK)
-	C.EV_SET(&ev, worker.wake_pipe[0], C.EVFILT_READ, C.EV_ADD, 0, 0, 0)
-	C.kevent(kq, &ev, 1, 0, 0, 0)
+	C.fcntl(worker_data.wake_pipe[0], C.F_SETFL, C.O_NONBLOCK)
+	C.fcntl(worker_data.wake_pipe[1], C.F_SETFL, C.O_NONBLOCK)
+	C.EV_SET(&ev, u64(worker_data.wake_pipe[0]), u16(C.EVFILT_READ), u16(C.EV_ADD), u32(0),
+		isize(0), unsafe { nil })
+	C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
 	// Create worker threads
+	threads := [num_threads]C.pthread_t{}
 	for i := 0; i < num_threads; i++ {
-		go worker_func(mut worker)
+		C.pthread_create(&threads[i], unsafe { nil }, worker_func, &worker_data)
 	}
 
 	// Event loop
 	events := [64]C.struct_kevent{}
 	for {
-		nev := C.kevent(kq, 0, 0, &events[0], 64, 0)
+		nev := C.kevent(kq, unsafe { nil }, 0, &events[0], 64, unsafe { nil })
 		if nev < 0 {
 			C.perror('kevent')
 			break
@@ -240,16 +275,22 @@ fn main() {
 		for i := 0; i < nev; i++ {
 			c := &Conn(events[i].udata)
 
-			if events[i].flags & C.EV_ERROR != 0 {
-				if c != 0 {
+			// EV_SET macro in C expands some arguments to different types
+			// in V we must cast them to the correct type explicitly
+			ident := u64(events[i].ident)
+			filter := i16(events[i].filter)
+			flags := u16(events[i].flags)
+
+			if flags & C.EV_ERROR != 0 {
+				if c != unsafe { nil } {
 					close_conn(c)
 				}
 				continue
 			}
 
-			if events[i].ident == u64(server_fd) && events[i].filter == C.EVFILT_READ {
+			if ident == u64(server_fd) && filter == C.EVFILT_READ {
 				// Accept new connection
-				client_fd := C.accept(server_fd, 0, 0)
+				client_fd := C.accept(server_fd, unsafe { nil }, unsafe { nil })
 				if client_fd < 0 {
 					continue
 				}
@@ -259,16 +300,17 @@ fn main() {
 				new_c.fd = client_fd
 				C.fcntl(new_c.fd, C.F_SETFL, C.O_NONBLOCK)
 
-				C.EV_SET(&ev, new_c.fd, C.EVFILT_READ, C.EV_ADD | C.EV_EOF, 0, 0, new_c)
-				C.kevent(kq, &ev, 1, 0, 0, 0)
-			} else if events[i].ident == u64(worker.wake_pipe[0]) && events[i].filter == C.EVFILT_READ {
+				C.EV_SET(&ev, u64(new_c.fd), u16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF),
+					u32(0), isize(0), new_c)
+				C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
+			} else if ident == u64(worker_data.wake_pipe[0]) && filter == C.EVFILT_READ {
 				// Drain pipe
 				buf := [1024]u8{}
-				for C.read(worker.wake_pipe[0], &buf[0], sizeof(buf)) > 0 {}
+				for C.read(worker_data.wake_pipe[0], &buf[0], sizeof(buf)) > 0 {}
 				// Process completed tasks
-				process_dones(kq, mut worker)
-			} else if events[i].filter == C.EVFILT_READ {
-				if events[i].flags & C.EV_EOF != 0 {
+				process_dones(kq, mut worker_data)
+			} else if filter == C.EVFILT_READ {
+				if flags & C.EV_EOF != 0 {
 					close_conn(c)
 					continue
 				}
@@ -285,7 +327,7 @@ fn main() {
 
 				// Find end of headers
 				header_end := C.memmem(&c.read_buf[0], c.read_len, '\r\n\r\n', 4)
-				if header_end == 0 {
+				if header_end == unsafe { nil } {
 					if c.read_len >= buf_size {
 						close_conn(c) // Headers too large
 					}
@@ -300,7 +342,7 @@ fn main() {
 
 				path_start := &c.read_buf[4]
 				path_end := C.strchr(path_start, ` `)
-				if path_end == 0 {
+				if path_end == unsafe { nil } {
 					close_conn(c)
 					continue
 				}
@@ -321,32 +363,30 @@ fn main() {
 
 				if is_sleep {
 					// Disable read
-					C.EV_SET(&ev, c.fd, C.EVFILT_READ, C.EV_DELETE, 0, 0, c)
-					C.kevent(kq, &ev, 1, 0, 0, 0)
+					C.EV_SET(&ev, u64(c.fd), u16(C.EVFILT_READ), u16(C.EV_DELETE), u32(0),
+						isize(0), c)
+					C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
 					// Enqueue task
 					t := &Task(unsafe { C.malloc(sizeof(Task)) })
 					t.c = c
-					t.next = 0
+					t.next = unsafe { nil }
 
-					worker.task_mutex.lock()
-					if worker.task_tail != 0 {
-						worker.task_tail.next = t
+					C.pthread_mutex_lock(&worker_data.task_mutex)
+					if worker_data.task_tail != unsafe { nil } {
+						worker_data.task_tail.next = t
 					} else {
-						worker.task_head = t
+						worker_data.task_head = t
 					}
-					worker.task_tail = t
-					worker.task_cond.signal()
-					worker.task_mutex.unlock()
+					worker_data.task_tail = t
+					C.pthread_cond_signal(&worker_data.task_cond)
+					C.pthread_mutex_unlock(&worker_data.task_mutex)
 				} else {
 					// Prepare response for /
-					resp := unsafe { C.malloc(buf_size) }
-					len := C.snprintf(resp, buf_size,
-						'HTTP/1.1 200 OK\r\n' +
-						'Content-Type: text/html\r\n' +
-						'Content-Length: %d\r\n' +
-						'Connection: keep-alive\r\n\r\n' +
-						'%s', body_len, body.str)
+					resp := C.malloc(buf_size)
+					len := C.snprintf(resp, buf_size, 'HTTP/1.1 200 OK\r\n' +
+						'Content-Type: text/html\r\n' + 'Content-Length: %d\r\n' +
+						'Connection: keep-alive\r\n\r\n' + '%s', body_len, body.str)
 
 					c.write_buf = resp
 					c.write_len = int(len)
@@ -362,16 +402,17 @@ fn main() {
 					}
 
 					if c.write_pos < c.write_len {
-						C.EV_SET(&ev, c.fd, C.EVFILT_WRITE, C.EV_ADD | C.EV_EOF, 0, 0, c)
-						C.kevent(kq, &ev, 1, 0, 0, 0)
+						C.EV_SET(&ev, u64(c.fd), u16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_EOF),
+							u32(0), isize(0), c)
+						C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 					} else {
-						unsafe { C.free(c.write_buf) }
-						c.write_buf = 0
+						C.free(c.write_buf)
+						c.write_buf = unsafe { nil }
 						// Continue monitoring read
 					}
 				}
-			} else if events[i].filter == C.EVFILT_WRITE {
-				if events[i].flags & C.EV_EOF != 0 {
+			} else if filter == C.EVFILT_WRITE {
+				if flags & C.EV_EOF != 0 {
 					close_conn(c)
 					continue
 				}
@@ -386,12 +427,13 @@ fn main() {
 				}
 
 				if c.write_pos >= c.write_len {
-					unsafe { C.free(c.write_buf) }
-					c.write_buf = 0
+					C.free(c.write_buf)
+					c.write_buf = unsafe { nil }
 
 					// Disable write event
-					C.EV_SET(&ev, c.fd, C.EVFILT_WRITE, C.EV_DELETE, 0, 0, c)
-					C.kevent(kq, &ev, 1, 0, 0, 0)
+					C.EV_SET(&ev, u64(c.fd), u16(C.EVFILT_WRITE), u16(C.EV_DELETE), u32(0),
+						isize(0), c)
+					C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
 					c.read_len = 0
 				}
@@ -399,9 +441,9 @@ fn main() {
 		}
 	}
 
-	// Cleanup
+	// Cleanup (not reached in this simple example)
 	C.close(server_fd)
 	C.close(kq)
-	C.close(worker.wake_pipe[0])
-	C.close(worker.wake_pipe[1])
+	C.close(worker_data.wake_pipe[0])
+	C.close(worker_data.wake_pipe[1])
 }
