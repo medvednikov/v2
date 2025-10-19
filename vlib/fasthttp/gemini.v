@@ -240,6 +240,8 @@ mut:
 
 const C.AF_INET u8
 
+fn C.htons(__hostshort u16) u16
+
 fn main() {
 	// Create server socket
 	// server_fd := C.socket(.ip, .tcp, 0)
@@ -279,7 +281,8 @@ fn main() {
 	}
 
 	mut ev := C.kevent{}
-	ev_set(&ev, u64(server_fd), i16(C.EVFILT_READ), u16(C.EV_ADD), u32(0), isize(0), unsafe { nil })
+	ev_set(mut &ev, u64(server_fd), i16(C.EVFILT_READ), u16(C.EV_ADD), u32(0), isize(0),
+		unsafe { nil })
 	C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
 	// Initialize worker data
@@ -300,8 +303,8 @@ fn main() {
 	}
 	C.fcntl(worker_data.wake_pipe[0], C.F_SETFL, C.O_NONBLOCK)
 	C.fcntl(worker_data.wake_pipe[1], C.F_SETFL, C.O_NONBLOCK)
-	ev_set(&ev, u64(worker_data.wake_pipe[0]), i16(C.EVFILT_READ), u16(C.EV_ADD), u32(0),
-		isize(0), unsafe { nil })
+	ev_set(mut &ev, u64(worker_data.wake_pipe[0]), i16(C.EVFILT_READ), u16(C.EV_ADD),
+		u32(0), isize(0), unsafe { nil })
 	C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
 	// Create worker threads
@@ -346,7 +349,7 @@ fn main() {
 				new_c.fd = client_fd
 				C.fcntl(new_c.fd, C.F_SETFL, C.O_NONBLOCK)
 
-				ev_set(&ev, u64(new_c.fd), i16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF),
+				ev_set(mut &ev, u64(new_c.fd), i16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF),
 					u32(0), isize(0), new_c)
 				C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 			} else if ident == u64(worker_data.wake_pipe[0]) && filter == i16(C.EVFILT_READ) {
@@ -409,7 +412,7 @@ fn main() {
 
 				if is_sleep {
 					// Disable read
-					ev_set(&ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_DELETE), u32(0),
+					ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_DELETE), u32(0),
 						isize(0), c)
 					C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
@@ -448,7 +451,7 @@ fn main() {
 					}
 
 					if c.write_pos < c.write_len {
-						ev_set(&ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_EOF),
+						ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_EOF),
 							u32(0), isize(0), c)
 						C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 					} else {
@@ -478,8 +481,8 @@ fn main() {
 					c.write_buf = unsafe { nil }
 
 					// Disable write event
-					ev_set(&ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_DELETE), u32(0),
-						isize(0), c)
+					ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_DELETE),
+						u32(0), isize(0), c)
 					C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
 					c.read_len = 0
