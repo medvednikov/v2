@@ -632,6 +632,10 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) GenO
 			println('GOT FO I in ${g.module_built}')
 			includes = includes.replace('#define FONTSTASH_IMPLEMENTATION', '')
 		}
+		if includes.contains('#define SOKOL_FONTSTASH_IMPL') {
+			println('GOT SOKOL FO I in ${g.module_built}')
+			includes = includes.replace('#define SOKOL_FONTSTASH_IMPL', '')
+		}
 	}
 	b.write_string2('\n// V includes:\n', includes)
 	b.writeln('\n// V global/const #define ... :')
