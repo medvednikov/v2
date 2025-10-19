@@ -236,6 +236,8 @@ SOKOL_FONTSTASH_API_DECL void sfons_destroy(FONScontext* ctx);
 SOKOL_FONTSTASH_API_DECL void sfons_flush(FONScontext* ctx);
 SOKOL_FONTSTASH_API_DECL uint32_t sfons_rgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
 
+typedef struct FONScontext FONScontext;
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

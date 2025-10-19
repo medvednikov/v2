@@ -103,6 +103,7 @@ struct FONStextIter {
 };
 typedef struct FONStextIter FONStextIter;
 
+
 typedef struct FONScontext FONScontext;
 
 // Constructor and destructor.
@@ -193,6 +194,7 @@ int fonsAddFontMem(FONScontext* stash, const char* name, unsigned char* data, in
 #include FT_FREETYPE_H
 #include FT_ADVANCES_H
 #include <math.h>
+#error LOL0
 
 struct FONSttFontImpl {
 	FT_Face font;
@@ -458,6 +460,7 @@ struct FONSatlas
 };
 typedef struct FONSatlas FONSatlas;
 
+#error LOL2
 struct FONScontext
 {
 	FONSparams params;
@@ -1745,5 +1748,116 @@ FONS_DEF int fonsResetAtlas(FONScontext* stash, int width, int height)
 
 	return 1;
 }
+
+#else
+
+
+#ifndef FONS_SCRATCH_BUF_SIZE
+#	define FONS_SCRATCH_BUF_SIZE 64000
+#endif
+#ifndef FONS_HASH_LUT_SIZE
+#	define FONS_HASH_LUT_SIZE 256
+#endif
+#ifndef FONS_INIT_FONTS
+#	define FONS_INIT_FONTS 4
+#endif
+#ifndef FONS_INIT_GLYPHS
+#	define FONS_INIT_GLYPHS 256
+#endif
+#ifndef FONS_INIT_ATLAS_NODES
+#	define FONS_INIT_ATLAS_NODES 256
+#endif
+#ifndef FONS_VERTEX_COUNT
+#	define FONS_VERTEX_COUNT 1024
+#endif
+#ifndef FONS_MAX_STATES
+#	define FONS_MAX_STATES 20
+#endif
+#ifndef FONS_MAX_FALLBACKS
+#	define FONS_MAX_FALLBACKS 20
+#endif
+
+struct FONSttFontImpl {
+	stbtt_fontinfo font;
+};
+typedef struct FONSttFontImpl FONSttFontImpl;
+
+
+struct FONSglyph
+{
+	unsigned int codepoint;
+	int index;
+	int next;
+	short size, blur;
+	short x0,y0,x1,y1;
+	short xadv,xoff,yoff;
+};
+typedef struct FONSglyph FONSglyph;
+
+struct FONSfont
+{
+	FONSttFontImpl font;
+	char name[64];
+	unsigned char* data;
+	int dataSize;
+	unsigned char freeData;
+	float ascender;
+	float descender;
+	float lineh;
+	FONSglyph* glyphs;
+	int cglyphs;
+	int nglyphs;
+	int lut[FONS_HASH_LUT_SIZE];
+	int fallbacks[FONS_MAX_FALLBACKS];
+	int nfallbacks;
+};
+typedef struct FONSfont FONSfont;
+
+struct FONSstate
+{
+	int font;
+	int align;
+	float size;
+	unsigned int color;
+	float blur;
+	float spacing;
+};
+typedef struct FONSstate FONSstate;
+
+struct FONSatlasNode {
+	short x, y, width;
+};
+typedef struct FONSatlasNode FONSatlasNode;
+
+struct FONSatlas
+{
+	int width, height;
+	FONSatlasNode* nodes;
+	int nnodes;
+	int cnodes;
+};
+typedef struct FONSatlas FONSatlas;
+
+struct FONScontext
+{
+	FONSparams params;
+	float itw,ith;
+	unsigned char* texData;
+	int dirtyRect[4];
+	FONSfont** fonts;
+	FONSatlas* atlas;
+	int cfonts;
+	int nfonts;
+	float verts[FONS_VERTEX_COUNT*2];
+	float tcoords[FONS_VERTEX_COUNT*2];
+	unsigned int colors[FONS_VERTEX_COUNT];
+	int nverts;
+	unsigned char* scratch;
+	int nscratch;
+	FONSstate states[FONS_MAX_STATES];
+	int nstates;
+	void (*handleError)(void* uptr, int error, int val);
+	void* errorUptr;
+};
 
 #endif // FONTSTASH_IMPLEMENTATION
