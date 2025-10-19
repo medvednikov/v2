@@ -83,6 +83,12 @@ mut:
 	next &Done
 }
 
+/*
+struct C.pthread_cond_t {}
+
+struct C.pthread_t {}
+*/
+
 // Shared data for worker threads
 struct WorkerData {
 mut:
@@ -151,7 +157,7 @@ fn worker_func(arg voidptr) voidptr {
 		resp := C.malloc(buf_size)
 		// Use a C-style format string and pass the V string's C representation with .str
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-		len := C.snprintf(resp, buf_size, format_str, body_len, body.str)
+		len := unsafe { C.snprintf(resp, buf_size, format_str, body_len, body.str) }
 
 		// Enqueue done
 		mut d := unsafe { &Done(C.malloc(sizeof(Done))) }
@@ -396,7 +402,7 @@ fn main() {
 					continue
 				}
 
-				path_len := path_end - path_start
+				path_len := unsafe { path_end - path_start }
 				mut is_sleep := false
 				if path_len == 1 && C.memcmp(path_start, c'/', 1) == 0 {
 					// / - fast path
@@ -434,7 +440,7 @@ fn main() {
 					// Prepare response for /
 					resp := C.malloc(buf_size)
 					format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-					len := C.snprintf(resp, buf_size, format_str, body_len, body.str)
+					len := unsafe { C.snprintf(resp, buf_size, format_str, body_len, body.str) }
 
 					c.write_buf = resp
 					c.write_len = int(len)
