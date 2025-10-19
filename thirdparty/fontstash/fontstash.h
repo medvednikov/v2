@@ -1751,6 +1751,8 @@ FONS_DEF int fonsResetAtlas(FONScontext* stash, int width, int height)
 
 #else
 
+#include "stb_truetype.h"
+
 
 #ifndef FONS_SCRATCH_BUF_SIZE
 #	define FONS_SCRATCH_BUF_SIZE 64000
