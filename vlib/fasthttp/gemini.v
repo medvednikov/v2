@@ -1,6 +1,6 @@
 import os
 import time
-import net
+// import net
 import term
 
 // V's libc module provides access to C standard library functions
@@ -40,7 +40,7 @@ fn C.memmem(haystack voidptr, haystacklen int, needle voidptr, needlelen int) vo
 fn C.strchr(s &u8, c int) &u8
 
 // fn C.snprintf(str voidptr, size int, format string, ...) int
-fn C.perror(s string)
+fn C.perror(s &char)
 fn C.pthread_create(thread &C.pthread_t, attr voidptr, start_routine fn (voidptr) voidptr, arg voidptr) int
 fn C.pthread_mutex_init(mutex &C.pthread_mutex_t, attr voidptr) int
 fn C.pthread_mutex_lock(mutex &C.pthread_mutex_t) int
@@ -217,7 +217,7 @@ fn process_dones(kq int, mut w WorkerData) {
 			c.write_buf = unsafe { nil }
 			// Add back read event
 			mut ev := C.kevent{}
-			ev_set(&ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF), u32(0),
+			ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF), u32(0),
 				isize(0), c)
 			C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 			c.read_len = 0
@@ -227,9 +227,23 @@ fn process_dones(kq int, mut w WorkerData) {
 	}
 }
 
+fn C.bind(sockfd int, addr &C.sockaddr_in, addrlen u32) int
+
+pub struct C.sockaddr_in {
+mut:
+	sin_len    u8
+	sin_family u8
+	sin_port   u16
+	sin_addr   u32
+	sin_zero   [8]char
+}
+
+const C.AF_INET u8
+
 fn main() {
 	// Create server socket
-	server_fd := C.socket(net.af_inet, net.sock_stream, 0)
+	// server_fd := C.socket(.ip, .tcp, 0)
+	server_fd := C.socket(C.AF_INET, C.SOCK_STREAM, 0)
 	if server_fd < 0 {
 		C.perror(c'socket')
 		return
@@ -240,8 +254,9 @@ fn main() {
 
 	mut addr := C.sockaddr_in{}
 	C.memset(&addr, 0, sizeof(addr))
-	addr.sin_family = u16(net.af_inet)
-	addr.sin_addr.s_addr = C.INADDR_ANY
+	addr.sin_family = C.AF_INET // u16(net.af_inet)
+	// TODO
+	// addr.sin_addr.s_addr = C.INADDR_ANY
 	addr.sin_port = C.htons(port)
 
 	if C.bind(server_fd, &addr, sizeof(addr)) < 0 {
