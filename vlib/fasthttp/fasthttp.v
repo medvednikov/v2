@@ -442,6 +442,7 @@ pub fn (mut s Server) run() ! {
 				// We keep this logic. The user's request handler will be called
 				// either in the IO thread or a worker thread.
 				if req.path.str() == '/sleep' {
+					println('sleep offload')
 					// Offload to worker thread
 					ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_DELETE), u32(0),
 						isize(0), c)
