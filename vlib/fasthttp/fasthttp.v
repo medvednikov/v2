@@ -1,5 +1,4 @@
-// vserver/server.v
-module vserver
+module fasthttp
 
 import os
 import time
@@ -50,6 +49,8 @@ fn C.pthread_mutex_unlock(mutex &C.pthread_mutex_t) int
 fn C.pthread_cond_init(cond &C.pthread_cond_t, attr voidptr) int
 fn C.pthread_cond_wait(cond &C.pthread_cond_t, mutex &C.pthread_mutex_t) int
 fn C.pthread_cond_signal(cond &C.pthread_cond_t) int
+
+fn C.htons(__hostshort u16) u16
 
 // Module-level constants
 const backlog = 128
@@ -285,7 +286,8 @@ fn (mut s Server) process_dones(kq int) {
 	}
 }
 
-// run starts the server and enters the main event loop.
+const C.AF_INET u8 // run starts the server and enters the main event loop.
+
 pub fn (mut s Server) run() ! {
 	// Create server socket
 	s.socket_fd = C.socket(C.AF_INET, C.SOCK_STREAM, 0)
@@ -300,7 +302,7 @@ pub fn (mut s Server) run() ! {
 	mut addr := C.sockaddr_in{}
 	C.memset(&addr, 0, sizeof(addr))
 	addr.sin_family = C.AF_INET
-	addr.sin_addr = u32(C.INADDR_ANY)
+	// addr.sin_addr = u32(0) // C.htons(C.INADDR_ANY))
 	addr.sin_port = u16(C.htons(u16(s.port)))
 
 	if C.bind(s.socket_fd, &addr, sizeof(addr)) < 0 {
@@ -468,7 +470,7 @@ pub fn (mut s Server) run() ! {
 
 					resp := C.malloc(buf_size)
 					format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-					len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.str) }
+					len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
 
 					c.write_buf = resp
 					c.write_len = int(len)
