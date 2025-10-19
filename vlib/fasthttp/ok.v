@@ -10,12 +10,12 @@ struct Conn {
 	write_pos usize
 }
 
-struct Task_t {
+struct Task {
 	c    &Conn
 	next &Task
 }
 
-struct Done_t {
+struct Done {
 	c    &Conn
 	resp &i8
 	len  usize
@@ -29,19 +29,19 @@ __global task_mutex = Pthread_mutex_t{850045863, [0]!}
 __global task_cond = Pthread_cond_t{1018212795, [0]!}
 
 @[weak]
-__global task_head = &Task_t((unsafe { nil }))
+__global task_head = &Task((unsafe { nil }))
 
 @[weak]
-__global task_tail = &Task_t((unsafe { nil }))
+__global task_tail = &Task((unsafe { nil }))
 
 @[weak]
 __global done_mutex = Pthread_mutex_t{850045863, [0]!}
 
 @[weak]
-__global done_head = &Done_t((unsafe { nil }))
+__global done_head = &Done((unsafe { nil }))
 
 @[weak]
-__global done_tail = &Done_t((unsafe { nil }))
+__global done_tail = &Done((unsafe { nil }))
 
 @[weak]
 __global quit = bool(0)
@@ -84,7 +84,7 @@ fn worker_func(arg voidptr) voidptr {
 		}), c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s',
 			18, c'<b>hello world</b>')
 		// Enqueue done
-		d := C.malloc(sizeof(Done_t))
+		d := C.malloc(sizeof(Done))
 		d.c = t.c
 		d.resp = resp
 		d.len = len
@@ -361,7 +361,7 @@ fn main() {
 					}
 					kevent(kq, &ev, 1, (unsafe { nil }), 0, (unsafe { nil }))
 					// Enqueue task
-					t := C.malloc(sizeof(Task_t))
+					t := C.malloc(sizeof(Task))
 					t.c = c
 					t.next = (unsafe { nil })
 					pthread_mutex_lock(&task_mutex)
