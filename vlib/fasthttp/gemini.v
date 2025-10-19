@@ -149,23 +149,19 @@ fn worker_func(arg voidptr) voidptr {
 			w.task_tail = unsafe { nil }
 		}
 		C.pthread_mutex_unlock(&w.task_mutex)
-
 		// Process sleep
 		time.sleep(5 * time.second)
-
 		// Prepare response
 		resp := C.malloc(buf_size)
 		// Use a C-style format string and pass the V string's C representation with .str
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
 		len := unsafe { C.snprintf(resp, buf_size, format_str, body_len, body.str) }
-
 		// Enqueue done
 		mut d := unsafe { &Done(C.malloc(sizeof(Done))) }
 		d.c = t.c
 		d.resp = resp
 		d.len = int(len)
 		d.next = unsafe { nil }
-
 		C.pthread_mutex_lock(&w.done_mutex)
 		if w.done_tail != unsafe { nil } {
 			w.done_tail.next = d
@@ -174,11 +170,9 @@ fn worker_func(arg voidptr) voidptr {
 		}
 		w.done_tail = d
 		C.pthread_mutex_unlock(&w.done_mutex)
-
 		// Wake IO thread
 		x := u8(`x`)
 		C.write(w.wake_pipe[1], &x, 1)
-
 		unsafe { C.free(t) }
 	}
 	return unsafe { nil }
@@ -190,16 +184,13 @@ fn process_dones(kq int, mut w WorkerData) {
 	w.done_head = unsafe { nil }
 	w.done_tail = unsafe { nil }
 	C.pthread_mutex_unlock(&w.done_mutex)
-
 	for local_head != unsafe { nil } {
 		d := local_head
 		local_head = d.next
-
 		mut c := d.c
 		c.write_buf = d.resp
 		c.write_len = d.len
 		c.write_pos = 0
-
 		// Try to write immediately
 		// Pointer arithmetic must be done on typed pointers inside an unsafe block
 		write_ptr := unsafe { &u8(c.write_buf) + c.write_pos }
@@ -211,7 +202,6 @@ fn process_dones(kq int, mut w WorkerData) {
 			unsafe { C.free(d) }
 			continue
 		}
-
 		if c.write_pos < c.write_len {
 			// Add write event
 			mut ev := C.kevent{}
@@ -228,7 +218,6 @@ fn process_dones(kq int, mut w WorkerData) {
 			C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 			c.read_len = 0
 		}
-
 		unsafe { C.free(d) }
 	}
 }
@@ -256,41 +245,33 @@ fn main() {
 		C.perror(c'socket')
 		return
 	}
-
 	opt := 1
 	C.setsockopt(server_fd, C.SOL_SOCKET, C.SO_REUSEADDR, &opt, sizeof(int))
-
 	mut addr := C.sockaddr_in{}
 	C.memset(&addr, 0, sizeof(addr))
 	addr.sin_family = C.AF_INET // u16(net.af_inet)
 	// TODO
 	// addr.sin_addr.s_addr = C.INADDR_ANY
 	addr.sin_port = C.htons(port)
-
 	if C.bind(server_fd, &addr, sizeof(addr)) < 0 {
 		C.perror(c'bind')
 		return
 	}
-
 	if C.listen(server_fd, backlog) < 0 {
 		C.perror(c'listen')
 		return
 	}
-
 	C.fcntl(server_fd, C.F_SETFL, C.O_NONBLOCK)
-
 	// Create kqueue
 	kq := C.kqueue()
 	if kq < 0 {
 		C.perror(c'kqueue')
 		return
 	}
-
 	mut ev := C.kevent{}
 	ev_set(mut &ev, u64(server_fd), i16(C.EVFILT_READ), u16(C.EV_ADD), u32(0), isize(0),
 		unsafe { nil })
 	C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
-
 	// Initialize worker data
 	mut worker_data := WorkerData{
 		task_head: unsafe { nil }
@@ -301,7 +282,6 @@ fn main() {
 	C.pthread_mutex_init(&worker_data.task_mutex, unsafe { nil })
 	C.pthread_cond_init(&worker_data.task_cond, unsafe { nil })
 	C.pthread_mutex_init(&worker_data.done_mutex, unsafe { nil })
-
 	// Create wake pipe
 	if C.pipe(&worker_data.wake_pipe[0]) < 0 {
 		C.perror(c'pipe')
@@ -312,13 +292,11 @@ fn main() {
 	ev_set(mut &ev, u64(worker_data.wake_pipe[0]), i16(C.EVFILT_READ), u16(C.EV_ADD),
 		u32(0), isize(0), unsafe { nil })
 	C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
-
 	// Create worker threads
 	threads := [num_threads]C.pthread_t{}
 	for i := 0; i < num_threads; i++ {
 		C.pthread_create(&threads[i], unsafe { nil }, worker_func, &worker_data)
 	}
-
 	// Event loop
 	events := [64]C.kevent{}
 	for {
