@@ -460,7 +460,6 @@ struct FONSatlas
 };
 typedef struct FONSatlas FONSatlas;
 
-#error LOL2
 struct FONScontext
 {
 	FONSparams params;
