@@ -194,7 +194,6 @@ int fonsAddFontMem(FONScontext* stash, const char* name, unsigned char* data, in
 #include FT_FREETYPE_H
 #include FT_ADVANCES_H
 #include <math.h>
-#error LOL0
 
 struct FONSttFontImpl {
 	FT_Face font;
