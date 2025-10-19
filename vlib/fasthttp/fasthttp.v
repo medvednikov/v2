@@ -438,63 +438,28 @@ pub fn (mut s Server) run() ! {
 				// Consume request from buffer, assume no body
 				c.read_len = 0
 
-				// The original logic dispatched to a worker pool based on the path.
-				// We keep this logic. The user's request handler will be called
-				// either in the IO thread or a worker thread.
-				if req.path.str() == '/sleep' {
-					println('sleep offload')
-					// Offload to worker thread
-					ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_DELETE), u32(0),
-						isize(0), c)
-					C.kevent(s.kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
+				// The conditional check for '/sleep' has been removed.
+				// All requests are now offloaded to the worker threads.
 
-					mut t := unsafe { &Task(C.malloc(sizeof(Task))) }
-					t.c = c
-					t.req = req
-					t.next = unsafe { nil }
+				// Offload to worker thread
+				ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_DELETE), u32(0),
+					isize(0), c)
+				C.kevent(s.kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 
-					C.pthread_mutex_lock(&s.worker_data.task_mutex)
-					if s.worker_data.task_tail != unsafe { nil } {
-						s.worker_data.task_tail.next = t
-					} else {
-						s.worker_data.task_head = t
-					}
-					s.worker_data.task_tail = t
-					C.pthread_cond_signal(&s.worker_data.task_cond)
-					C.pthread_mutex_unlock(&s.worker_data.task_mutex)
+				mut t := unsafe { &Task(C.malloc(sizeof(Task))) }
+				t.c = c
+				t.req = req
+				t.next = unsafe { nil }
+
+				C.pthread_mutex_lock(&s.worker_data.task_mutex)
+				if s.worker_data.task_tail != unsafe { nil } {
+					s.worker_data.task_tail.next = t
 				} else {
-					// Handle directly in IO thread
-					body := s.request_handler(req) or {
-						panic('Request handler failed: ${err}')
-						//[]u8('<h1>Internal Server Error</h1>')
-					}
-
-					resp := C.malloc(buf_size)
-					format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-					len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
-
-					c.write_buf = resp
-					c.write_len = int(len)
-					c.write_pos = 0
-
-					write_ptr := unsafe { &u8(c.write_buf) + c.write_pos }
-					written := C.write(c.fd, write_ptr, c.write_len - c.write_pos)
-					if written > 0 {
-						c.write_pos += int(written)
-					} else if written < 0 && C.errno != C.EAGAIN && C.errno != C.EWOULDBLOCK {
-						s.close_conn(c)
-						continue
-					}
-
-					if c.write_pos < c.write_len {
-						ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_EOF),
-							u32(0), isize(0), c)
-						C.kevent(s.kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
-					} else {
-						C.free(c.write_buf)
-						c.write_buf = unsafe { nil }
-					}
+					s.worker_data.task_head = t
 				}
+				s.worker_data.task_tail = t
+				C.pthread_cond_signal(&s.worker_data.task_cond)
+				C.pthread_mutex_unlock(&s.worker_data.task_mutex)
 			} else if event.filter == i16(C.EVFILT_WRITE) { // Ready to write more data
 				if event.flags & u16(C.EV_EOF) != 0 {
 					s.close_conn(c)
