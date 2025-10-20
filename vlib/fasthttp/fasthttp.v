@@ -3,6 +3,7 @@ module fasthttp
 import os
 import time
 import term
+import net
 
 // V's libc module provides access to C standard library functions
 #flag -I @vlib/v/libc
@@ -286,11 +287,12 @@ fn (mut s Server) process_dones(kq int) {
 	}
 }
 
-const C.AF_INET u8 // run starts the server and enters the main event loop.
+// const C.AF_INET u8 // run starts the server and enters the main event loop.
 
 pub fn (mut s Server) run() ! {
 	// Create server socket
-	s.socket_fd = C.socket(C.AF_INET, C.SOCK_STREAM, 0)
+	// s.socket_fd = C.socket(C.AF_INET, C.SOCK_STREAM, 0)
+	s.socket_fd = C.socket(.ip, .tcp, 0)
 	if s.socket_fd < 0 {
 		C.perror(c'socket')
 		return error('socket creation failed')
@@ -305,7 +307,7 @@ pub fn (mut s Server) run() ! {
 	// addr.sin_addr = u32(0) // C.htons(C.INADDR_ANY))
 	addr.sin_port = u16(C.htons(u16(s.port)))
 
-	if C.bind(s.socket_fd, &addr, sizeof(addr)) < 0 {
+	if C.bind(s.socket_fd, voidptr(&addr), sizeof(addr)) < 0 {
 		C.perror(c'bind')
 		return error('socket bind failed')
 	}
