@@ -1450,8 +1450,7 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 	if c.table.cur_fn != unsafe { nil } && !c.table.cur_fn.is_deprecated && func.is_deprecated {
 		c.deprecate('function', func.name, func.attrs, node.pos)
 	}
-	if func.is_unsafe && !c.inside_unsafe
-		&& (func.language != .c || (func.name[2] in [`m`, `s`] && func.mod == 'builtin')) {
+	if func.is_unsafe && !c.inside_unsafe && func.language != .c {
 		// builtin C.m*, C.s* only - temp
 		if !c.pref.translated && !c.file.is_translated {
 			c.warn('function `${func.name}` must be called from an `unsafe` block', node.pos)
