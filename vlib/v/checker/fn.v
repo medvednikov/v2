@@ -1144,7 +1144,7 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 		if !found && node.language == .c {
 			n := fn_name[2..] // After `C.`
 			fname := 'C.' + c.mod + '.' + n
-			println('TRYING ${fname}')
+			// println('TRYING ${fname}')
 
 			if f2 := c.table.find_fn(fname) {
 				found = true

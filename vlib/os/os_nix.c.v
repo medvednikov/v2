@@ -481,7 +481,7 @@ fn C.sysconf(name int) i64
 
 // page_size returns the page size in bytes.
 pub fn page_size() int {
-	return int(C.sysconf(C._SC_PAGESIZE))
+	return unsafe { int(C.sysconf(C._SC_PAGESIZE)) }
 }
 
 struct C.statvfs {

@@ -623,10 +623,10 @@ run them via `v file.v` instead',
 			}
 		}
 		if language == .c {
-			println('reg C fn "${name}"')
+			// println('reg C fn "${name}"')
 		}
 		if name.contains('socket') {
-			println('FFF ${name} mod=${p.mod}')
+			// println('FFF ${name} mod=${p.mod}')
 		}
 		p.table.register_fn(ast.Fn{
 			name:                  name

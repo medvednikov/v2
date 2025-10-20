@@ -167,8 +167,15 @@ fn C.fgets(str &char, n int, stream &C.FILE) int
 
 fn C.fgetpos(&C.FILE, voidptr) int
 
+/*
+$if darwin {
 @[trusted]
 fn C.sigemptyset(set &u32) int
+}
+$else if linux {
+
+}
+*/
 
 fn C.getcwd(buf &char, size usize) &char
 
