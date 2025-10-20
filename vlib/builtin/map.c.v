@@ -17,10 +17,11 @@ fn fast_string_eq(a string, b string) bool {
 	}
 }
 
+pub const C._wyp &u64
+
 fn map_hash_string(pkey voidptr) u64 {
 	key := *unsafe { &string(pkey) }
-	// XTODO remove voidptr cast once virtual C.consts can be declared
-	return C.wyhash(key.str, u64(key.len), 0, &u64(voidptr(C._wyp)))
+	return C.wyhash(key.str, u64(key.len), 0, C._wyp)
 }
 
 fn map_hash_int_1(pkey voidptr) u64 {
