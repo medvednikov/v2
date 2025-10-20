@@ -168,7 +168,7 @@ fn C.fgets(str &char, n int, stream &C.FILE) int
 fn C.fgetpos(&C.FILE, voidptr) int
 
 @[trusted]
-fn C.sigemptyset() int
+fn C.sigemptyset(set &u32) int
 
 fn C.getcwd(buf &char, size usize) &char
 
