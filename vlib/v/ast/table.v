@@ -272,6 +272,20 @@ pub fn (t &Table) find_fn(name string) ?Fn {
 	return none
 }
 
+// Slow, O(N/2)
+pub fn (t &Table) find_c_fn_in_another_module(c_name string) ?Fn {
+	n := fn_name[2..] // After `C.`
+	for name, f in t.fns {
+		if !name.starts_with('C.') {
+			continue
+		}
+		if name.contains(n) {
+			return f
+		}
+	}
+	return none
+}
+
 pub fn (t &Table) known_fn(name string) bool {
 	t.find_fn(name) or { return false }
 	return true

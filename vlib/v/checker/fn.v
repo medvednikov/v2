@@ -1145,6 +1145,18 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 			func = f
 			unsafe { c.table.fns[fn_name].usages++ }
 		}
+
+		if !found && node.language == .c {
+			n := fn_name[2..] // After `C.`
+			fname := 'C.' + c.mod + '.' + n
+			println('TRYING ${fname}')
+
+			if f2 := c.table.find_fn(fname) {
+				found = true
+				func = f2
+				unsafe { c.table.fns[fn_name].usages++ }
+			}
+		}
 	}
 
 	// static method resolution

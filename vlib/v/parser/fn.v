@@ -603,7 +603,7 @@ run them via `v file.v` instead',
 		})
 	} else {
 		name = match language {
-			.c { 'C.${name}' }
+			.c { 'C.${p.prepend_mod(name)}' }
 			.js { 'JS.${name}' }
 			.wasm { 'WASM.${name}' }
 			else { p.prepend_mod(name) }
@@ -621,6 +621,9 @@ run them via `v file.v` instead',
 					}
 				}
 			}
+		}
+		if language == .c {
+			println('reg C fn "${name}"')
 		}
 		if name.contains('socket') {
 			println('FFF ${name} mod=${p.mod}')
