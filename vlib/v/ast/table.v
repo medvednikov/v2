@@ -273,8 +273,8 @@ pub fn (t &Table) find_fn(name string) ?Fn {
 }
 
 // Slow, O(N/2)
-pub fn (t &Table) find_c_fn_in_another_module(c_name string) ?Fn {
-	n := fn_name[2..] // After `C.`
+pub fn (t &Table) find_c_fn_in_another_module(c_fn_name string) ?Fn {
+	n := c_fn_name[2..] // After `C.`
 	for name, f in t.fns {
 		if !name.starts_with('C.') {
 			continue

@@ -1136,11 +1136,6 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 	// already prefixed (mod.fn) or C/builtin/main
 	if !found {
 		if f := c.table.find_fn(fn_name) {
-			if node.language == .c && f.mod != c.mod && f.mod != 'builtin'
-				&& c.mod !in ['sync', 'builtin', 'os', 'builtin.closure'] {
-				c.warn('opaque C function `${fn_name}` was defined in module `${f.mod}`; you will have to copy its definition to module `${c.mod}`',
-					node.pos)
-			}
 			found = true
 			func = f
 			unsafe { c.table.fns[fn_name].usages++ }
@@ -1154,6 +1149,19 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 			if f2 := c.table.find_fn(fname) {
 				found = true
 				func = f2
+				unsafe { c.table.fns[fn_name].usages++ }
+			}
+		}
+
+		if !found && node.language == .c {
+			if f := c.table.find_c_fn_in_another_module(fn_name) {
+				if node.language == .c && f.mod != c.mod && f.mod != 'builtin'
+					&& c.mod !in ['sync', 'builtin', 'os', 'builtin.closure'] {
+					c.warn('opaque C function `${fn_name}` was defined in module `${f.mod}`; you will have to copy its definition to module `${c.mod}`',
+						node.pos)
+				}
+				found = true
+				func = f
 				unsafe { c.table.fns[fn_name].usages++ }
 			}
 		}
