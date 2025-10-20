@@ -622,6 +622,9 @@ run them via `v file.v` instead',
 				}
 			}
 		}
+		if name.contains('socket') {
+			println('FFF ${name} mod=${p.mod}')
+		}
 		p.table.register_fn(ast.Fn{
 			name:                  name
 			file_mode:             file_mode
