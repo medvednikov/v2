@@ -40,7 +40,7 @@ pub fn used_memory() !u64 {
 			c++
 		}
 		rss_pages := pc.vstring_with_len(ndigits).u64()
-		page_size := C.sysconf(C._SC_PAGESIZE)
+		page_size := u64(C.sysconf(C._SC_PAGESIZE))
 		return u64(rss_pages * page_size)
 	}
 }
