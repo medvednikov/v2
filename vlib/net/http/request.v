@@ -437,8 +437,18 @@ pub fn parse_request_head(mut reader io.BufferedReader) !Request {
 pub fn parse_request_head_str(s string) !Request {
 	// TODO called by veb twice!?
 	// println('parse_request_head_str s ="${s}"')
+	println('skek=')
+	println(s)
+	println('==========================')
+	println('FIRST')
+	println(s[0].ascii_str())
+	println(s.bytes())
+
+	pos0 := s.index('\n') or { 0 }
 	lines := s.split('\n')
-	line0 := lines[0]
+	println('nr lines=${lines.len}')
+	line0 := s[..pos0].trim_space()
+
 	println('line0="${line0}"')
 	method, target, version := parse_request_line(line0)!
 

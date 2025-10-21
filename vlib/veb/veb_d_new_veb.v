@@ -61,8 +61,6 @@ pub fn run_new[A, X](mut global_app A, port int) ! {
 }
 
 fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
-	// println('kek_handler')
-
 	// println('handle_request() params.routes=${params.routes}')
 	// mut global_app := unsafe { &A(params.global_app) }
 	//
@@ -97,8 +95,6 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 			return http_server.tiny_bad_request_response
 		}
 		*/
-
-	// println('OLOO')
 
 	println('s0=')
 	println(s)
