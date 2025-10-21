@@ -421,7 +421,8 @@ pub fn (mut s Server) run() ! {
 					s.close_conn(c)
 					continue
 				}
-				path_len := unsafe { path_end - &char(path_start) }
+				// path_len := unsafe { path_end - &char(path_start) }
+				path_len := unsafe { path_end - path_start }
 
 				// Create HttpRequest for the handler
 				req := HttpRequest{

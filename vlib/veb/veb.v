@@ -115,30 +115,32 @@ pub fn (mut sr StringResponse) done() {
 	unsafe { sr.str.free() }
 }
 
-// EV context
-struct RequestParams {
-	global_app         voidptr
-	controllers        []&ControllerPath
-	routes             &map[string]Route
-	timeout_in_seconds int
-mut:
-	// request body buffer
-	buf &u8 = unsafe { nil }
-	// idx keeps track of how much of the request body has been read
-	// for each incomplete request, see `handle_conn`
-	idx                 []int
-	incomplete_requests []http.Request
-	file_responses      []FileResponse
-	string_responses    []StringResponse
-}
+$if !new_veb ? {
+	// EV context
+	struct RequestParams {
+		global_app         voidptr
+		controllers        []&ControllerPath
+		routes             &map[string]Route
+		timeout_in_seconds int
+	mut:
+		// request body buffer
+		buf &u8 = unsafe { nil }
+		// idx keeps track of how much of the request body has been read
+		// for each incomplete request, see `handle_conn`
+		idx                 []int
+		incomplete_requests []http.Request
+		file_responses      []FileResponse
+		string_responses    []StringResponse
+	}
 
-// reset request parameters for `fd`:
-// reset content-length index and the http request
-pub fn (mut params RequestParams) request_done(fd int) {
-	params.incomplete_requests[fd] = http.Request{}
-	params.idx[fd] = 0
-	$if trace_handle_read ? {
-		eprintln('>>>>> fd: ${fd} | request_done.')
+	// reset request parameters for `fd`:
+	// reset content-length index and the http request
+	pub fn (mut params RequestParams) request_done(fd int) {
+		params.incomplete_requests[fd] = http.Request{}
+		params.idx[fd] = 0
+		$if trace_handle_read ? {
+			eprintln('>>>>> fd: ${fd} | request_done.')
+		}
 	}
 }
 

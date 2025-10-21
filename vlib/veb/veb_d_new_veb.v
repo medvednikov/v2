@@ -2,6 +2,14 @@ module veb
 
 import fasthttp
 
+struct RequestParams {
+	global_app         voidptr
+	controllers_sorted []&ControllerPath
+	routes             &map[string]Route
+}
+
+__global gparams RequestParams
+
 // run_new - start a new veb server using the parallel fasthttp backend.
 
 pub fn run_new[A, X](mut global_app A, port int) ! {
@@ -43,7 +51,7 @@ pub fn run_new[A, X](mut global_app A, port int) ! {
 
 	println('[veb] Running multi-threaded app on http://localhost:${port}/')
 	flush_stdout()
-	server.run()
+	server.run() or { panic(err) }
 }
 
 fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
