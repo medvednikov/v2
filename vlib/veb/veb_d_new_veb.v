@@ -72,8 +72,11 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 	// println('buffer=${req.buffer.bytestr()}')
 	s := req.buffer.bytestr()
 
-	method := unsafe { tos(&req.buffer[req.method.start], req.method.len) }
-	path := unsafe { tos(&req.buffer[req.path.start], req.path.len) }
+	// method := unsafe { tos(&req.buffer[req.method.start], req.method.len) }
+	// path := unsafe { tos(&req.buffer[req.path.start], req.path.len) }
+
+	method := unsafe { tos(req.method.buf, req.method.len) }
+	path := unsafe { tos(req.path.buf, req.path.len) }
 
 	req_bytes := req.buffer
 	client_fd := req.client_conn_fd
