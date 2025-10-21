@@ -136,6 +136,10 @@ pub fn (t &Table) stringify_fn_decl(node &FnDecl, cur_mod string, m2a map[string
 	if node.is_static_type_method {
 		name = name.after('__static__')
 	}
+	// `C.main.foo` => `C.foo`
+	if node.language == .c && node.name.count('.') == 2 {
+		name = 'C.' + name.all_after_last('.')
+	}
 	f.write_string(name)
 	if name in ['+', '-', '*', '/', '%', '<', '>', '==', '!=', '>=', '<='] {
 		f.write_string(' ')
