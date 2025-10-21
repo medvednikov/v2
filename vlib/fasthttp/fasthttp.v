@@ -212,10 +212,16 @@ fn worker_func(arg voidptr) voidptr {
 			//[]u8('<h1>Internal Server Error</h1>')
 		}
 
+		println('AZAZ body=${body.bytestr()}')
+		println('=============')
+
 		// Prepare response
 		resp := C.malloc(buf_size)
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
+		// len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
+		// len := unsafe { C.snprintf(resp, buf_size, c'', body.len, body.data) }
+		len := body.len
+		C.memcpy(resp, body.data, body.len)
 
 		// Enqueue done
 		mut d := unsafe { &Done(C.malloc(sizeof(Done))) }
