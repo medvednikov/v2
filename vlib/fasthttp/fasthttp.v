@@ -100,6 +100,7 @@ mut:
 	c    &Conn = unsafe { nil }
 	req  HttpRequest // Pass the parsed request to the worker
 	next &Task = unsafe { nil }
+	// req_buffer []u8 // The worker will own this copied buffer
 }
 
 // Completed task data
@@ -493,6 +494,16 @@ pub fn (mut s Server) run() ! {
 					ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_DELETE),
 						u32(0), isize(0), c)
 					C.kevent(s.kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
+
+					/*
+					// *** THIS IS THE FIX ***
+					// Re-enable the READ filter to listen for the next request (e.g., for the CSS file)
+					ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_EOF),
+						u32(0), isize(0), c)
+					C.kevent(s.kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
+					// ***********************
+					*/
+
 					c.read_len = 0
 				}
 			}
