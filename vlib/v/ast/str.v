@@ -137,7 +137,7 @@ pub fn (t &Table) stringify_fn_decl(node &FnDecl, cur_mod string, m2a map[string
 		name = name.after('__static__')
 	}
 	// `C.main.foo` => `C.foo`
-	if node.language == .c && node.name.count('.') == 2 {
+	if node.language == .c && node.name.count('.') >= 2 {
 		name = 'C.' + name.all_after_last('.')
 	}
 	f.write_string(name)
