@@ -6,6 +6,10 @@ $if !new_veb ? {
 	import picoev
 	import time
 	import strings
+	import net
+	import net.http
+	import io
+	import net.urllib
 }
 
 $if !new_veb ? {
@@ -103,8 +107,7 @@ $if !new_veb ? {
 	}
 
 	fn handle_timeout(mut pv picoev.Picoev, mut params RequestParams, fd int) {
-		mut conn := &net.TcpConn
-		{
+		mut conn := &net.TcpConn{
 			sock:        net.tcp_socket_from_handle_raw(fd)
 			handle:      fd
 			is_blocking: false
@@ -135,8 +138,7 @@ $if !new_veb ? {
 			defer {
 				unsafe { free(data) }
 			}
-			mut conn := &net.TcpConn
-			{
+			mut conn := &net.TcpConn{
 				sock:          net.tcp_socket_from_handle_raw(fd)
 				handle:        fd
 				is_blocking:   false
@@ -172,8 +174,7 @@ $if !new_veb ? {
 		if bytes_to_write > max_write {
 			bytes_to_write = max_write
 		}
-		mut conn := &net.TcpConn
-		{
+		mut conn := &net.TcpConn{
 			sock:        net.tcp_socket_from_handle_raw(fd)
 			handle:      fd
 			is_blocking: false
@@ -204,8 +205,7 @@ $if !new_veb ? {
 	@[direct_array_access; manualfree]
 	fn handle_read[A, X](mut pv picoev.Picoev, mut params RequestParams, fd int) {
 		// println('handle_read() fd=${fd} params.routes=${params.routes}')
-		mut conn := &net.TcpConn
-		{
+		mut conn := &net.TcpConn{
 			sock:        net.tcp_socket_from_handle_raw(fd)
 			handle:      fd
 			is_blocking: false
