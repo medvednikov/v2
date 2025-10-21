@@ -14,6 +14,11 @@ const mbedtls_server_read_timeout_ms = $d('mbedtls_server_read_timeout_ms', 41_0
 const C.mbedtls_entropy_func voidptr
 const C.mbedtls_ctr_drbg_random voidptr
 
+fn C.select(ndfs int, readfds &C.fd_set, writefds &C.fd_set, exceptfds &C.fd_set, timeout &C.timeval) int
+fn C.FD_ZERO(fdset &C.fd_set)
+fn C.FD_SET(fd int, fdset &C.fd_set)
+fn C.FD_ISSET(fd int, fdset &C.fd_set) int
+
 fn init() {
 	$if trace_ssl ? {
 		eprintln(@METHOD)
