@@ -279,7 +279,7 @@ pub fn (t &Table) find_c_fn_in_another_module(c_fn_name string) ?Fn {
 		if !name.starts_with('C.') {
 			continue
 		}
-		if name.contains(n) {
+		if name.ends_with('.' + n) {
 			return f
 		}
 	}
