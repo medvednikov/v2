@@ -18,6 +18,10 @@ const http_ok_response = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nC
 
 // run_new - start a new veb server using the parallel fasthttp backend.
 
+pub fn run_at[A, X](mut global_app A, params RunParams) ! {
+	run_new[A, X](mut global_app, params.port)!
+}
+
 pub fn run_new[A, X](mut global_app A, port int) ! {
 	// gapp = global_app
 	if port <= 0 || port > 65535 {
