@@ -451,6 +451,9 @@ pub fn parse_request_head_str(s string) !Request {
 
 	println('line0="${line0}"')
 	method, target, version := parse_request_line(line0)!
+	println(method)
+	println(target)
+	println(version)
 
 	// headers
 	mut header := new_header()
@@ -490,9 +493,9 @@ pub fn parse_request_head_str(s string) !Request {
 	}
 }
 
-fn parse_request_line(s string) !(Method, urllib.URL, Version) {
+fn parse_request_line(line string) !(Method, urllib.URL, Version) {
 	// println('S=${s}')
-	words := s.split(' ')
+	words := line.split(' ')
 	println('words=')
 	println(words)
 	if words.len != 3 {
@@ -501,7 +504,7 @@ fn parse_request_line(s string) !(Method, urllib.URL, Version) {
 	method_str, target_str, version_str := words[0], words[1], words[2]
 
 	/*
-	space1, space2 := fast_request_words(s)
+	space1, space2 := fast_request_words(line)
 	// if words.len != 3 {
 	if space1 == 0 || space2 == 0 {
 		return error('malformed request line')
@@ -516,6 +519,7 @@ fn parse_request_line(s string) !(Method, urllib.URL, Version) {
 	// version := version_from_str(words[2])
 	method := method_from_str(method_str)
 	target := urllib.parse(target_str)!
+	println('WTF version_str="${version_str}"')
 	version := version_from_str(version_str)
 	println('VERSION="${version}"')
 	if version == .unknown {
