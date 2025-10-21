@@ -4,6 +4,7 @@ import os
 
 $if !new_veb ? {
 	import picoev
+import time
 }
 
 $if !new_veb ? {
@@ -422,5 +423,77 @@ $if !new_veb ? {
 		if should_close {
 			pv.close_conn(fd)
 		}
+	}
+
+	fn handle_request[A, X](mut conn net.TcpConn, req http.Request, params &RequestParams) ?&Context {
+		// println('handle_request() params.routes=${params.routes}')
+		mut global_app := unsafe { &A(params.global_app) }
+
+		// TODO: change this variable to include the total wait time over each network cycle
+		// maybe store it in Request.user_ptr ?
+		page_gen_start := time.ticks()
+
+		$if trace_request ? {
+			dump(req)
+		}
+		$if trace_request_url ? {
+			dump(req.url)
+		}
+
+		// parse the URL, query and form data
+		mut url := urllib.parse(req.url) or {
+			eprintln('[veb] error parsing path "${req.url}": ${err}')
+			return none
+		}
+		query := parse_query_from_url(url)
+		form, files := parse_form_from_request(req) or {
+			// Bad request
+			eprintln('[veb] error parsing form: ${err.msg()}')
+			conn.write(http_400.bytes()) or {}
+			return none
+		}
+
+		// remove the port from the HTTP Host header
+		host_with_port := req.header.get(.host) or { '' }
+		host, _ := urllib.split_host_port(host_with_port)
+
+		// Create Context with request data
+		mut ctx := &Context{
+			req:            req
+			page_gen_start: page_gen_start
+			conn:           conn
+			query:          query
+			form:           form
+			files:          files
+		}
+
+		if connection_header := req.header.get(.connection) {
+			// A client that does not support persistent connections MUST send the
+			// "close" connection option in every request message.
+			if connection_header.to_lower() == 'close' {
+				ctx.client_wants_to_close = true
+			}
+		}
+
+		$if A is StaticApp {
+			ctx.custom_mime_types = global_app.static_mime_types.clone()
+		}
+
+		// match controller paths
+		$if A is ControllerInterface {
+			if completed_context := handle_controllers[X](params.controllers, ctx, mut
+				url, host)
+			{
+				return completed_context
+			}
+		}
+
+		// create a new user context and pass the veb's context
+		mut user_context := X{}
+		user_context.Context = ctx
+
+		handle_route[A, X](mut global_app, mut user_context, url, host, params.routes)
+		// we need to explicitly tell the V compiler to return a reference
+		return &user_context.Context
 	}
 }
