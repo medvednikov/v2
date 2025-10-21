@@ -12,7 +12,7 @@ pub:
 	tv_usec u64
 }
 
-type C.time_t = i64
+pub type C.time_t = i64
 
 fn C.time(t &C.time_t) C.time_t
 fn C.localtime(t &C.time_t) &C.tm

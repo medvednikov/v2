@@ -17,6 +17,11 @@ $if windows {
 	#include <sys/resource.h>
 }
 
+// type C.time_t = i64
+
+fn C.socket(domain net.AddrFamily, typ net.SocketType, protocol int) int
+fn C.time(t &C.time_t) C.time_t
+
 @[inline]
 fn get_time() i64 {
 	// time.now() is slow
@@ -90,7 +95,7 @@ fn fatal_socket_error(fd int) bool {
 // listen creates a listening tcp socket and returns its file descriptor.
 fn listen(config Config) !int {
 	// not using the `net` modules sockets, because not all socket options are defined
-	fd := C.socket(config.family, net.SocketType.tcp, 0)
+	fd := C.socket(config.family, .tcp, 0)
 	if fd == -1 {
 		return error('Failed to create socket')
 	}
