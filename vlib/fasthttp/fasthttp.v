@@ -3,7 +3,7 @@ module fasthttp
 import os
 import time
 import term
-// import net
+import net
 
 // V's libc module provides access to C standard library functions
 #flag -I @vlib/v/libc
@@ -287,7 +287,7 @@ fn (mut s Server) process_dones(kq int) {
 	}
 }
 
-const C.AF_INET u8 // run starts the server and enters the main event loop.
+// const C.AF_INET u8 // run starts the server and enters the main event loop.
 
 pub fn (mut s Server) run() ! {
 	// Create server socket
