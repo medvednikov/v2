@@ -1,4 +1,4 @@
-import time
+module time
 
 fn test_tm_gmtoff() {
 	$if windows {
@@ -9,8 +9,8 @@ fn test_tm_gmtoff() {
 		C.time(&rawtime) // C.tm{}
 
 		info := C.localtime(&rawtime)
-		t1 := time.now()
-		t2 := time.utc()
+		t1 := now()
+		t2 := utc()
 		dump(t1)
 		dump(t2)
 		dump(t1.nanosecond)

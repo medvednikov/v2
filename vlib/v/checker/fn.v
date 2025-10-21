@@ -1155,9 +1155,9 @@ fn (mut c Checker) fn_call(mut node ast.CallExpr, mut continue_check &bool) ast.
 
 		if !found && node.language == .c {
 			if f := c.table.find_c_fn_in_another_module(fn_name) {
-				println('FOUND C IN ANOTHER MODULE ${fn_name} mod=${f.mod}')
-				println(f.file)
-				println('pos=${f.pos}')
+				// println('FOUND C IN ANOTHER MODULE ${fn_name} mod=${f.mod}')
+				// println(f.file)
+				// println('pos=${f.pos}')
 				if node.language == .c && f.mod != c.mod && f.mod != 'builtin'
 					&& c.mod !in ['sync', 'builtin', 'os', 'builtin.closure'] {
 					c.warn('opaque C function `${fn_name}` was defined in module `${f.mod}`; you will have to copy its definition to module `${c.mod}`',
