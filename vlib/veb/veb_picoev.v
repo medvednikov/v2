@@ -4,7 +4,8 @@ import os
 
 $if !new_veb ? {
 	import picoev
-import time
+	import time
+	import strings
 }
 
 $if !new_veb ? {

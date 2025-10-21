@@ -439,6 +439,12 @@ fn send_string_ptr(mut conn net.TcpConn, ptr &u8, len int) !int {
 	return conn.write_ptr(ptr, len)
 }
 
+// Set s to the form error
+pub fn (mut ctx Context) error(s string) {
+	eprintln('[veb] Context.error: ${s}')
+	ctx.form_error = s
+}
+
 fn fast_send_resp_header(mut conn net.TcpConn, resp http.Response) ! {
 	mut sb := strings.new_builder(resp.body.len + 200)
 	sb.write_string('HTTP/')
@@ -462,10 +468,4 @@ fn fast_send_resp_header(mut conn net.TcpConn, resp http.Response) ! {
 fn fast_send_resp(mut conn net.TcpConn, resp http.Response) ! {
 	fast_send_resp_header(mut conn, resp)!
 	send_string(mut conn, resp.body)!
-}
-
-// Set s to the form error
-pub fn (mut ctx Context) error(s string) {
-	eprintln('[veb] Context.error: ${s}')
-	ctx.form_error = s
 }
