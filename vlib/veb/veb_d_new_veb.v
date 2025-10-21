@@ -82,7 +82,9 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 	// path := unsafe { tos(&req.buffer[req.path.start], req.path.len) }
 
 	method := unsafe { tos(req.method.buf, req.method.len) }
+	println('method=${method}')
 	path := unsafe { tos(req.path.buf, req.path.len) }
+	println('path=${path}')
 
 	req_bytes := req.buffer
 	client_fd := req.client_conn_fd
@@ -97,10 +99,16 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 		*/
 
 	// println('OLOO')
-	req2 := http.parse_request_head_str(s) or {
+
+	println('s0=')
+	println(s)
+	println('==============')
+
+	req2 := http.parse_request_head_str(s.clone()) or {
 		eprintln('[veb] Failed to parse request: ${err}')
-		// println('s=')
-		// println(s)
+		println('s=')
+		println(s)
+		println('==============')
 		return http_ok_response // http_server.tiny_bad_request_response
 	}
 
