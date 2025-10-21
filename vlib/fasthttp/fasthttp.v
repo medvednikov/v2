@@ -22,7 +22,7 @@ import net
 #include <pthread.h>
 
 // Explicit C function definitions
-fn C.socket(domain int, typ int, protocol int) int
+// fn C.socket(domain int, typ int, protocol int) int
 fn C.setsockopt(sockfd int, level int, optname int, optval voidptr, optlen u32) int
 fn C.bind(sockfd int, addr voidptr, addrlen u32) int
 fn C.listen(sockfd int, backlog int) int
@@ -291,8 +291,8 @@ fn (mut s Server) process_dones(kq int) {
 
 pub fn (mut s Server) run() ! {
 	// Create server socket
-	s.socket_fd = C.socket(C.AF_INET, C.SOCK_STREAM, 0)
-	// s.socket_fd = C.socket(.ip, .tcp, 0)
+	// s.socket_fd = C.socket(C.AF_INET, C.SOCK_STREAM, 0)
+	s.socket_fd = C.socket(.ip, .tcp, 0)
 	if s.socket_fd < 0 {
 		C.perror(c'socket')
 		return error('socket creation failed')

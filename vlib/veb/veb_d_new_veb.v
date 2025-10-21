@@ -1,6 +1,7 @@
 module veb
 
 import fasthttp
+
 // run_new - start a new veb server using the parallel fasthttp backend.
 
 pub fn run_new[A, X](mut global_app A, port int) ! {
