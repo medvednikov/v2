@@ -25,6 +25,8 @@ fn C.accept(sockfd int, addr &Addr, addrlen &u32) int
 fn C.setsockopt(sockfd int, level int, optname int, optval voidptr, optlen u32) int
 fn C.fcntl(fd int, cmd int, arg ...voidptr) int
 fn C.recv(sockfd int, buf voidptr, len usize, flags int) int
+fn C.bind(sockfd int, addr &Addr, addrlen u32) int
+fn C.listen(sockfd int, backlog int) int
 
 @[inline]
 fn get_time() i64 {
