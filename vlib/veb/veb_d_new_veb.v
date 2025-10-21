@@ -2,6 +2,9 @@ module veb
 
 import fasthttp
 import net.http
+import time
+import net
+import net.urllib
 
 struct RequestParams {
 	global_app         voidptr
@@ -10,6 +13,8 @@ struct RequestParams {
 }
 
 __global gparams RequestParams
+
+const http_ok_response = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n'.bytes()
 
 // run_new - start a new veb server using the parallel fasthttp backend.
 
@@ -115,4 +120,70 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 	return completed_context.res.bytes()
 
 	// return  http_ok_response
+}
+
+// handle_request_and_route is a unified function that creates the context,
+// runs middleware, and finds the correct route for a request.
+fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, routes &map[string]Route, controllers []&ControllerPath) &Context {
+	// Create a `net.TcpConn` from the file descriptor for context compatibility.
+	mut conn := &net.TcpConn{
+		sock:        net.tcp_socket_from_handle_raw(client_fd)
+		handle:      client_fd
+		is_blocking: false // vanilla_http_server ensures this
+	}
+
+	// Create and populate the `veb.Context` from the request.
+	mut url := urllib.parse(req.url) or {
+		// This should be rare if http.parse_request succeeded.
+		mut bad_ctx := &Context{
+			req:  req
+			conn: conn
+		}
+		bad_ctx.not_found()
+		return bad_ctx
+	}
+	query := parse_query_from_url(url)
+	form, files := parse_form_from_request(req) or {
+		mut bad_ctx := &Context{
+			req:  req
+			conn: conn
+		}
+		bad_ctx.request_error('Failed to parse form data: ${err.msg()}')
+		return bad_ctx
+	}
+	host_with_port := req.header.get(.host) or { '' }
+	host, _ := urllib.split_host_port(host_with_port)
+
+	mut ctx := &Context{
+		req:            req
+		page_gen_start: time.ticks()
+		conn:           conn
+		query:          query
+		form:           form
+		files:          files
+	}
+
+	if connection_header := req.header.get(.connection) {
+		if connection_header.to_lower() == 'close' {
+			ctx.client_wants_to_close = true
+		}
+	}
+
+	$if A is StaticApp {
+		ctx.custom_mime_types = app.static_mime_types.clone()
+	}
+
+	// Match controller paths first
+	$if A is ControllerInterface {
+		if completed_context := handle_controllers[X](controllers, ctx, mut url, host) {
+			return completed_context
+		}
+	}
+
+	// Create a new user context and pass veb's context
+	mut user_context := X{}
+	user_context.Context = ctx
+
+	handle_route[A, X](mut app, mut user_context, url, host, routes)
+	return &user_context.Context
 }
