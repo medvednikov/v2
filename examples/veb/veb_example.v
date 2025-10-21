@@ -72,7 +72,11 @@ fn main() {
 	println('veb example')
 	// veb.run(&App{}, port)
 	mut app := &App{}
+
+	veb.run_new[App, Context](mut app, port)!
+	/*
 	veb.run_at[App, Context](mut app, port: port, family: .ip, timeout_in_seconds: 2) or {
 		panic(err)
 	}
+	*/
 }

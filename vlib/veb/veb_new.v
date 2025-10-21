@@ -35,7 +35,7 @@ pub fn run_new[A, X](mut global_app A, port int) ! {
 		request_handler: kek_handler[A, X]
 	}
 	*/
-	mut server := fasthttp.new_server(port, parallel_request_handler) or {
+	mut server := fasthttp.new_server(port, parallel_request_handler[A, X]) or {
 		eprintln('Failed to create server: ${err}')
 		return
 	}
