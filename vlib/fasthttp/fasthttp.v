@@ -55,7 +55,7 @@ fn C.htons(__hostshort u16) u16
 
 // Module-level constants
 const backlog = 128
-const buf_size = 900_960
+const buf_size = 4000 // 900_960
 const num_threads = 8
 
 // Slice represents a part of a larger buffer, without owning the memory.
@@ -213,16 +213,17 @@ fn worker_func(arg voidptr) voidptr {
 			//[]u8('<h1>Internal Server Error</h1>')
 		}
 
-		println('AZAZ body.len=${body.len} body=${body.bytestr()}')
-		println('=============')
+		// println('AZAZ body.len=${body.len} body=${body.bytestr()}')
+		// println('=============')
 
 		// Prepare response
 		resp := C.malloc(buf_size)
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-		// len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
+		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
 		// len := unsafe { C.snprintf(resp, buf_size, c'', body.len, body.data) }
-		len := body.len
-		C.memcpy(resp, body.data, body.len)
+
+		// len := body.len
+		// C.memcpy(resp, body.data, body.len)
 
 		// Enqueue done
 		mut d := unsafe { &Done(C.malloc(sizeof(Done))) }
@@ -249,7 +250,7 @@ fn worker_func(arg voidptr) voidptr {
 
 // process_dones handles connections that have been processed by a worker thread.
 fn (mut s Server) process_dones(kq int) {
-	println('process_dones')
+	// println('process_dones')
 	C.pthread_mutex_lock(&s.worker_data.done_mutex)
 	mut local_head := s.worker_data.done_head
 	s.worker_data.done_head = unsafe { nil }
@@ -257,7 +258,7 @@ fn (mut s Server) process_dones(kq int) {
 	C.pthread_mutex_unlock(&s.worker_data.done_mutex)
 
 	for local_head != unsafe { nil } {
-		println('FOR')
+		// println('FOR')
 		d := local_head
 		local_head = d.next
 		mut c := d.c
@@ -277,14 +278,14 @@ fn (mut s Server) process_dones(kq int) {
 		}
 
 		if c.write_pos < c.write_len {
-			println('if1')
+			// println('if1')
 			// Add write event if not all data was sent
 			mut ev := C.kevent{}
 			ev_set(mut &ev, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_EOF),
 				u32(0), isize(0), c)
 			C.kevent(kq, &ev, 1, unsafe { nil }, 0, unsafe { nil })
 		} else {
-			println('if2')
+			// println('if2')
 			// Response sent, re-enable reading for keep-alive
 			C.free(c.write_buf)
 			c.write_buf = unsafe { nil }
