@@ -1,6 +1,7 @@
 module veb
 
 import fasthttp
+import net.http
 
 struct RequestParams {
 	global_app         voidptr
