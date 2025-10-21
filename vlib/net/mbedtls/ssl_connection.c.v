@@ -11,6 +11,9 @@ const entropy = C.mbedtls_entropy_context{}
 const mbedtls_client_read_timeout_ms = $d('mbedtls_client_read_timeout_ms', 550)
 const mbedtls_server_read_timeout_ms = $d('mbedtls_server_read_timeout_ms', 41_000)
 
+const C.mbedtls_entropy_func voidptr
+const C.mbedtls_ctr_drbg_random voidptr
+
 fn init() {
 	$if trace_ssl ? {
 		eprintln(@METHOD)
