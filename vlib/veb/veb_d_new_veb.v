@@ -13,7 +13,11 @@ struct RequestParams {
 	routes             &map[string]Route
 }
 
-__global gparams RequestParams
+// TODO remove global hack
+//__global gparams RequestParams
+const gparams = RequestParams{
+	routes: unsafe { nil }
+}
 
 const http_ok_response = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n'.bytes()
 
@@ -33,13 +37,14 @@ pub fn run_new[A, X](mut global_app A, port int) ! {
 	routes := generate_routes[A, X](global_app)!
 	controllers_sorted := check_duplicate_routes_in_controllers[A](global_app, routes)!
 
-	gparams = &RequestParams{
-		global_app:         global_app
-		controllers_sorted: controllers_sorted
-		routes:             &routes
-		// timeout_in_seconds:
+	unsafe {
+		gparams = &RequestParams{
+			global_app:         global_app
+			controllers_sorted: controllers_sorted
+			routes:             &routes
+			// timeout_in_seconds:
+		}
 	}
-
 	/*
 	// This closure is the "glue". It will be executed in parallel by worker threads
 	// for each incoming request.
