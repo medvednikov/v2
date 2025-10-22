@@ -5,7 +5,6 @@ import os
 $if !new_veb ? {
 	import picoev
 	import time
-	import strings
 	import net
 	import net.http
 	import io
