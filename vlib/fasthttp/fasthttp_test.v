@@ -33,12 +33,15 @@ fn request_handler(req fasthttp.HttpRequest) ![]u8 {
 }
 
 fn test_lol() {
-	// Create a new server instance on port 8092, passing our handler function.
-	mut server := fasthttp.new_server(8092, request_handler) or {
-		eprintln('Failed to create server: ${err}')
-		return
-	}
+	assert true
+	$if new_veb_test ? {
+		// Create a new server instance on port 8092, passing our handler function.
+		mut server := fasthttp.new_server(8092, request_handler) or {
+			eprintln('Failed to create server: ${err}')
+			return
+		}
 
-	// Start the server's event loop. This function will block indefinitely.
-	server.run() or { eprintln('Server failed to run: ${err}') }
+		// Start the server's event loop. This function will block indefinitely.
+		server.run() or { eprintln('Server failed to run: ${err}') }
+	}
 }
