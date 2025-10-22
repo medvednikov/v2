@@ -1,22 +1,27 @@
 import fasthttp
 import time
+import os
+
+const text = os.read_file('/Users/alex/code/junk/chadfit.html')!
 
 // This is your custom application logic. The server will call this function
 // for each incoming request.
 fn request_handler(req fasthttp.HttpRequest) ![]u8 {
+	s := req.buffer.bytestr()
+	_ = s
 	path := req.path.str()
-	//println("REQUEST HANDLER() $path")
-	//println('Handling request for path: "${path}"')
+	// println("REQUEST HANDLER() $path")
+	// println('Handling request for path: "${path}"')
 
-			//return []u8('<b>Hello from the IO thread!</b>')
-			//return '<b>Hello from the IO thread!</b>'.bytes()
+	// return []u8('<b>Hello from the IO thread!</b>')
+	// return '<b>Hello from the IO thread!</b>'.bytes()
 
 	// The logic of *what* to do is now in the handler.
 	// The server module still preserves the logic of *how* to do it
 	// (i.e., using a worker thread for '/sleep').
 	match path {
 		'/' {
-			return '<b>Hello from the IO thread!</b>'.bytes()
+			return text.bytes() //'<b>Hello from the IO thread!</b>'.bytes()
 		}
 		'/sleep' {
 			// This code will run in a worker thread because the server
@@ -38,7 +43,5 @@ fn test_lol() {
 	}
 
 	// Start the server's event loop. This function will block indefinitely.
-	server.run() or {
-		eprintln('Server failed to run: ${err}')
-	}
+	server.run() or { eprintln('Server failed to run: ${err}') }
 }

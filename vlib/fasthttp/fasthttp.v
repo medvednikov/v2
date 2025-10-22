@@ -55,7 +55,7 @@ fn C.htons(__hostshort u16) u16
 
 // Module-level constants
 const backlog = 128
-const buf_size = 4000 // 900_960
+const buf_size = 900_960
 const num_threads = 8
 
 // Slice represents a part of a larger buffer, without owning the memory.
