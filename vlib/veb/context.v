@@ -84,6 +84,7 @@ pub fn (mut ctx Context) set_custom_header(key string, value string) ! {
 // and the response body to `response`
 pub fn (mut ctx Context) send_response_to_client(mimetype string, response string) Result {
 	println('send_response_to_client')
+	print_backtrace()
 	println(response)
 	if ctx.done && !ctx.takeover {
 		eprintln('[veb] a response cannot be sent twice over one connection')

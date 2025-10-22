@@ -68,9 +68,11 @@ pub fn run_new[A, X](mut global_app A, port int) ! {
 const chadfit_text = os.read_file('/Users/alex/code/junk/chadfit.html')!
 
 fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
+	/*
 	if true {
 		return chadfit_text.bytes()
 	}
+	*/
 	// println('handle_request() params.routes=${params.routes}')
 	// mut global_app := unsafe { &A(params.global_app) }
 	//
