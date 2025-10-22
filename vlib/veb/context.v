@@ -83,11 +83,11 @@ pub fn (mut ctx Context) set_custom_header(key string, value string) ! {
 // send_response_to_client finalizes the response headers and sets Content-Type to `mimetype`
 // and the response body to `response`
 pub fn (mut ctx Context) send_response_to_client(mimetype string, response string) Result {
-	println('send_response_to_client')
-	println('ctx=')
-	println(ctx)
-	print_backtrace()
-	println(response)
+	// println('send_response_to_client')
+	// println('ctx=')
+	// println(ctx)
+	// print_backtrace()
+	// println(response)
 	if ctx.done && !ctx.takeover {
 		eprintln('[veb] a response cannot be sent twice over one connection')
 		return Result{}
@@ -127,10 +127,10 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 		println('calling fast send resp')
 		fast_send_resp(mut ctx.conn, ctx.res) or {}
 	}
-	println('CTX AFTER================')
+	// println('CTX AFTER================')
 	ctx.res.body = ctx.res.body.clone() // !!!! TODO memory bug
-	println(ctx.res.body)
-	println('>>>>>>>>>>')
+	// println(ctx.res.body)
+	// println('>>>>>>>>>>')
 	// result is send in `veb.v`, `handle_route`
 	return Result{}
 }

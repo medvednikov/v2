@@ -222,10 +222,10 @@ fn handle_route[A, X](mut app A, mut user_context X, url urllib.URL, host string
 		}
 	}
 
-	defer {
-		println('USER CONTEXT at end of handle_route')
-		println(user_context)
-	}
+	// defer {
+	// println('USER CONTEXT at end of handle_route')
+	// println(user_context)
+	//}
 
 	// Route matching and match route specific middleware as last step
 	$for method in A.methods {

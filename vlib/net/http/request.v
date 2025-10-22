@@ -496,8 +496,8 @@ pub fn parse_request_head_str(s string) !Request {
 fn parse_request_line(line string) !(Method, urllib.URL, Version) {
 	// println('S=${s}')
 	words := line.split(' ')
-	println('words=')
-	println(words)
+	// println('words=')
+	// println(words)
 	if words.len != 3 {
 		return error('bad request header')
 	}
@@ -513,15 +513,15 @@ fn parse_request_line(line string) !(Method, urllib.URL, Version) {
 	target_str := s.substr_unsafe(space1 + 1, space2)
 	version_str := s.substr_unsafe(space2 + 1, s.len)
 	*/
-	println('${method_str}!${target_str}!${version_str}')
+	// println('${method_str}!${target_str}!${version_str}')
 	// method := method_from_str(words[0])
 	// target := urllib.parse(words[1])!
 	// version := version_from_str(words[2])
 	method := method_from_str(method_str)
 	target := urllib.parse(target_str)!
-	println('WTF version_str="${version_str}"')
+	// println('before version_str="${version_str}"')
 	version := version_from_str(version_str)
-	println('VERSION="${version}"')
+	// println('VERSION="${version}"')
 	if version == .unknown {
 		return error('unsupported version')
 	}
