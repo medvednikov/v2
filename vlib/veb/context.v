@@ -128,6 +128,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 		fast_send_resp(mut ctx.conn, ctx.res) or {}
 	}
 	println('CTX AFTER================')
+	ctx.res.body = ctx.res.body.clone()
 	println(ctx.res.body)
 	println('>>>>>>>>>>')
 	// result is send in `veb.v`, `handle_route`

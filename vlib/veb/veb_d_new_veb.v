@@ -134,7 +134,7 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 
 	// The vanilla_http_server expects a complete response buffer to be returned.
 	println('DA RES================')
-	println(completed_context.res)
+	println(completed_context.res.body)
 	return completed_context.res.bytes()
 
 	// return  http_ok_response
