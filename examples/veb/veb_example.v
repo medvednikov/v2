@@ -35,7 +35,7 @@ pub fn (mut app App) user_endpoint(mut ctx Context, user string) veb.Result {
 }
 
 pub fn (mut app App) index() veb.Result {
-	println("DA INDEX")
+	println('veb_example.v index()')
 	mut c := 0
 	lock app.state {
 		app.state.cnt++
@@ -74,10 +74,8 @@ fn main() {
 	// veb.run(&App{}, port)
 	mut app := &App{}
 
-	veb.run_new[App, Context](mut app, port)!
-	/*
+	// veb.run_new[App, Context](mut app, port)!
 	veb.run_at[App, Context](mut app, port: port, family: .ip, timeout_in_seconds: 2) or {
 		panic(err)
 	}
-	*/
 }
