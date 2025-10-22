@@ -73,11 +73,11 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 		return chadfit_text.bytes()
 	}
 	*/
-	// println('handle_request() params.routes=${params.routes}')
 	// mut global_app := unsafe { &A(params.global_app) }
 	//
 	// mut global_app := unsafe { &A(gapp) }
 	mut global_app := unsafe { &A(gparams.global_app) }
+	println('parallel_request_handler() params.routes=${gparams.routes}')
 
 	// println('global_app=$global_app')
 
@@ -133,6 +133,8 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 	}
 
 	// The vanilla_http_server expects a complete response buffer to be returned.
+	println('DA RES================')
+	println(completed_context.res)
 	return completed_context.res.bytes()
 
 	// return  http_ok_response
@@ -141,19 +143,21 @@ fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 // handle_request_and_route is a unified function that creates the context,
 // runs middleware, and finds the correct route for a request.
 fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, routes &map[string]Route, controllers []&ControllerPath) &Context {
+	/*
 	// Create a `net.TcpConn` from the file descriptor for context compatibility.
 	mut conn := &net.TcpConn{
 		sock:        net.tcp_socket_from_handle_raw(client_fd)
 		handle:      client_fd
 		is_blocking: false // vanilla_http_server ensures this
 	}
+	*/
 
 	// Create and populate the `veb.Context` from the request.
 	mut url := urllib.parse(req.url) or {
 		// This should be rare if http.parse_request succeeded.
 		mut bad_ctx := &Context{
-			req:  req
-			conn: conn
+			req: req
+			// conn: conn
 		}
 		bad_ctx.not_found()
 		return bad_ctx
@@ -161,8 +165,8 @@ fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, ro
 	query := parse_query_from_url(url)
 	form, files := parse_form_from_request(req) or {
 		mut bad_ctx := &Context{
-			req:  req
-			conn: conn
+			req: req
+			// conn: conn
 		}
 		bad_ctx.request_error('Failed to parse form data: ${err.msg()}')
 		return bad_ctx
@@ -173,10 +177,10 @@ fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, ro
 	mut ctx := &Context{
 		req:            req
 		page_gen_start: time.ticks()
-		conn:           conn
-		query:          query
-		form:           form
-		files:          files
+		// conn:           conn
+		query: query
+		form:  form
+		files: files
 	}
 
 	if connection_header := req.header.get(.connection) {
@@ -200,6 +204,7 @@ fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, ro
 	mut user_context := X{}
 	user_context.Context = ctx
 
+	println('calling handle_route')
 	handle_route[A, X](mut app, mut user_context, url, host, routes)
 	return &user_context.Context
 }
