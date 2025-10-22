@@ -2,7 +2,7 @@ import fasthttp
 import time
 import os
 
-const text = os.read_file('/Users/alex/code/junk/chadfit.html')!
+const text = 'hello world'
 
 // This is your custom application logic. The server will call this function
 // for each incoming request.
@@ -16,9 +16,6 @@ fn request_handler(req fasthttp.HttpRequest) ![]u8 {
 	// return []u8('<b>Hello from the IO thread!</b>')
 	// return '<b>Hello from the IO thread!</b>'.bytes()
 
-	// The logic of *what* to do is now in the handler.
-	// The server module still preserves the logic of *how* to do it
-	// (i.e., using a worker thread for '/sleep').
 	match path {
 		'/' {
 			return text.bytes() //'<b>Hello from the IO thread!</b>'.bytes()

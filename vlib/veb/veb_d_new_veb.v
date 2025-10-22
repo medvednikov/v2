@@ -65,12 +65,12 @@ pub fn run_new[A, X](mut global_app A, port int) ! {
 	server.run() or { panic(err) }
 }
 
-const chadfit_text = os.read_file('/Users/alex/code/junk/chadfit.html')!
+// const test_text = 'test'
 
 fn parallel_request_handler[A, X](req fasthttp.HttpRequest) ![]u8 {
 	/*
 	if true {
-		return chadfit_text.bytes()
+		return test_text.bytes()
 	}
 	*/
 	// mut global_app := unsafe { &A(params.global_app) }
