@@ -217,6 +217,16 @@ fn worker_func(arg voidptr) voidptr {
 		// println('=============')
 
 		/*
+		resp := C.malloc(body.len + 1)
+
+		// Use snprintf to safely copy the body into the response buffer.
+		// The "%.*s" format specifier is a secure way to print a non-null-terminated string.
+		// It takes two arguments: the length (body.len) and the pointer to the data (body.data).
+		format_str := c'%.*s'
+		len := unsafe { C.snprintf(resp, body.len + 1, format_str, body.len, body.data) }
+		*/
+
+		/*
 		// Prepare response
 		// Allocate memory for the response with the size of the body.
 		resp := C.malloc(body.len)

@@ -95,7 +95,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 	// ctx.done is only set in this function, so in order to sent a response over the connection
 	// this value has to be set to true. Assuming the user doesn't use `ctx.conn` directly.
 	ctx.done = true
-	ctx.res.body = response
+	ctx.res.body = response.clone()
 	$if veb_livereload ? {
 		if mimetype == 'text/html' {
 			ctx.res.body = response.replace('</html>', '<script src="/veb_livereload/${veb_livereload_server_start}/script.js"></script>\n</html>')
@@ -108,6 +108,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 		ctx.res.header.set(.content_type, custom_mimetype)
 	}
 	if ctx.res.body != '' {
+		println('LLLLLL content_len=${ctx.res.body.clone().len}')
 		ctx.res.header.set(.content_length, ctx.res.body.len.str())
 	}
 	// send veb's closing headers
