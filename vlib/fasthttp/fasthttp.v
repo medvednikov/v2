@@ -242,7 +242,8 @@ fn worker_func(arg voidptr) voidptr {
 		println('HHH ${headers}')
 		*/
 		println('ALL')
-		// println(body.bytestr())
+		body_with_headers := body.bytestr()
+		println(body_with_headers)
 		println('============')
 		println('body')
 		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
@@ -256,12 +257,13 @@ fn worker_func(arg voidptr) voidptr {
 			remaining := buf_size
 
 			// First function call: add headers
-			ptr += C.snprintf(ptr, remaining, c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n',
-				body.len)
-			remaining -= (ptr - resp)
+			// ptr += C.snprintf(ptr, remaining, c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n',
+			// body.len)
+			ptr += C.snprintf(ptr, remaining, c'%s', body_with_headers.str)
+			// remaining -= (ptr - resp)
 
 			// Second function call: add body
-			ptr += C.snprintf(ptr, remaining, c'%s', body.data)
+			// ptr += C.snprintf(ptr, remaining, c'%s', body.data)
 			len = ptr - resp
 		}
 		/*
