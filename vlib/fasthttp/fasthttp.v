@@ -226,12 +226,12 @@ fn worker_func(arg voidptr) voidptr {
 		len := body.len
 		*/
 
-		body = ('\n' + body.bytestr().all_after('Server: veb').trim_space()).bytes()
+		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
 
 		// Prepare response
 		resp := C.malloc(buf_size)
 		// format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
-		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
+		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s'
 		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
 		// BROKEN: len := unsafe { C.snprintf(resp, buf_size, c'', body.len, body.data) }
 
