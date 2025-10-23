@@ -90,7 +90,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 	// println(ctx)
 	// print_backtrace()
 	println('sending resp=')
-	println(response)
+	// println(response)
 	if ctx.done && !ctx.takeover {
 		eprintln('[veb] a response cannot be sent twice over one connection')
 		return Result{}

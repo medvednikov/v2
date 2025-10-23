@@ -264,7 +264,9 @@ fn worker_func(arg voidptr) voidptr {
 
 			// Second function call: add body
 			// ptr += C.snprintf(ptr, remaining, c'%s', body.data)
-			len = ptr - resp
+			// len = body.len // ptr - resp
+			len = body_with_headers.len // ptr - resp
+			println('GGGG len=${len} body.len=${body.len} full body len = ${body_with_headers.len}')
 		}
 		/*
 // WORKING:
