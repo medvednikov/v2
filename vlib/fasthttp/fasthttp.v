@@ -236,6 +236,8 @@ fn worker_func(arg voidptr) voidptr {
 		len := body.len
 		*/
 
+		headers := body.bytestr().before('<!DOCTYPE').trim_space()
+		println('HHH ${headers}')
 		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
 
 		// Prepare response
