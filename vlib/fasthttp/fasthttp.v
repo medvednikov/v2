@@ -34,7 +34,7 @@ fn C.pipe(pipefd &int) int
 fn C.close(fd int) int
 fn C.read(fd int, buf voidptr, count int) int
 fn C.write(fd int, buf voidptr, count int) int
-fn C.malloc(size int) voidptr
+fn C.malloc(size int) &u8
 fn C.free(ptr voidptr)
 fn C.memset(dest voidptr, ch int, count int) voidptr
 fn C.memcmp(s1 voidptr, s2 voidptr, n int) int
@@ -243,10 +243,29 @@ fn worker_func(arg voidptr) voidptr {
 		*/
 		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
 
+		mut len := 0
+		resp := C.malloc(buf_size)
+		unsafe {
+			ptr := resp
+			remaining := buf_size
+
+			// First function call: add headers
+			ptr += C.snprintf(ptr, remaining, c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n',
+				body.len)
+			remaining -= (ptr - resp)
+
+			// Second function call: add body
+			ptr += C.snprintf(ptr, remaining, c'%s', body.data)
+			len = ptr - resp
+		}
+		/*
+// WORKING:
 		// Prepare response
 		resp := C.malloc(buf_size)
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nServer: veb\r\n\r\n%s'
 		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
+		*/
+
 		/*
 
 		println('WORKING:')
