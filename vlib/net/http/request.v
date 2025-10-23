@@ -440,9 +440,9 @@ pub fn parse_request_head_str(s string) !Request {
 	println('skek=')
 	println(s)
 	println('==========================')
-	println('FIRST')
-	println(s[0].ascii_str())
-	println(s.bytes())
+	// println('FIRST')
+	// println(s[0].ascii_str())
+	// println(s.bytes())
 
 	pos0 := s.index('\n') or { 0 }
 	lines := s.split('\n')

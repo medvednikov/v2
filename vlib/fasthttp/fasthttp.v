@@ -241,7 +241,13 @@ fn worker_func(arg voidptr) voidptr {
 		body_str := body.bytestr().all_after('Server: veb').trim_space()
 		println('HHH ${headers}')
 		*/
+		println('ALL')
+		println(body.bytestr())
+		println('============')
+		println('body')
 		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
+		println(body)
+		println('============')
 
 		mut len := 0
 		resp := C.malloc(buf_size)
