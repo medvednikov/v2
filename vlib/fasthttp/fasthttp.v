@@ -206,7 +206,7 @@ fn worker_func(arg voidptr) voidptr {
 		C.pthread_mutex_unlock(&s.worker_data.task_mutex)
 
 		// Call the user-provided request handler to get the response body
-		body := s.request_handler(t.req) or {
+		mut body := s.request_handler(t.req) or {
 			// On handler error, create a 500 response
 			// eprintln('Request handler failed: ${err}')
 			panic('Request handler failed: ${err}')
@@ -216,8 +216,21 @@ fn worker_func(arg voidptr) voidptr {
 		// println('AZAZ body.len=${body.len} body=${body.bytestr()}')
 		// println('=============')
 
+		/*
+		// Prepare response
+		// Allocate memory for the response with the size of the body.
+		resp := C.malloc(body.len)
+		// Directly copy the body data, which already includes headers, to the response.
+		unsafe { C.memcpy(resp, body.data, body.len) }
+		// The length of the response is the length of the body.
+		len := body.len
+		*/
+
+		body = ('\n' + body.bytestr().all_after('Server: veb').trim_space()).bytes()
+
 		// Prepare response
 		resp := C.malloc(buf_size)
+		// format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
 		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
 		// BROKEN: len := unsafe { C.snprintf(resp, buf_size, c'', body.len, body.data) }
