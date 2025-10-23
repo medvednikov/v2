@@ -206,7 +206,7 @@ fn (mut ctx Context) send_file(content_type string, file_path string) Result {
 	}
 	file.close()
 
-	if true || ctx.takeover {
+	if ctx.takeover {
 		println('SMALL')
 		// it's a small file so we can send the response directly
 		data := os.read_file(file_path) or {
@@ -216,6 +216,7 @@ fn (mut ctx Context) send_file(content_type string, file_path string) Result {
 		// println('data=${data}')
 		return ctx.send_response_to_client(content_type, data)
 	} else {
+		println('BIG')
 		ctx.return_type = .file
 		ctx.return_file = file_path
 
