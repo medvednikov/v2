@@ -250,24 +250,20 @@ fn worker_func(arg voidptr) voidptr {
 		// println(body)
 		println('============')
 
-		mut len := 0
+		// LOL
 		resp := C.malloc(buf_size)
-		unsafe {
-			ptr := resp
-			remaining := buf_size
+		C.snprintf(resp, buf_size, c'%s', body_with_headers.str)
+		len := body_with_headers.len
 
-			// First function call: add headers
-			// ptr += C.snprintf(ptr, remaining, c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n',
-			// body.len)
-			ptr += C.snprintf(ptr, remaining, c'%s', body_with_headers.str)
-			// remaining -= (ptr - resp)
+		// First function call: add headers
+		// ptr += C.snprintf(ptr, remaining, c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n',
+		// body.len)
+		// remaining -= (ptr - resp)
 
-			// Second function call: add body
-			// ptr += C.snprintf(ptr, remaining, c'%s', body.data)
-			// len = body.len // ptr - resp
-			len = body_with_headers.len // ptr - resp
-			println('GGGG len=${len} body.len=${body.len} full body len = ${body_with_headers.len}')
-		}
+		// Second function call: add body
+		// ptr += C.snprintf(ptr, remaining, c'%s', body.data)
+		// len = body.len // ptr - resp
+		println('GGGG len=${len} body.len=${body.len} full body len = ${body_with_headers.len}')
 		/*
 // WORKING:
 		// Prepare response
