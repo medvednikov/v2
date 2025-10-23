@@ -216,31 +216,6 @@ fn worker_func(arg voidptr) voidptr {
 		// println('AZAZ body.len=${body.len} body=${body.bytestr()}')
 		// println('=============')
 
-		/*
-		resp := C.malloc(body.len + 1)
-
-		// Use snprintf to safely copy the body into the response buffer.
-		// The "%.*s" format specifier is a secure way to print a non-null-terminated string.
-		// It takes two arguments: the length (body.len) and the pointer to the data (body.data).
-		format_str := c'%.*s'
-		len := unsafe { C.snprintf(resp, body.len + 1, format_str, body.len, body.data) }
-		*/
-
-		/*
-		// Prepare response
-		// Allocate memory for the response with the size of the body.
-		resp := C.malloc(body.len)
-		// Directly copy the body data, which already includes headers, to the response.
-		unsafe { C.memcpy(resp, body.data, body.len) }
-		// The length of the response is the length of the body.
-		len := body.len
-		*/
-
-		/*
-		headers := body.bytestr().before('<!DOCTYPE').trim_space()
-		body_str := body.bytestr().all_after('Server: veb').trim_space()
-		println('HHH ${headers}')
-		*/
 		println('ALL')
 		body_with_headers := body.bytestr()
 		// println(body_with_headers)
@@ -255,51 +230,7 @@ fn worker_func(arg voidptr) voidptr {
 		C.snprintf(resp, buf_size, c'%s', body_with_headers.str)
 		len := body_with_headers.len
 
-		// First function call: add headers
-		// ptr += C.snprintf(ptr, remaining, c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n',
-		// body.len)
-		// remaining -= (ptr - resp)
-
-		// Second function call: add body
-		// ptr += C.snprintf(ptr, remaining, c'%s', body.data)
-		// len = body.len // ptr - resp
 		println('GGGG len=${len} body.len=${body.len} full body len = ${body_with_headers.len}')
-		/*
-// WORKING:
-		// Prepare response
-		resp := C.malloc(buf_size)
-		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nServer: veb\r\n\r\n%s'
-		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
-		*/
-
-		/*
-
-		println('WORKING:')
-		l := C.strlen(format_str)
-		for i := 0; i < l; i++ {
-			unsafe {
-				C.printf(c'%d ', format_str[i])
-			}
-		}
-		///C.printf(c'0x%02X ', format_str)
-
-		format_str_broken := (headers + '\r\n\r\n' + body_str).str
-
-		println('\nBROKEN:')
-		l2 := C.strlen(format_str_broken)
-		for i := 0; i < l2; i++ {
-			unsafe {
-				C.printf(c'%d ', format_str_broken[i])
-			}
-		}
-		// C.printf(c'0x%02X ', format_str_broken)
-		*/
-
-		// format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s'
-		// BROKEN: len := unsafe { C.snprintf(resp, buf_size, c'', body.len, body.data) }
-
-		// len := body.len
-		// C.memcpy(resp, body.data, body.len)
 
 		// Enqueue done
 		mut d := unsafe { &Done(C.malloc(sizeof(Done))) }
