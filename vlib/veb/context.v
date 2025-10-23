@@ -83,11 +83,14 @@ pub fn (mut ctx Context) set_custom_header(key string, value string) ! {
 // send_response_to_client finalizes the response headers and sets Content-Type to `mimetype`
 // and the response body to `response`
 pub fn (mut ctx Context) send_response_to_client(mimetype string, response string) Result {
-	// println('send_response_to_client')
+	println('send_response_to_client')
+	print_backtrace()
+
 	// println('ctx=')
 	// println(ctx)
 	// print_backtrace()
-	// println(response)
+	println('sending resp=')
+	println(response)
 	if ctx.done && !ctx.takeover {
 		eprintln('[veb] a response cannot be sent twice over one connection')
 		return Result{}
@@ -185,6 +188,7 @@ pub fn (mut ctx Context) file(file_path string) Result {
 }
 
 fn (mut ctx Context) send_file(content_type string, file_path string) Result {
+	println('send_file ct=${content_type} path=${file_path}')
 	mut file := os.open(file_path) or {
 		eprint('[veb] error while trying to open file: ${err.msg()}')
 		ctx.res.set_status(.not_found)
@@ -202,12 +206,14 @@ fn (mut ctx Context) send_file(content_type string, file_path string) Result {
 	}
 	file.close()
 
-	if ctx.takeover {
+	if true || ctx.takeover {
+		println('SMALL')
 		// it's a small file so we can send the response directly
 		data := os.read_file(file_path) or {
 			eprintln('[veb] error while trying to read file: ${err.msg()}')
 			return ctx.server_error('could not read resource')
 		}
+		// println('data=${data}')
 		return ctx.send_response_to_client(content_type, data)
 	} else {
 		ctx.return_type = .file

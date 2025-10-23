@@ -242,11 +242,11 @@ fn worker_func(arg voidptr) voidptr {
 		println('HHH ${headers}')
 		*/
 		println('ALL')
-		println(body.bytestr())
+		// println(body.bytestr())
 		println('============')
 		println('body')
 		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
-		println(body)
+		// println(body)
 		println('============')
 
 		mut len := 0
