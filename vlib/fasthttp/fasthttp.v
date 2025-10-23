@@ -236,20 +236,41 @@ fn worker_func(arg voidptr) voidptr {
 		len := body.len
 		*/
 
+		/*
 		headers := body.bytestr().before('<!DOCTYPE').trim_space()
 		body_str := body.bytestr().all_after('Server: veb').trim_space()
 		println('HHH ${headers}')
 		body = (body.bytestr().all_after('Server: veb').trim_space()).bytes()
+		*/
 
 		// Prepare response
 		resp := C.malloc(buf_size)
-		// format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nConnection: keep-alive\r\n\r\n%s'
 		format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\nServer: veb\r\n\r\n%s'
+		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
+		/*
 
-		// format_str := (headers + '\r\n\r\n' + body_str).str
+		println('WORKING:')
+		l := C.strlen(format_str)
+		for i := 0; i < l; i++ {
+			unsafe {
+				C.printf(c'%d ', format_str[i])
+			}
+		}
+		///C.printf(c'0x%02X ', format_str)
+
+		format_str_broken := (headers + '\r\n\r\n' + body_str).str
+
+		println('\nBROKEN:')
+		l2 := C.strlen(format_str_broken)
+		for i := 0; i < l2; i++ {
+			unsafe {
+				C.printf(c'%d ', format_str_broken[i])
+			}
+		}
+		// C.printf(c'0x%02X ', format_str_broken)
+		*/
 
 		// format_str := c'HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %d\r\n\r\n%s'
-		len := unsafe { C.snprintf(resp, buf_size, format_str, body.len, body.data) }
 		// BROKEN: len := unsafe { C.snprintf(resp, buf_size, c'', body.len, body.data) }
 
 		// len := body.len
