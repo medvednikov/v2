@@ -83,13 +83,11 @@ pub fn (mut ctx Context) set_custom_header(key string, value string) ! {
 // send_response_to_client finalizes the response headers and sets Content-Type to `mimetype`
 // and the response body to `response`
 pub fn (mut ctx Context) send_response_to_client(mimetype string, response string) Result {
-	println('send_response_to_client')
-	print_backtrace()
-
+	// println('send_response_to_client')
+	// print_backtrace()
 	// println('ctx=')
 	// println(ctx)
-	// print_backtrace()
-	println('sending resp=')
+	// println('sending resp=')
 	// println(response)
 	if ctx.done && !ctx.takeover {
 		eprintln('[veb] a response cannot be sent twice over one connection')
@@ -111,7 +109,6 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 		ctx.res.header.set(.content_type, custom_mimetype)
 	}
 	if ctx.res.body != '' {
-		println('LLLLLL content_len=${ctx.res.body.clone().len}')
 		ctx.res.header.set(.content_length, ctx.res.body.len.str())
 	}
 	// send veb's closing headers
@@ -131,10 +128,7 @@ pub fn (mut ctx Context) send_response_to_client(mimetype string, response strin
 		println('calling fast send resp')
 		fast_send_resp(mut ctx.conn, ctx.res) or {}
 	}
-	// println('CTX AFTER================')
 	ctx.res.body = ctx.res.body.clone() // !!!! TODO memory bug
-	// println(ctx.res.body)
-	// println('>>>>>>>>>>')
 	// result is send in `veb.v`, `handle_route`
 	return Result{}
 }
@@ -206,8 +200,7 @@ fn (mut ctx Context) send_file(content_type string, file_path string) Result {
 	}
 	file.close()
 
-	if true || ctx.takeover {
-		println('SMALL')
+	if ctx.takeover {
 		// it's a small file so we can send the response directly
 		data := os.read_file(file_path) or {
 			eprintln('[veb] error while trying to read file: ${err.msg()}')
@@ -216,10 +209,8 @@ fn (mut ctx Context) send_file(content_type string, file_path string) Result {
 		// println('data=${data}')
 		return ctx.send_response_to_client(content_type, data)
 	} else {
-		println('BIG')
 		ctx.return_type = .file
 		ctx.return_file = file_path
-
 		// set response headers
 		ctx.send_response_to_client(content_type, '')
 		ctx.res.header.set(.content_length, file_size.str())

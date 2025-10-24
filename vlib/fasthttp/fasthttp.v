@@ -1,3 +1,6 @@
+// Copyright (c) 2019-2024 Alexander Medvednikov. All rights reserved.
+// Use of this source code is governed by an MIT license
+// that can be found in the LICENSE file.
 module fasthttp
 
 import os
@@ -5,8 +8,6 @@ import time
 import term
 import net
 
-// V's libc module provides access to C standard library functions
-#flag -I @vlib/v/libc
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/time.h>
@@ -21,8 +22,6 @@ import net
 #include <errno.h>
 #include <pthread.h>
 
-// Explicit C function definitions
-// fn C.socket(domain int, typ int, protocol int) int
 fn C.setsockopt(sockfd int, level int, optname int, optval voidptr, optlen u32) int
 fn C.bind(sockfd int, addr voidptr, addrlen u32) int
 fn C.listen(sockfd int, backlog int) int
@@ -40,8 +39,6 @@ fn C.memset(dest voidptr, ch int, count int) voidptr
 fn C.memcmp(s1 voidptr, s2 voidptr, n int) int
 fn C.memmem(haystack voidptr, haystacklen int, needle voidptr, needlelen int) voidptr
 fn C.strchr(s &u8, c int) &u8
-
-// fn C.snprintf(str voidptr, size int, format string, ...) int
 fn C.perror(s &char)
 fn C.pthread_create(thread &C.pthread_t, attr voidptr, start_routine fn (voidptr) voidptr, arg voidptr) int
 fn C.pthread_mutex_init(mutex &C.pthread_mutex_t, attr voidptr) int
@@ -50,12 +47,28 @@ fn C.pthread_mutex_unlock(mutex &C.pthread_mutex_t) int
 fn C.pthread_cond_init(cond &C.pthread_cond_t, attr voidptr) int
 fn C.pthread_cond_wait(cond &C.pthread_cond_t, mutex &C.pthread_mutex_t) int
 fn C.pthread_cond_signal(cond &C.pthread_cond_t) int
-
 fn C.htons(__hostshort u16) u16
 
-// Module-level constants
+struct C.kevent {
+	ident  u64
+	filter i16
+	flags  u16
+	fflags u32
+	data   isize
+	udata  voidptr
+}
+
+struct C.sockaddr_in {
+mut:
+	sin_len    u8
+	sin_family u8
+	sin_port   u16
+	sin_addr   u32
+	sin_zero   [8]char
+}
+
 const backlog = 128
-const buf_size = 900_960
+const buf_size = 8_000
 const num_threads = 8
 
 // Slice represents a part of a larger buffer, without owning the memory.
@@ -124,25 +137,6 @@ mut:
 	done_tail  &Done = unsafe { nil }
 	quit       bool
 	wake_pipe  [2]int
-}
-
-// C struct definitions required for interop
-struct C.kevent {
-	ident  u64
-	filter i16
-	flags  u16
-	fflags u32
-	data   isize
-	udata  voidptr
-}
-
-struct C.sockaddr_in {
-mut:
-	sin_len    u8
-	sin_family u8
-	sin_port   u16
-	sin_addr   u32
-	sin_zero   [8]char
 }
 
 // Server holds the entire state of the web server instance.
