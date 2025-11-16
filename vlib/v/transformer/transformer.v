@@ -1151,7 +1151,7 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 	// For JS and Go generate array init using their syntax
 	// if t.pref.backend !in [.c, .native] {
-	if !t.pref.experimental || !node.is_fixed {
+	if !t.pref.experimental || node.is_fixed {
 		for mut expr in node.exprs {
 			expr = t.expr(mut expr)
 		}
@@ -1197,15 +1197,18 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		}
 		fixed_array_arg := ast.CallArg{
 			expr: ast.ArrayInit{
-				is_fixed:  true
-				typ:       node.elem_type
+				is_fixed: true
+				// has_val:   true
+				typ:       t.table.find_or_register_array_fixed(node.elem_type, len, ast.empty_expr,
+					false)
 				elem_type: node.elem_type
+				exprs:     node.exprs
 			}
 		}
 
 		if false { // elem_type.unaliased_sym.kind == .function {
 		} else {
-			fn_name = 'new_array_from_c_array' + noscan
+			fn_name = 'LOLnew_array_from_c_array' + noscan
 			// g.write('builtin__new_array_from_c_array${noscan}(${len}, ${len}, sizeof(${elem_styp}), _MOV((${elem_styp}[${len}]){')
 		}
 
