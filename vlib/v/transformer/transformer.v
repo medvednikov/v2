@@ -1149,9 +1149,9 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 }
 
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
-	println('transformer array-init ${t.pref.backend}')
 	// For JS and Go generate array init using their syntax
-	if t.pref.backend !in [.c, .native] {
+	// if t.pref.backend !in [.c, .native] {
+	if t.pref.backend != .native {
 		for mut expr in node.exprs {
 			expr = t.expr(mut expr)
 		}
@@ -1161,40 +1161,47 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		return node
 	}
 	// For C and native transform into a function call `builtin__new_array_from_c_array_noscan(...)` etc
+	println('transformer array-init ${t.pref.backend}')
 
-	array_type := t.unwrap(node.typ)
+	array_type := t.table.unwrap(node.typ)
 	mut array_styp := ''
-	elem_type := t.unwrap(node.elem_type)
-	mut shared_styp := '' // only needed for shared &[]{...}
+	elem_type := t.table.unwrap(node.elem_type)
+	// mut shared_styp := '' // only needed for shared &[]{...}
 	is_shared := false // TODO g.is_shared => t.is_shared
 	len := node.exprs.len
-	elem_sym := t.table.sym(t.unwrap_generic(node.elem_type))
-	if array_type.unaliased_sym.kind == .array_fixed {
-		g.fixed_array_init(node, array_type, var_name, is_amp)
-		if is_amp {
-			g.write(')')
-		}
+	// elem_sym := t.table.sym(t.unwrap_generic(node.elem_type))
+	elem_sym := t.table.sym(t.table.unwrap(node.elem_type))
+	if false { // array_type.unaliased_sym.kind == .array_fixed {
+		// g.fixed_array_init(node, array_type, var_name, is_amp)
+		// if is_amp {
+		// g.write(')')
+		//}
 	} else if len == 0 {
 		// `[]int{len: 6, cap:10, init:22}`
-		g.array_init_with_fields(node, elem_type, is_amp, shared_styp, var_name)
+		// g.array_init_with_fields(node, elem_type, is_amp, shared_styp, var_name)
 	} else {
 		// `[1, 2, 3]`
-		elem_styp := g.styp(elem_type.typ)
-		noscan := true // g.check_noscan(elem_type.typ)
-			mut fn_name:='new_array_from_c_array'
-		len_arg:=CallArg{
-			expr: ast.IntegerLiteral { value: len }
+		// elem_styp := g.styp(elem_type.typ)
+		noscan := '_noscan' // g.check_noscan(elem_type.typ)
+		mut fn_name := 'new_array_from_c_array'
+		len_arg := ast.CallArg{
+			expr: ast.IntegerLiteral{
+				val: len.str()
+			}
 		}
 
-		if elem_type.unaliased_sym.kind == .function {
+		if false { // elem_type.unaliased_sym.kind == .function {
 		} else {
-			name='new_array_from_c_array' + noscan
-			g.write('builtin__new_array_from_c_array${noscan}(${len}, ${len}, sizeof(${elem_styp}), _MOV((${elem_styp}[${len}]){')
+			fn_name = 'new_array_from_c_array' + noscan
+			// g.write('builtin__new_array_from_c_array${noscan}(${len}, ${len}, sizeof(${elem_styp}), _MOV((${elem_styp}[${len}]){')
 		}
 
-			call_expr = CallExpr {
+		call_expr := ast.CallExpr{
 			name: fn_name
-args: [len_arg, len_arg, sizeof(voidptr), _MOV((voidptr[${len}]){')
+			args: [len_arg, len_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
+		}
+		return call_expr
+		/*
 		if len > 8 {
 			g.writeln('')
 			g.write('\t\t')
@@ -1238,6 +1245,7 @@ args: [len_arg, len_arg, sizeof(voidptr), _MOV((voidptr[${len}]){')
 		} else if is_amp {
 			g.write(')')
 		}
+		*/
 	}
 	return node
 }
