@@ -1197,8 +1197,8 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		}
 		fixed_array_arg := ast.CallArg{
 			expr: ast.ArrayInit{
-				is_fixed: true
-				// has_val:   true
+				is_fixed:  true
+				has_val:   true
 				typ:       t.table.find_or_register_array_fixed(node.elem_type, len, ast.empty_expr,
 					false)
 				elem_type: node.elem_type
