@@ -1149,17 +1149,20 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 }
 
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
-	for mut expr in node.exprs {
-		expr = t.expr(mut expr)
+	println('transformer array-init ${t.pref.backend}')
+	if t.pref.backend !in [.c, .native] {
+		for mut expr in node.exprs {
+			expr = t.expr(mut expr)
+		}
+		node.len_expr = t.expr(mut node.len_expr)
+		node.cap_expr = t.expr(mut node.cap_expr)
+		node.init_expr = t.expr(mut node.init_expr)
+		return node
 	}
-	node.len_expr = t.expr(mut node.len_expr)
-	node.cap_expr = t.expr(mut node.cap_expr)
-	node.init_expr = t.expr(mut node.init_expr)
 	return node
 }
 
 pub fn (mut t Transformer) if_expr(mut node ast.IfExpr) ast.Expr {
-	println('transformer if_expr')
 	for mut branch in node.branches {
 		branch.cond = t.expr(mut branch.cond)
 
