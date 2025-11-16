@@ -554,12 +554,7 @@ pub fn (mut t Transformer) expr(mut node ast.Expr) ast.Expr {
 			node.expr = t.expr(mut node.expr)
 		}
 		ast.ArrayInit {
-			for mut expr in node.exprs {
-				expr = t.expr(mut expr)
-			}
-			node.len_expr = t.expr(mut node.len_expr)
-			node.cap_expr = t.expr(mut node.cap_expr)
-			node.init_expr = t.expr(mut node.init_expr)
+			return t.array_init(mut node)
 		}
 		ast.AsCast {
 			node.expr = t.expr(mut node.expr)
@@ -1153,7 +1148,18 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 	}
 }
 
+pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
+	for mut expr in node.exprs {
+		expr = t.expr(mut expr)
+	}
+	node.len_expr = t.expr(mut node.len_expr)
+	node.cap_expr = t.expr(mut node.cap_expr)
+	node.init_expr = t.expr(mut node.init_expr)
+	return node
+}
+
 pub fn (mut t Transformer) if_expr(mut node ast.IfExpr) ast.Expr {
+	println('transformer if_expr')
 	for mut branch in node.branches {
 		branch.cond = t.expr(mut branch.cond)
 
