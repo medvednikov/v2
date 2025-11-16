@@ -1150,6 +1150,7 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 	println('transformer array-init ${t.pref.backend}')
+	// For JS and Go generate array init using their syntax
 	if t.pref.backend !in [.c, .native] {
 		for mut expr in node.exprs {
 			expr = t.expr(mut expr)
@@ -1158,6 +1159,85 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		node.cap_expr = t.expr(mut node.cap_expr)
 		node.init_expr = t.expr(mut node.init_expr)
 		return node
+	}
+	// For C and native transform into a function call `builtin__new_array_from_c_array_noscan(...)` etc
+
+	array_type := t.unwrap(node.typ)
+	mut array_styp := ''
+	elem_type := t.unwrap(node.elem_type)
+	mut shared_styp := '' // only needed for shared &[]{...}
+	is_shared := false // TODO g.is_shared => t.is_shared
+	len := node.exprs.len
+	elem_sym := t.table.sym(t.unwrap_generic(node.elem_type))
+	if array_type.unaliased_sym.kind == .array_fixed {
+		g.fixed_array_init(node, array_type, var_name, is_amp)
+		if is_amp {
+			g.write(')')
+		}
+	} else if len == 0 {
+		// `[]int{len: 6, cap:10, init:22}`
+		g.array_init_with_fields(node, elem_type, is_amp, shared_styp, var_name)
+	} else {
+		// `[1, 2, 3]`
+		elem_styp := g.styp(elem_type.typ)
+		noscan := true // g.check_noscan(elem_type.typ)
+			mut fn_name:='new_array_from_c_array'
+		len_arg:=CallArg{
+			expr: ast.IntegerLiteral { value: len }
+		}
+
+		if elem_type.unaliased_sym.kind == .function {
+		} else {
+			name='new_array_from_c_array' + noscan
+			g.write('builtin__new_array_from_c_array${noscan}(${len}, ${len}, sizeof(${elem_styp}), _MOV((${elem_styp}[${len}]){')
+		}
+
+			call_expr = CallExpr {
+			name: fn_name
+args: [len_arg, len_arg, sizeof(voidptr), _MOV((voidptr[${len}]){')
+		if len > 8 {
+			g.writeln('')
+			g.write('\t\t')
+		}
+		is_iface_or_sumtype := elem_sym.kind in [.sum_type, .interface]
+		for i, expr in node.exprs {
+			expr_type := if node.expr_types.len > i { node.expr_types[i] } else { node.elem_type }
+			if expr_type == ast.string_type
+				&& expr !in [ast.IndexExpr, ast.CallExpr, ast.StringLiteral, ast.StringInterLiteral, ast.InfixExpr] {
+				if is_iface_or_sumtype {
+					g.expr_with_cast(expr, expr_type, node.elem_type)
+				} else {
+					g.write('builtin__string_clone(')
+					g.expr(expr)
+					g.write(')')
+				}
+			} else {
+				if node.elem_type.has_flag(.option) {
+					g.expr_with_opt(expr, expr_type, node.elem_type)
+				} else if elem_type.unaliased_sym.kind == .array_fixed
+					&& expr in [ast.Ident, ast.SelectorExpr] {
+					info := elem_type.unaliased_sym.info as ast.ArrayFixed
+					g.fixed_array_var_init(g.expr_string(expr), expr.is_auto_deref_var(),
+						info.elem_type, info.size)
+				} else {
+					g.expr_with_cast(expr, expr_type, node.elem_type)
+				}
+			}
+			if i != len - 1 {
+				if i > 0 && i & 7 == 0 { // i > 0 && i % 8 == 0
+					g.writeln(',')
+					g.write('\t\t')
+				} else {
+					g.write(', ')
+				}
+			}
+		}
+		g.write('}))')
+		if g.is_shared {
+			g.write('}, sizeof(${shared_styp}))')
+		} else if is_amp {
+			g.write(')')
+		}
 	}
 	return node
 }
