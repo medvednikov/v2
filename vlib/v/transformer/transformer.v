@@ -1151,7 +1151,7 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 	// For JS and Go generate array init using their syntax
 	// if t.pref.backend !in [.c, .native] {
-	if !t.pref.experimental && !node.is_fixed {
+	if !t.pref.experimental || !node.is_fixed {
 		for mut expr in node.exprs {
 			expr = t.expr(mut expr)
 		}
@@ -1197,7 +1197,9 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		}
 		fixed_array_arg := ast.CallArg{
 			expr: ast.ArrayInit{
-				is_fixed: true
+				is_fixed:  true
+				typ:       node.elem_type
+				elem_type: node.elem_type
 			}
 		}
 
@@ -1210,8 +1212,8 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		call_expr := ast.CallExpr{
 			name:        fn_name
 			mod:         'builtin'
-			scope:       ast.empty_scope              // node.scope
-			args:        [len_arg, len_arg, sizeof_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
+			scope:       ast.empty_scope // node.scope
+			args:        [len_arg, len_arg, sizeof_arg, fixed_array_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
 			return_type: node.typ
 		}
 		println('call expr')
