@@ -1197,10 +1197,11 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		}
 
 		call_expr := ast.CallExpr{
-			name:  fn_name
-			mod:   'builtin'
-			scope: ast.empty_scope  // node.scope
-			args:  [len_arg, len_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
+			name:        fn_name
+			mod:         'builtin'
+			scope:       ast.empty_scope  // node.scope
+			args:        [len_arg, len_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
+			return_type: ast.int_type
 		}
 		println('call expr')
 		println(call_expr)
