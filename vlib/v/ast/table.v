@@ -791,7 +791,11 @@ pub fn (t &Table) final_sym(typ Type) &TypeSymbol {
 		return t.type_symbols[idx]
 	}
 	// this should never happen
+	println('11111111111111111111111')
+	print_backtrace()
+	println('2222222222222222222222')
 	t.panic('table.final_sym: invalid type (typ=${typ} idx=${idx}). Compiler bug. This should never happen. Please report the bug using `v bug file.v`.')
+	exit(0)
 	return invalid_type_symbol
 }
 

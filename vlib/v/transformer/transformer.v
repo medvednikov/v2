@@ -1151,7 +1151,7 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 	// For JS and Go generate array init using their syntax
 	// if t.pref.backend !in [.c, .native] {
-	if t.pref.backend != .native {
+	if !t.pref.experimental {
 		for mut expr in node.exprs {
 			expr = t.expr(mut expr)
 		}
@@ -1163,14 +1163,14 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 	// For C and native transform into a function call `builtin__new_array_from_c_array_noscan(...)` etc
 	println('transformer array-init ${t.pref.backend}')
 
-	array_type := t.table.unwrap(node.typ)
-	mut array_styp := ''
-	elem_type := t.table.unwrap(node.elem_type)
+	// array_type := t.table.unwrap(node.typ)
+	// mut array_styp := ''
+	// elem_type := t.table.unwrap(node.elem_type)
 	// mut shared_styp := '' // only needed for shared &[]{...}
 	is_shared := false // TODO g.is_shared => t.is_shared
 	len := node.exprs.len
 	// elem_sym := t.table.sym(t.unwrap_generic(node.elem_type))
-	elem_sym := t.table.sym(t.table.unwrap(node.elem_type))
+	// elem_sym := t.table.sym(t.table.unwrap(node.elem_type))
 	if false { // array_type.unaliased_sym.kind == .array_fixed {
 		// g.fixed_array_init(node, array_type, var_name, is_amp)
 		// if is_amp {
@@ -1197,9 +1197,13 @@ pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 		}
 
 		call_expr := ast.CallExpr{
-			name: fn_name
-			args: [len_arg, len_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
+			name:  fn_name
+			mod:   'builtin'
+			scope: ast.empty_scope  // node.scope
+			args:  [len_arg, len_arg] //, sizeof(voidptr), _MOV((voidptr[${len}]){')
 		}
+		println('call expr')
+		println(call_expr)
 		return call_expr
 		/*
 		if len > 8 {
