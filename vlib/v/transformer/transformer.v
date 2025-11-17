@@ -1151,7 +1151,7 @@ pub fn (mut t Transformer) infix_expr(mut node ast.InfixExpr) ast.Expr {
 pub fn (mut t Transformer) array_init(mut node ast.ArrayInit) ast.Expr {
 	// For JS and Go generate array init using their syntax
 	// if t.pref.backend !in [.c, .native] {
-	if !t.pref.experimental || node.is_fixed {
+	if !t.pref.new_transform || node.is_fixed {
 		for mut expr in node.exprs {
 			expr = t.expr(mut expr)
 		}
