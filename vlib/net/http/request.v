@@ -640,7 +640,7 @@ pub fn parse_multipart_form(body string, boundary string) (map[string]string, ma
 			}
 		}
 		line_segments << LineSegmentIndexes{line_start, field.len}
-		if line_segments.len < 2 {
+		if line_segments.len < 3 {
 			continue
 		}
 		line1 := field[line_segments[1].start..line_segments[1].end]
