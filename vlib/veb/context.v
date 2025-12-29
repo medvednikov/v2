@@ -438,7 +438,8 @@ pub fn (ctx &Context) ip() string {
 		ip = ip.all_before(',')
 	}
 	if ip == '' {
-		ip = ctx.conn.peer_ip() or { '' }
+		return ''
+		//ip = ctx.conn.peer_ip() or { '' }
 	}
 	return ip
 }

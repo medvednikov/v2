@@ -145,6 +145,18 @@ pub fn clamp(x f64, a f64, b f64) f64 {
 	return x
 }
 
+// clampf returns x constrained between f32 a and f32 b
+@[inline]
+pub fn clampf(x f32, a f32, b f32) f32 {
+	if x < a {
+		return a
+	}
+	if x > b {
+		return b
+	}
+	return x
+}
+
 // sign returns the corresponding sign -1.0, 1.0 of the provided number.
 // if n is not a number, its sign is nan too.
 @[inline]
