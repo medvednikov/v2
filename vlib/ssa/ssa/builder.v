@@ -22,7 +22,6 @@ pub fn Builder.new(mod &Module) &Builder {
 
 pub fn (mut b Builder) build(file ast.File) {
 	// 1. First pass: Register all functions (so calls work)
-	// In a full compiler, this is done by the Checker.
 	for stmt in file.stmts {
 		if stmt is ast.FnDecl {
 			// For MVP, assume (i32, i32) -> i32
@@ -30,13 +29,12 @@ pub fn (mut b Builder) build(file ast.File) {
 			
 			// Map params
 			mut param_types := []TypeID{}
-			for _ in stmt.params { param_types << i32_t }
+			// FIX: params are inside the 'typ' (FnType) struct
+			for _ in stmt.typ.params { param_types << i32_t }
 			
 			// Create Function Skeleton
-			fn_id := b.mod.new_function(stmt.name, i32_t, param_types)
-			
-			// Hack: Store fn_id to process body later if needed, 
-			// but here we just process immediately in next loop.
+			// We discard the returned ID because we assume linear order in the next pass
+			b.mod.new_function(stmt.name, i32_t, param_types)
 		}
 	}
 
@@ -60,11 +58,10 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	b.cur_block = entry
 	
 	// Define Arguments
-	// In SSA, args are values. In V (mutable), we often copy args to stack 
-	// to allow modification.
 	i32_t := b.mod.type_store.get_int(32)
 	
-	for i, param in decl.params {
+	// FIX: Access params via decl.typ.params
+	for i, param in decl.typ.params {
 		// 1. Create Argument Value
 		arg_val := b.mod.add_value_node(.argument, i32_t, param.name, 0)
 		b.mod.funcs[fn_id].params << arg_val
@@ -81,8 +78,6 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 
 	// Process Statements
 	b.stmts(decl.stmts)
-	
-	// Implicit return void if missing (omitted for this demo as we target i32)
 }
 
 fn (mut b Builder) stmts(stmts []ast.Stmt) {
@@ -123,7 +118,7 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			b.expr(node.expr)
 		}
 		else {
-			println('Builder: Unhandled stmt ${node.type_name()}')
+			// println('Builder: Unhandled stmt ${node.type_name()}')
 		}
 	}
 }
@@ -134,10 +129,7 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			if node.kind == .number {
 				// Constant
 				i32_t := b.mod.type_store.get_int(32)
-				// Simplify: Create a const value node
-				// In real impl, check const cache
 				val := b.mod.add_value_node(.constant, i32_t, node.value, 0)
-				// Store int val in a separate map or field in real compiler
 				return val
 			}
 			return 0
@@ -164,8 +156,21 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			i32_t := b.mod.type_store.get_int(32)
 			return b.mod.add_instr(op, b.cur_block, i32_t, [left, right])
 		}
+		ast.CallExpr {
+			// Resolve Args
+			mut args := []ValueID{}
+			for arg in node.args {
+				args << b.expr(arg)
+			}
+			// Resolve Function Name
+			name := (node.lhs as ast.Ident).name
+			// For this demo, assuming ret type i32
+			i32_t := b.mod.type_store.get_int(32)
+			// Note: In real compiler, we need to lookup Function ID by name to get correct ret type
+			return b.mod.add_instr(.call, b.cur_block, i32_t, args)
+		}
 		else {
-			println('Builder: Unhandled expr ${node.type_name()}')
+			// println('Builder: Unhandled expr ${node.type_name()}')
 			return 0
 		}
 	}
