@@ -125,6 +125,25 @@ fn (mut g CGen) gen_instr(val_id int) {
 			ptr_op := g.val_str(instr.operands[1])
 			g.sb.writeln('\t*${ptr_op} = ${val_op};')
 		}
+		.call {
+			// Operand 0: Function Name Value
+			// Operands 1..N: Arguments
+			fn_val_id := instr.operands[0]
+			fn_name := g.mod.values[fn_val_id].name
+
+			mut args_str := []string{}
+			for i := 1; i < instr.operands.len; i++ {
+				args_str << g.val_str(instr.operands[i])
+			}
+			args_c := args_str.join(', ')
+
+			// If not void, print assignment
+			if g.mod.type_store.types[val.typ].kind != .void_t {
+				g.sb.writeln('\t${res} = ${fn_name}(${args_c});')
+			} else {
+				g.sb.writeln('\t${fn_name}(${args_c});')
+			}
+		}
 		.icmp {
 			lhs := g.val_str(instr.operands[0])
 			rhs := g.val_str(instr.operands[1])
