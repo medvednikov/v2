@@ -122,6 +122,54 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 		ast.ExprStmt {
 			b.expr(node.expr)
 		}
+		ast.BlockStmt {
+			b.stmts(node.stmts)
+		}
+		ast.ForStmt {
+			// 1. Init
+			if node.init !is ast.EmptyStmt {
+				b.stmt(node.init)
+			}
+
+			// 2. Control Flow Blocks
+			head_blk := b.mod.add_block(b.cur_func, 'for.head')
+			body_blk := b.mod.add_block(b.cur_func, 'for.body')
+			exit_blk := b.mod.add_block(b.cur_func, 'for.exit')
+
+			// Jump to Head
+			head_val := b.mod.blocks[head_blk].val_id
+			b.mod.add_instr(.jmp, b.cur_block, 0, [head_val])
+
+			// 3. Head (Condition)
+			b.cur_block = head_blk
+			body_val := b.mod.blocks[body_blk].val_id
+			exit_val := b.mod.blocks[exit_blk].val_id
+
+			if node.cond !is ast.EmptyExpr {
+				cond_val := b.expr(node.cond)
+				b.mod.add_instr(.br, b.cur_block, 0, [cond_val, body_val, exit_val])
+			} else {
+				// Infinite loop
+				b.mod.add_instr(.jmp, b.cur_block, 0, [body_val])
+			}
+
+			// 4. Body
+			b.cur_block = body_blk
+			b.stmts(node.stmts)
+
+			// 5. Post
+			if node.post !is ast.EmptyStmt {
+				b.stmt(node.post)
+			}
+
+			// Loop back
+			if !b.is_block_terminated(b.cur_block) {
+				b.mod.add_instr(.jmp, b.cur_block, 0, [head_val])
+			}
+
+			// 6. Exit
+			b.cur_block = exit_blk
+		}
 		else {
 			// println('Builder: Unhandled stmt ${node.type_name()}')
 		}
@@ -229,6 +277,54 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			i32_t := b.mod.type_store.get_int(32)
 			// Note: In real compiler, we need to lookup Function ID by name to get correct ret type
 			return b.mod.add_instr(.call, b.cur_block, i32_t, args)
+		}
+		ast.StringLiteral {
+			// Treat as char* (i8*) constant
+			i8_t := b.mod.type_store.get_int(8)
+			ptr_t := b.mod.type_store.get_ptr(i8_t)
+			// Note: We wrap in quotes for the C backend to interpret as string literal
+			return b.mod.add_value_node(.constant, ptr_t, '"${node.value}"', 0)
+		}
+		ast.PrefixExpr {
+			right := b.expr(node.expr)
+			i32_t := b.mod.type_store.get_int(32)
+			match node.op {
+				.minus {
+					zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
+					return b.mod.add_instr(.sub, b.cur_block, i32_t, [zero, right])
+				}
+				.not {
+					zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
+					return b.mod.add_instr(.icmp, b.cur_block, i32_t, [right, zero])
+				}
+				else {
+					return 0
+				}
+			}
+		}
+		ast.PostfixExpr {
+			// Handle i++ / i--
+			if node.expr is ast.Ident {
+				name := (node.expr as ast.Ident).name
+				if ptr := b.vars[name] {
+					i32_t := b.mod.type_store.get_int(32)
+
+					// 1. Load current value
+					old_val := b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+
+					// 2. Add/Sub 1
+					one := b.mod.add_value_node(.constant, i32_t, '1', 0)
+					op := if node.op == .inc { OpCode.add } else { OpCode.sub }
+					new_val := b.mod.add_instr(op, b.cur_block, i32_t, [old_val, one])
+
+					// 3. Store new value
+					b.mod.add_instr(.store, b.cur_block, 0, [new_val, ptr])
+
+					// Postfix returns the old value
+					return old_val
+				}
+			}
+			return 0
 		}
 		else {
 			// println('Builder: Unhandled expr ${node.type_name()}')
