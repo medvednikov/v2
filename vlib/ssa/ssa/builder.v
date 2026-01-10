@@ -6,16 +6,16 @@ import v2.token
 pub struct Builder {
 mut:
 	mod       &Module
-	cur_func  int      = -1
-	cur_block BlockID  = -1
-	
+	cur_func  int     = -1
+	cur_block BlockID = -1
+
 	// Maps AST variable name to SSA ValueID (pointer to stack slot)
-	vars      map[string]ValueID
+	vars map[string]ValueID
 }
 
 pub fn Builder.new(mod &Module) &Builder {
 	return &Builder{
-		mod: mod
+		mod:  mod
 		vars: map[string]ValueID{}
 	}
 }
@@ -26,12 +26,14 @@ pub fn (mut b Builder) build(file ast.File) {
 		if stmt is ast.FnDecl {
 			// For MVP, assume (i32, i32) -> i32
 			i32_t := b.mod.type_store.get_int(32)
-			
+
 			// Map params
 			mut param_types := []TypeID{}
 			// FIX: params are inside the 'typ' (FnType) struct
-			for _ in stmt.typ.params { param_types << i32_t }
-			
+			for _ in stmt.typ.params {
+				param_types << i32_t
+			}
+
 			// Create Function Skeleton
 			// We discard the returned ID because we assume linear order in the next pass
 			b.mod.new_function(stmt.name, i32_t, param_types)
@@ -52,26 +54,27 @@ pub fn (mut b Builder) build(file ast.File) {
 fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	b.cur_func = fn_id
 	b.vars.clear()
-	
+
 	// Create Entry Block
 	entry := b.mod.add_block(fn_id, 'entry')
 	b.cur_block = entry
-	
+
 	// Define Arguments
 	i32_t := b.mod.type_store.get_int(32)
-	
+
 	// FIX: Access params via decl.typ.params
 	for i, param in decl.typ.params {
 		// 1. Create Argument Value
 		arg_val := b.mod.add_value_node(.argument, i32_t, param.name, 0)
 		b.mod.funcs[fn_id].params << arg_val
-		
+
 		// 2. Allocate Stack Slot (so we can modify it if needed)
-		stack_ptr := b.mod.add_instr(.alloca, entry, b.mod.type_store.get_ptr(i32_t), [])
-		
+		stack_ptr := b.mod.add_instr(.alloca, entry, b.mod.type_store.get_ptr(i32_t),
+			[])
+
 		// 3. Store Argument to Stack
 		b.mod.add_instr(.store, entry, 0, [arg_val, stack_ptr])
-		
+
 		// 4. Register variable
 		b.vars[param.name] = stack_ptr
 	}
@@ -81,7 +84,9 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 }
 
 fn (mut b Builder) stmts(stmts []ast.Stmt) {
-	for s in stmts { b.stmt(s) }
+	for s in stmts {
+		b.stmt(s)
+	}
 }
 
 fn (mut b Builder) stmt(node ast.Stmt) {
@@ -90,17 +95,17 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			// x := 10 or x = 10
 			// 1. Calc RHS
 			rhs_val := b.expr(node.rhs[0])
-			
+
 			// 2. Get Name
 			ident := node.lhs[0] as ast.Ident
 			name := ident.name
-			
+
 			if node.op == .decl_assign {
 				// Alloca
 				i32_t := b.mod.type_store.get_int(32)
 				ptr_t := b.mod.type_store.get_ptr(i32_t)
 				stack_ptr := b.mod.add_instr(.alloca, b.cur_block, ptr_t, [])
-				
+
 				// Store
 				b.mod.add_instr(.store, b.cur_block, 0, [rhs_val, stack_ptr])
 				b.vars[name] = stack_ptr
@@ -143,18 +148,74 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 		ast.InfixExpr {
 			left := b.expr(node.lhs)
 			right := b.expr(node.rhs)
-			
+
 			// Map Token Op to SSA OpCode
 			op := match node.op {
 				.plus { OpCode.add }
 				.minus { OpCode.sub }
 				.mul { OpCode.mul }
 				.div { OpCode.sdiv }
+				.gt, .lt, .eq, .ne, .ge, .le { OpCode.icmp }
 				else { OpCode.add }
 			}
-			
+
 			i32_t := b.mod.type_store.get_int(32)
 			return b.mod.add_instr(op, b.cur_block, i32_t, [left, right])
+		}
+		ast.IfExpr {
+			// If cond is empty, it's a plain 'else' block from a parent IfExpr
+			if node.cond is ast.EmptyExpr {
+				b.stmts(node.stmts)
+				return 0
+			}
+
+			// 1. Evaluate Condition
+			cond_val := b.expr(node.cond)
+
+			// 2. Create Blocks
+			// We create a merge block even if there is no else,
+			// because we need somewhere to jump to after 'then'.
+			then_blk := b.mod.add_block(b.cur_func, 'if.then')
+			merge_blk := b.mod.add_block(b.cur_func, 'if.end')
+			mut else_blk := merge_blk
+
+			// If there is an else expression/block, create a specific block for it
+			has_else := node.else_expr !is ast.EmptyExpr
+			if has_else {
+				else_blk = b.mod.add_block(b.cur_func, 'if.else')
+			}
+
+			// 3. Emit Branch
+			// Retrieve ValueIDs for the blocks to use as operands
+			then_val := b.mod.blocks[then_blk].val_id
+			else_val := b.mod.blocks[else_blk].val_id
+
+			// br cond, then, else (or merge if no else)
+			b.mod.add_instr(.br, b.cur_block, 0, [cond_val, then_val, else_val])
+
+			// 4. Build Then Block
+			b.cur_block = then_blk
+			b.stmts(node.stmts)
+			// Jump to merge if not terminated (e.g. by return)
+			if !b.is_block_terminated(b.cur_block) {
+				merge_val := b.mod.blocks[merge_blk].val_id
+				b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
+			}
+
+			// 5. Build Else Block (if any)
+			if has_else {
+				b.cur_block = else_blk
+				b.expr(node.else_expr)
+				// The recursive call might have changed b.cur_block (nested ifs)
+				if !b.is_block_terminated(b.cur_block) {
+					merge_val := b.mod.blocks[merge_blk].val_id
+					b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
+				}
+			}
+
+			// 6. Continue generation at Merge Block
+			b.cur_block = merge_blk
+			return 0
 		}
 		ast.CallExpr {
 			// Resolve Args
@@ -174,4 +235,23 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			return 0
 		}
 	}
+}
+
+fn (b Builder) is_block_terminated(blk_id int) bool {
+	if blk_id >= b.mod.blocks.len {
+		return false
+	}
+	blk := b.mod.blocks[blk_id]
+	if blk.instrs.len == 0 {
+		return false
+	}
+
+	last_val_id := blk.instrs.last()
+	val := b.mod.values[last_val_id]
+	if val.kind != .instruction {
+		return false
+	}
+
+	instr := b.mod.instrs[val.index]
+	return instr.op in [.ret, .br, .jmp, .unreachable]
 }
