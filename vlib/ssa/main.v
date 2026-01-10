@@ -1,47 +1,51 @@
 module main
 
+import os
+import v2.parser
+import v2.token
+import v2.pref
 import ssa
 import backend
-import os
 
 fn main() {
-	println('--- V SSA to C Compiler Demo ---')
+	println('--- V Compiler Pipeline ---')
 
-	// 1. Initialize
-	mut mod := ssa.Module.new('demo_module')
-	int32_t := mod.type_store.get_int(32)
-	println('[*] Registered Types: i32 ID=${int32_t}')
+	// 1. Setup Parser
+	prefs := &pref.Preferences{}
+	mut file_set := token.new_file_set()
+	mut p := parser.Parser.new(prefs)
+	
+	// 2. Parse File
+	input_file := 'test.v'
+	if !os.exists(input_file) {
+		eprintln('Error: $input_file not found')
+		return
+	}
+	
+	println('[*] Parsing ${input_file}...')
+	// This uses the parser code you submitted in prompt 1
+	file := p.parse_file(input_file, mut file_set)
+	
+	if file.stmts.len == 0 {
+		println('Warning: No statements found in $input_file')
+	}
 
-	// 2. Create Function
-	println('[*] Constructing SSA for function "add_values"...')
-	fn_id := mod.new_function('add_values', int32_t, [int32_t, int32_t])
-
-	// 3. Entry Block
-	entry_blk := mod.add_block(fn_id, 'entry')
-
-	// 4. Create Params (Use index=0 for now as they don't point to an instruction)
-	p0 := mod.add_value_node(.argument, int32_t, 'a', 0)
-	p1 := mod.add_value_node(.argument, int32_t, 'b', 0)
-
-	mod.funcs[fn_id].params << p0
-	mod.funcs[fn_id].params << p1
-
-	// 5. ADD Instruction
-	println('    Adding Instruction: ADD')
-	sum_val := mod.add_instr(.add, entry_blk, int32_t, [p0, p1])
-
-	// 6. RET Instruction
-	println('    Adding Instruction: RET')
-	mod.add_instr(.ret, entry_blk, 0, [sum_val])
-
-	// 7. C Gen
-	println('[*] Generating C Code...')
+	// 3. Initialize SSA Module
+	mut mod := ssa.Module.new('main')
+	
+	// 4. Build SSA from AST
+	println('[*] Building SSA...')
+	mut builder := ssa.Builder.new(mod)
+	builder.build(file)
+	
+	// 5. Generate C Code
+	println('[*] Generating C Backend...')
 	mut c_gen := backend.CGen.new(mod)
 	c_source := c_gen.gen()
-
-	println('\n--- Generated Content ---\n')
-	println(c_source)
-
-	// 8. Write
+	
 	os.write_file('out.c', c_source) or { panic(err) }
+	println('[*] Done. Wrote out.c')
+	
+	println('\n--- Generated C Code ---\n')
+	println(c_source)
 }
