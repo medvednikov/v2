@@ -194,7 +194,8 @@ fn (g CGen) type_name(id int) string {
 fn (g CGen) val_str(id int) string {
 	val := g.mod.values[id]
 	if val.kind == .constant {
-		return '0 /*const*/'
+		return val.name
+		// return '0 /*const*/'
 	} else if val.kind == .argument {
 		return val.name
 	}
