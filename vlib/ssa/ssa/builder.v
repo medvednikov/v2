@@ -30,6 +30,16 @@ pub fn Builder.new(mod &Module) &Builder {
 }
 
 pub fn (mut b Builder) build(file ast.File) {
+	// 0. Pre-pass: Register Types (Structs) and Globals
+	// We must process these first so types exist when we compile functions.
+	for stmt in file.stmts {
+		match stmt {
+			ast.StructDecl { b.stmt(stmt) }
+			ast.GlobalDecl { b.stmt(stmt) }
+			else {}
+		}
+	}
+
 	// 1. First pass: Register all functions (so calls work)
 	for stmt in file.stmts {
 		if stmt is ast.FnDecl {
@@ -508,12 +518,12 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 		ast.SelectorExpr {
 			// struct.field
 			base_ptr := b.addr(node.lhs)
-			println('base_ptr=${base_ptr}')
+			// println('base_ptr=${base_ptr}')
 
 			// We need to find the index of the field.
 			// Get type of base.
 			base_val := b.mod.values[base_ptr]
-			println('base_val=${base_val}')
+			// println('base_val=${base_val}')
 			// base_ptr is a pointer to the struct. Get the struct type.
 			ptr_type := b.mod.type_store.types[base_val.typ]
 			struct_type_id := ptr_type.elem_type
