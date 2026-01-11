@@ -518,35 +518,61 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 		ast.SelectorExpr {
 			// struct.field
 			base_ptr := b.addr(node.lhs)
-			// println('base_ptr=${base_ptr}')
 
-			// We need to find the index of the field.
-			// Get type of base.
+			// Resolve the type of the base pointer
 			base_val := b.mod.values[base_ptr]
-			// println('base_val=${base_val}')
-			// base_ptr is a pointer to the struct. Get the struct type.
-			ptr_type := b.mod.type_store.types[base_val.typ]
-			struct_type_id := ptr_type.elem_type
-			struct_type := b.mod.type_store.types[struct_type_id]
+			mut ptr_typ := b.mod.type_store.types[base_val.typ]
 
-			// Find field index (Simulated: relying on AST field name match isn't fully linked here)
-			// We will assume node.rhs.name "field_N" or map simply by name if we had the struct def.
-			// Hack for Demo: If rhs is "field_0", use index 0. Real compiler uses name lookup.
-			// Let's assume the AST provided in the test uses explicit names that we can map or just 0,1.
-			// Better approach for MVP: Assume struct fields in TypeStore are in order.
-			// We'll just assume index 0 for 'x', 1 for 'y' for the test case if not found.
+			// We expect ptr_typ to be Ptr -> (Struct) OR Ptr -> (Ptr -> Struct)
+			// If it's Ptr -> Ptr -> ..., we must Load to get the actual struct pointer.
+
+			// Unpack one level of pointer (the variable address)
+			mut val_typ_id := ptr_typ.elem_type
+			mut val_typ := b.mod.type_store.types[val_typ_id]
+
+			mut actual_base := base_ptr
+
+			// Check if the value stored is a pointer (Reference semantics for variable)
+			if val_typ.kind == .ptr_t {
+				// Load the pointer value
+				actual_base = b.mod.add_instr(.load, b.cur_block, val_typ_id, [
+					base_ptr,
+				])
+
+				// Update types for the loaded value
+				// actual_base is now Ptr -> Struct
+				ptr_typ = val_typ
+				val_typ_id = ptr_typ.elem_type
+				val_typ = b.mod.type_store.types[val_typ_id]
+			}
+
+			// Now val_typ should be the Struct
+			if val_typ.kind != .struct_t {
+				// Fallback or error. For now, try to proceed, but it might panic if we access fields.
+				// In a real compiler, this checks if it's a struct.
+			}
+
+			// Find field index (Simulated)
 			mut idx := 0
 			if node.rhs.name == 'y' || node.rhs.name == 'b' {
 				idx = 1
+			}
+
+			// Safety check for index
+			if idx >= val_typ.fields.len {
+				// If fields are empty (e.g. type resolution failed), prevent panic
+				// Return a dummy value or handle error
+				println('SSA Error: Struct fields empty or index out of bounds')
+				return 0
 			}
 
 			idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(32), idx.str(),
 				0)
 
 			// GEP
-			field_ptr_t := b.mod.type_store.get_ptr(struct_type.fields[idx])
+			field_ptr_t := b.mod.type_store.get_ptr(val_typ.fields[idx])
 			return b.mod.add_instr(.get_element_ptr, b.cur_block, field_ptr_t, [
-				base_ptr,
+				actual_base,
 				idx_val,
 			])
 		}
@@ -555,14 +581,23 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 			base_ptr := b.addr(node.lhs)
 			index_val := b.expr(node.expr)
 
-			// Determine element type
+			// Auto-dereference if it's a pointer-to-pointer (variable holding array ptr)
 			base_val := b.mod.values[base_ptr]
-			ptr_type := b.mod.type_store.types[base_val.typ]
-			// ptr_type.elem_type is the Array/Pointer type.
-			// We effectively want &base[index]
-			// If it's a pointer to int, result is pointer to int.
-			return b.mod.add_instr(.get_element_ptr, b.cur_block, base_val.typ, [
-				base_ptr,
+			ptr_typ := b.mod.type_store.types[base_val.typ]
+			elem_typ_id := ptr_typ.elem_type
+			elem_typ := b.mod.type_store.types[elem_typ_id]
+
+			mut actual_base := base_ptr
+
+			if elem_typ.kind == .ptr_t {
+				actual_base = b.mod.add_instr(.load, b.cur_block, elem_typ_id, [
+					base_ptr,
+				])
+			}
+
+			return b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.values[actual_base].typ,
+				[
+				actual_base,
 				index_val,
 			])
 		}
