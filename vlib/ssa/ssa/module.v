@@ -93,3 +93,15 @@ pub fn (mut m Module) add_instr(op OpCode, block BlockID, typ TypeID, operands [
 
 	return val_id
 }
+
+pub fn (mut m Module) add_global(name string, typ TypeID, is_const bool) int {
+	id := m.globals.len
+	g := GlobalVar{
+		name: name
+		typ: typ
+		is_constant: is_const
+	}
+	m.globals << g
+	// Also register as a Value so it can be referenced
+	return m.add_value_node(.global, typ, name, id)
+}
