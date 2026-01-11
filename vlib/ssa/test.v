@@ -4,6 +4,9 @@ fn add(a int, b int) int {
 }
 
 fn main() {
+	for i := 0; i < 10; i++ {
+		j := 777
+	}
 	x := 10
 	if x > 10 {
 		b := 20

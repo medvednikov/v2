@@ -11,12 +11,21 @@ mut:
 
 	// Maps AST variable name to SSA ValueID (pointer to stack slot)
 	vars map[string]ValueID
+
+	// Stack for break/continue targets
+	loop_stack []LoopInfo
+}
+
+struct LoopInfo {
+	head BlockID
+	exit BlockID
 }
 
 pub fn Builder.new(mod &Module) &Builder {
 	return &Builder{
-		mod:  mod
-		vars: map[string]ValueID{}
+		mod:        mod
+		vars:       map[string]ValueID{}
+		loop_stack: []LoopInfo{}
 	}
 }
 
@@ -169,6 +178,30 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 
 			// 6. Exit
 			b.cur_block = exit_blk
+		}
+		ast.StructDecl {
+			// Register Struct Type
+			// Simplification: Assume all fields are i32 for this demo unless specified
+			mut field_types := []TypeID{}
+			for _ in node.fields {
+				field_types << b.mod.type_store.get_int(32)
+			}
+
+			// We manually constructing the struct type in the store
+			// In a real compiler, we'd map AST types to SSA types properly
+			t := Type{
+				kind:   .struct_t
+				fields: field_types
+				width:  0
+			}
+			b.mod.type_store.register(t)
+		}
+		ast.GlobalDecl {
+			i32_t := b.mod.type_store.get_int(32)
+			for field in node.fields {
+				// Register global
+				b.mod.add_global(field.name, i32_t, false)
+			}
 		}
 		else {
 			// println('Builder: Unhandled stmt ${node.type_name()}')
