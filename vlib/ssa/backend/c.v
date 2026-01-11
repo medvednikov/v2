@@ -169,8 +169,24 @@ fn (mut g CGen) gen_instr(val_id int) {
 		}
 		.get_element_ptr {
 			base := g.val_str(instr.operands[0])
-			idx := g.val_str(instr.operands[1])
-			g.sb.writeln('\t${res} = &${base}[${idx}];')
+			idx_val := g.mod.values[instr.operands[1]]
+
+			// Check if base is a struct pointer
+			base_val_id := instr.operands[0]
+			base_val_typ := g.mod.values[base_val_id].typ
+			// base is ptr_t -> elem_type
+			elem_type_id := g.mod.type_store.types[base_val_typ].elem_type
+			elem_type := g.mod.type_store.types[elem_type_id]
+
+			if elem_type.kind == .struct_t {
+				// Struct access: base->field_N
+				// idx should be a constant string "0", "1" etc
+				g.sb.writeln('\t${res} = &${base}->field_${idx_val.name};')
+			} else {
+				// Array access: base[index]
+				idx := g.val_str(instr.operands[1])
+				g.sb.writeln('\t${res} = &${base}[${idx}];')
+			}
 		}
 		else {
 			g.sb.writeln('\t// Unhandled C op: ${instr.op}')
@@ -195,8 +211,9 @@ fn (g CGen) val_str(id int) string {
 	val := g.mod.values[id]
 	if val.kind == .constant {
 		return val.name
-		// return '0 /*const*/'
 	} else if val.kind == .argument {
+		return val.name
+	} else if val.kind == .global {
 		return val.name
 	}
 	return '_v${val.id}'
