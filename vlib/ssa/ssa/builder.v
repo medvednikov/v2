@@ -103,6 +103,16 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 		ast.AssignStmt {
 			// x := 10 or x = 10
 			// 1. Calc RHS
+			if node.rhs.len == 0 {
+				println('AssignStmt node.rhs.len == 0')
+				println(node)
+				return
+			}
+			if node.lhs.len == 0 {
+				println('AssignStmt node.lhs.len == 0')
+				println(node)
+				return
+			}
 			rhs_val := b.expr(node.rhs[0])
 
 			// 2. Get LHS Address
@@ -498,10 +508,12 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 		ast.SelectorExpr {
 			// struct.field
 			base_ptr := b.addr(node.lhs)
+			println('base_ptr=${base_ptr}')
 
 			// We need to find the index of the field.
 			// Get type of base.
 			base_val := b.mod.values[base_ptr]
+			println('base_val=${base_val}')
 			// base_ptr is a pointer to the struct. Get the struct type.
 			ptr_type := b.mod.type_store.types[base_val.typ]
 			struct_type_id := ptr_type.elem_type
