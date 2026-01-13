@@ -14,8 +14,8 @@ const backlog = max_connection_size
 
 fn C.kevent(kq int, changelist &C.kevent, nchanges int, eventlist &C.kevent, nevents int, timeout &C.timespec) int
 fn C.kqueue() int
-fn C.open(path &char, flags int) int
 fn C.fstat(fd int, buf &C.stat) int
+
 // int sendfile(int fd, int s, off_t offset, off_t *len, struct sf_hdtr *hdtr, int flags);
 fn C.sendfile(fd int, s int, offset i64, len &i64, hdtr voidptr, flags int) int
 
