@@ -1,6 +1,7 @@
 module fasthttp
 
 import net
+import os
 
 #include <sys/event.h>
 
@@ -46,7 +47,7 @@ pub mut:
 	socket_fd       int
 	poll_fd         int // kqueue fd
 	user_data       voidptr
-	request_handler fn (HttpRequest) ![]u8 @[required]
+	request_handler fn (HttpRequest) !HttpResponse @[required]
 }
 
 // new_server creates and initializes a new Server instance.
@@ -169,7 +170,13 @@ fn handle_read(mut s Server, kq int, c_ptr voidptr) {
 		return
 	}
 
-	c.write_buf = resp.clone()
+	c.write_buf = resp.content.clone()
+	if resp.file_path != '' {
+		// Fallback: read file and append to write buffer
+		file_content := os.read_bytes(resp.file_path) or { []u8{} }
+		c.write_buf << file_content
+	}
+
 	c.write_pos = 0
 	c.read_len = 0
 
