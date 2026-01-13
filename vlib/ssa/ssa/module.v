@@ -40,13 +40,16 @@ pub fn (mut m Module) new_function(name string, ret TypeID, params []TypeID) int
 
 pub fn (mut m Module) add_block(func_id int, name string) BlockID {
 	id := m.blocks.len
+	// FIX: Ensure unique block names for C labels by appending ID
+	unique_name := '${name}_${id}'
+	
 	// Store 'id' (index in blocks arena) in the Value
-	val_id := m.add_value_node(.basic_block, 0, name, id)
+	val_id := m.add_value_node(.basic_block, 0, unique_name, id)
 
 	m.blocks << BasicBlock{
 		id:     id
 		val_id: val_id
-		name:   name
+		name:   unique_name
 		parent: func_id
 	}
 	m.funcs[func_id].blocks << id
@@ -102,6 +105,8 @@ pub fn (mut m Module) add_global(name string, typ TypeID, is_const bool) int {
 		is_constant: is_const
 	}
 	m.globals << g
-	// Also register as a Value so it can be referenced
-	return m.add_value_node(.global, typ, name, id)
+	
+	// FIX: The Value representing a global is a POINTER to the data
+	ptr_typ := m.type_store.get_ptr(typ)
+	return m.add_value_node(.global, ptr_typ, name, id)
 }
