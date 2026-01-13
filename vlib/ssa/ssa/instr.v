@@ -46,9 +46,15 @@ pub enum OpCode {
 	sitofp
 	bitcast
 
+	// Comparisons
+	lt
+	gt
+	le
+	ge
+	eq
+	ne
+
 	// Other
-	icmp
-	fcmp
 	phi
 	call
 	select

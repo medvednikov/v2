@@ -99,7 +99,6 @@ fn (mut g CGen) gen_func(func ssa.Function) {
 
 fn (mut g CGen) gen_instr(val_id int) {
 	val := g.mod.values[val_id]
-	// FIX: Use val.index to access the Instruction arena
 	instr := g.mod.instrs[val.index]
 
 	res := '_v${val.id}'
@@ -122,8 +121,15 @@ fn (mut g CGen) gen_instr(val_id int) {
 		}
 		.store {
 			val_op := g.val_str(instr.operands[0])
-			ptr_op := g.val_str(instr.operands[1])
-			g.sb.writeln('\t*${ptr_op} = ${val_op};')
+			ptr_id := instr.operands[1]
+			ptr_op := g.val_str(ptr_id)
+
+			// FIX: specific handling for globals
+			if g.mod.values[ptr_id].kind == .global {
+				g.sb.writeln('\t${ptr_op} = ${val_op};')
+			} else {
+				g.sb.writeln('\t*${ptr_op} = ${val_op};')
+			}
 		}
 		.call {
 			// Operand 0: Function Name Value
@@ -137,17 +143,25 @@ fn (mut g CGen) gen_instr(val_id int) {
 			}
 			args_c := args_str.join(', ')
 
-			// If not void, print assignment
 			if g.mod.type_store.types[val.typ].kind != .void_t {
 				g.sb.writeln('\t${res} = ${fn_name}(${args_c});')
 			} else {
 				g.sb.writeln('\t${fn_name}(${args_c});')
 			}
 		}
-		.icmp {
+		.eq, .ne, .lt, .gt, .le, .ge {
 			lhs := g.val_str(instr.operands[0])
 			rhs := g.val_str(instr.operands[1])
-			g.sb.writeln('\t${res} = (${lhs} == ${rhs});')
+			op_str := match instr.op {
+				.eq { '==' }
+				.ne { '!=' }
+				.lt { '<' }
+				.gt { '>' }
+				.le { '<=' }
+				.ge { '>=' }
+				else { '==' }
+			}
+			g.sb.writeln('\t${res} = (${lhs} ${op_str} ${rhs});')
 		}
 		.br {
 			cond := g.val_str(instr.operands[0])
@@ -171,19 +185,14 @@ fn (mut g CGen) gen_instr(val_id int) {
 			base := g.val_str(instr.operands[0])
 			idx_val := g.mod.values[instr.operands[1]]
 
-			// Check if base is a struct pointer
 			base_val_id := instr.operands[0]
 			base_val_typ := g.mod.values[base_val_id].typ
-			// base is ptr_t -> elem_type
 			elem_type_id := g.mod.type_store.types[base_val_typ].elem_type
 			elem_type := g.mod.type_store.types[elem_type_id]
 
 			if elem_type.kind == .struct_t {
-				// Struct access: base->field_N
-				// idx should be a constant string "0", "1" etc
 				g.sb.writeln('\t${res} = &${base}->field_${idx_val.name};')
 			} else {
-				// Array access: base[index]
 				idx := g.val_str(instr.operands[1])
 				g.sb.writeln('\t${res} = &${base}[${idx}];')
 			}

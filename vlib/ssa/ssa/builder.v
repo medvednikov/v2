@@ -343,7 +343,12 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 				.minus { OpCode.sub }
 				.mul { OpCode.mul }
 				.div { OpCode.sdiv }
-				.gt, .lt, .eq, .ne, .ge, .le { OpCode.icmp }
+				.gt { OpCode.gt }
+				.lt { OpCode.lt }
+				.eq { OpCode.eq }
+				.ne { OpCode.ne }
+				.ge { OpCode.ge }
+				.le { OpCode.le }
 				else { OpCode.add }
 			}
 
@@ -435,7 +440,7 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 				}
 				.not {
 					zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
-					return b.mod.add_instr(.icmp, b.cur_block, i32_t, [right, zero])
+					return b.mod.add_instr(.eq, b.cur_block, i32_t, [right, zero])
 				}
 				else {
 					return 0
