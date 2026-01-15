@@ -38,6 +38,16 @@ pub fn (mut g Arm64Gen) gen() {
 		g.emit(0)
 		g.emit(0)
 	}
+	// Patch symbol addresses for __cstring section (Section 2).
+	// These symbols were created with values relative to the start of the string table,
+	// but Mach-O requires VM addresses relative to the section start address.
+	// Section 2 starts immediately after Section 1 (text + globals).
+	cstring_base_addr := u64(g.macho.text_data.len)
+	for mut sym in g.macho.symbols {
+		if sym.sect == 2 {
+			sym.value += cstring_base_addr
+		}
+	}
 }
 
 fn (mut g Arm64Gen) gen_func(func ssa.Function) {

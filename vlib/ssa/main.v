@@ -54,7 +54,7 @@ fn main() {
 
 		// Link command
 		// -lSystem links standard libc (printf)
-		link_cmd := 'ld -o out_bin main.o -lSystem -syslibroot "${sdk_path}" -e _main -arch arm64'
+		link_cmd := 'ld -o out_bin main.o -lSystem -syslibroot "${sdk_path}" -e _main -arch arm64 -platform_version macos 11.0.0 11.0.0'
 		if os.system(link_cmd) != 0 {
 			eprintln('Link failed')
 			return
