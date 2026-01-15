@@ -270,256 +270,300 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 fn (mut b Builder) expr(node ast.Expr) ValueID {
 	match node {
 		ast.BasicLiteral {
-			if node.kind == .number {
-				// Constant
-				i32_t := b.mod.type_store.get_int(32)
-				val := b.mod.add_value_node(.constant, i32_t, node.value, 0)
-				return val
-			} else if node.kind in [.key_true, .key_false] {
-				i32_t := b.mod.type_store.get_int(32)
-				val_str := if node.kind == .key_true { '1' } else { '0' }
-				val := b.mod.add_value_node(.constant, i32_t, val_str, 0)
-				return val
-			}
-			return 0
+			return b.expr_basic_literal(node)
 		}
 		ast.Ident {
-			ptr := b.addr(node)
-			// Get type pointed to
-			ptr_typ := b.mod.values[ptr].typ
-			val_typ := b.mod.type_store.types[ptr_typ].elem_type
-
-			return b.mod.add_instr(.load, b.cur_block, val_typ, [ptr])
+			return b.expr_ident(node)
 		}
 		ast.InitExpr {
-			// Struct Init: MyStruct{ a: 1, b: 2 }
-			// 1. Allocate Struct
-			// Need to find the TypeID for the struct.
-			// For MVP, we search TypeStore for a struct type.
-			// In real compiler, AST node has type info.
-			mut struct_t := 0
-			for i, t in b.mod.type_store.types {
-				if t.kind == .struct_t {
-					struct_t = i
-					break
-				}
-			}
-
-			ptr_t := b.mod.type_store.get_ptr(struct_t)
-			struct_ptr := b.mod.add_instr(.alloca, b.cur_block, ptr_t, [])
-
-			// 2. Initialize Fields
-			// We assume fields in InitExpr are in order for this demo
-			for i, field in node.fields {
-				val := b.expr(field.value)
-				idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(32),
-					i.str(), 0)
-
-				// GEP to field
-				field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(b.mod.type_store.get_int(32)),
-					[struct_ptr, idx_val])
-				b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
-			}
-
-			// 3. Return Pointer (Structs are value types in V, but usually passed by ref in SSA construction phase or loaded)
-			// To simplify, we return the pointer here, and if used as R-Value, it should be loaded?
-			// Actually, V structs can be values. Let's return the pointer for now to act as the "value" handle.
-			return struct_ptr
+			return b.expr_init(node)
 		}
 		ast.SelectorExpr {
-			// Load value from field
-			ptr := b.addr(node)
-			i32_t := b.mod.type_store.get_int(32) // Assume i32
-			return b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+			return b.expr_selector(node)
 		}
 		ast.IndexExpr {
-			// Load value from index
-			ptr := b.addr(node)
-			i32_t := b.mod.type_store.get_int(32) // Assume i32
-			return b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+			return b.expr_index(node)
 		}
 		ast.CastExpr {
-			// Just pass through for MVP C gen (C handles implicit casting mostly, or we assume compatible types)
 			return b.expr(node.expr)
 		}
 		ast.ParenExpr {
 			return b.expr(node.expr)
 		}
 		ast.InfixExpr {
-			left := b.expr(node.lhs)
-			right := b.expr(node.rhs)
-
-			// Map Token Op to SSA OpCode
-			op := match node.op {
-				.plus { OpCode.add }
-				.minus { OpCode.sub }
-				.mul { OpCode.mul }
-				.div { OpCode.sdiv }
-				.gt { OpCode.gt }
-				.lt { OpCode.lt }
-				.eq { OpCode.eq }
-				.ne { OpCode.ne }
-				.ge { OpCode.ge }
-				.le { OpCode.le }
-				else { OpCode.add }
-			}
-
-			i32_t := b.mod.type_store.get_int(32)
-			return b.mod.add_instr(op, b.cur_block, i32_t, [left, right])
+			return b.expr_infix(node)
 		}
 		ast.IfExpr {
-			// If cond is empty, it's a plain 'else' block from a parent IfExpr
-			if node.cond is ast.EmptyExpr {
-				b.stmts(node.stmts)
-				return 0
-			}
-
-			// 1. Evaluate Condition
-			cond_val := b.expr(node.cond)
-
-			// 2. Create Blocks
-			// We create a merge block even if there is no else,
-			// because we need somewhere to jump to after 'then'.
-			then_blk := b.mod.add_block(b.cur_func, 'if.then')
-			merge_blk := b.mod.add_block(b.cur_func, 'if.end')
-			mut else_blk := merge_blk
-
-			// If there is an else expression/block, create a specific block for it
-			has_else := node.else_expr !is ast.EmptyExpr
-			if has_else {
-				else_blk = b.mod.add_block(b.cur_func, 'if.else')
-			}
-
-			// 3. Emit Branch
-			// Retrieve ValueIDs for the blocks to use as operands
-			then_val := b.mod.blocks[then_blk].val_id
-			else_val := b.mod.blocks[else_blk].val_id
-
-			// br cond, then, else (or merge if no else)
-			b.mod.add_instr(.br, b.cur_block, 0, [cond_val, then_val, else_val])
-
-			// 4. Build Then Block
-			b.cur_block = then_blk
-			b.stmts(node.stmts)
-			// Jump to merge if not terminated (e.g. by return)
-			if !b.is_block_terminated(b.cur_block) {
-				merge_val := b.mod.blocks[merge_blk].val_id
-				b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
-			}
-
-			// 5. Build Else Block (if any)
-			if has_else {
-				b.cur_block = else_blk
-				b.expr(node.else_expr)
-				// The recursive call might have changed b.cur_block (nested ifs)
-				if !b.is_block_terminated(b.cur_block) {
-					merge_val := b.mod.blocks[merge_blk].val_id
-					b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
-				}
-			}
-
-			// 6. Continue generation at Merge Block
-			b.cur_block = merge_blk
-			return 0
+			return b.expr_if(node)
 		}
 		ast.CallExpr {
-			// Resolve Args
-			mut args := []ValueID{}
-			for arg in node.args {
-				args << b.expr(arg)
-			}
-			// Resolve Function Name
-			mut name := ''
-			lhs := node.lhs
-			if lhs is ast.Ident {
-				name = lhs.name
-			} else if lhs is ast.SelectorExpr {
-				// Handle C.printf or struct.method()
-				name = lhs.rhs.name
-			}
-
-			// Create a Value representing the function symbol (operand 0)
-			fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
-			args.prepend(fn_val)
-			// For this demo, assuming ret type i32
-			i32_t := b.mod.type_store.get_int(32)
-			// Note: In real compiler, we need to lookup Function ID by name to get correct ret type
-			return b.mod.add_instr(.call, b.cur_block, i32_t, args)
+			return b.expr_call(node)
 		}
 		ast.StringLiteral {
-			// Treat as char* (i8*) constant
-			i8_t := b.mod.type_store.get_int(8)
-			ptr_t := b.mod.type_store.get_ptr(i8_t)
-			// Note: We wrap in quotes for the C backend to interpret as string literal
-			return b.mod.add_value_node(.constant, ptr_t, '"${node.value}"', 0)
+			return b.expr_string_literal(node)
 		}
 		ast.CallOrCastExpr {
-			// Handle ambiguous calls like print_int(1111)
-			mut args := []ValueID{}
-			args << b.expr(node.expr)
-
-			mut name := ''
-			if node.lhs is ast.Ident {
-				name = node.lhs.name
-			} else if node.lhs is ast.SelectorExpr {
-				name = node.lhs.rhs.name
-			}
-			fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
-			args.prepend(fn_val)
-			i32_t := b.mod.type_store.get_int(32)
-			return b.mod.add_instr(.call, b.cur_block, i32_t, args)
+			return b.expr_call_or_cast(node)
 		}
 		ast.PrefixExpr {
-			right := b.expr(node.expr)
-			i32_t := b.mod.type_store.get_int(32)
-			match node.op {
-				.minus {
-					zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
-					return b.mod.add_instr(.sub, b.cur_block, i32_t, [zero, right])
-				}
-				.not {
-					zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
-					return b.mod.add_instr(.eq, b.cur_block, i32_t, [right, zero])
-				}
-				else {
-					return 0
-				}
-			}
+			return b.expr_prefix(node)
 		}
 		ast.PostfixExpr {
-			// Handle i++ / i--
-			if node.expr is ast.Ident {
-				name := (node.expr as ast.Ident).name
-				if ptr := b.vars[name] {
-					if ptr != 0 {
-						i32_t := b.mod.type_store.get_int(32)
-
-						// 1. Load current value
-						old_val := b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
-
-						// 2. Add/Sub 1
-						one := b.mod.add_value_node(.constant, i32_t, '1', 0)
-						op := if node.op == .inc { OpCode.add } else { OpCode.sub }
-						new_val := b.mod.add_instr(op, b.cur_block, i32_t, [old_val, one])
-
-						// 3. Store new value
-						b.mod.add_instr(.store, b.cur_block, 0, [new_val, ptr])
-
-						// Postfix returns the old value
-						return old_val
-					}
-				}
-			}
-			return 0
+			return b.expr_postfix(node)
 		}
 		else {
 			println('Builder: Unhandled expr ${node.type_name()}')
 			// Return constant 0 (i32) to prevent cascading void errors
 			i32_t := b.mod.type_store.get_int(32)
 			return b.mod.add_value_node(.constant, i32_t, '0', 0)
-			// return 0
 		}
 	}
+}
+
+fn (mut b Builder) expr_basic_literal(node ast.BasicLiteral) ValueID {
+	if node.kind == .number {
+		// Constant
+		i32_t := b.mod.type_store.get_int(32)
+		val := b.mod.add_value_node(.constant, i32_t, node.value, 0)
+		return val
+	} else if node.kind in [.key_true, .key_false] {
+		i32_t := b.mod.type_store.get_int(32)
+		val_str := if node.kind == .key_true { '1' } else { '0' }
+		val := b.mod.add_value_node(.constant, i32_t, val_str, 0)
+		return val
+	}
+	return 0
+}
+
+fn (mut b Builder) expr_ident(node ast.Ident) ValueID {
+	ptr := b.addr(node)
+	// Get type pointed to
+	ptr_typ := b.mod.values[ptr].typ
+	val_typ := b.mod.type_store.types[ptr_typ].elem_type
+
+	return b.mod.add_instr(.load, b.cur_block, val_typ, [ptr])
+}
+
+fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
+	// Struct Init: MyStruct{ a: 1, b: 2 }
+	// 1. Allocate Struct
+	// Need to find the TypeID for the struct.
+	// For MVP, we search TypeStore for a struct type.
+	// In real compiler, AST node has type info.
+	mut struct_t := 0
+	for i, t in b.mod.type_store.types {
+		if t.kind == .struct_t {
+			struct_t = i
+			break
+		}
+	}
+
+	ptr_t := b.mod.type_store.get_ptr(struct_t)
+	struct_ptr := b.mod.add_instr(.alloca, b.cur_block, ptr_t, [])
+
+	// 2. Initialize Fields
+	// We assume fields in InitExpr are in order for this demo
+	for i, field in node.fields {
+		val := b.expr(field.value)
+		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(32), i.str(),
+			0)
+
+		// GEP to field
+		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(b.mod.type_store.get_int(32)),
+			[struct_ptr, idx_val])
+		b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
+	}
+
+	// 3. Return Pointer (Structs are value types in V, but usually passed by ref in SSA construction phase or loaded)
+	return struct_ptr
+}
+
+fn (mut b Builder) expr_selector(node ast.SelectorExpr) ValueID {
+	// Load value from field
+	ptr := b.addr(node)
+	i32_t := b.mod.type_store.get_int(32) // Assume i32
+	return b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+}
+
+fn (mut b Builder) expr_index(node ast.IndexExpr) ValueID {
+	// Load value from index
+	ptr := b.addr(node)
+	i32_t := b.mod.type_store.get_int(32) // Assume i32
+	return b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+}
+
+fn (mut b Builder) expr_infix(node ast.InfixExpr) ValueID {
+	left := b.expr(node.lhs)
+	right := b.expr(node.rhs)
+
+	// Map Token Op to SSA OpCode
+	op := match node.op {
+		.plus { OpCode.add }
+		.minus { OpCode.sub }
+		.mul { OpCode.mul }
+		.div { OpCode.sdiv }
+		.gt { OpCode.gt }
+		.lt { OpCode.lt }
+		.eq { OpCode.eq }
+		.ne { OpCode.ne }
+		.ge { OpCode.ge }
+		.le { OpCode.le }
+		else { OpCode.add }
+	}
+
+	i32_t := b.mod.type_store.get_int(32)
+	return b.mod.add_instr(op, b.cur_block, i32_t, [left, right])
+}
+
+fn (mut b Builder) expr_if(node ast.IfExpr) ValueID {
+	// If cond is empty, it's a plain 'else' block from a parent IfExpr
+	if node.cond is ast.EmptyExpr {
+		b.stmts(node.stmts)
+		return 0
+	}
+
+	// 1. Evaluate Condition
+	cond_val := b.expr(node.cond)
+
+	// 2. Create Blocks
+	// We create a merge block even if there is no else,
+	// because we need somewhere to jump to after 'then'.
+	then_blk := b.mod.add_block(b.cur_func, 'if.then')
+	merge_blk := b.mod.add_block(b.cur_func, 'if.end')
+	mut else_blk := merge_blk
+
+	// If there is an else expression/block, create a specific block for it
+	has_else := node.else_expr !is ast.EmptyExpr
+	if has_else {
+		else_blk = b.mod.add_block(b.cur_func, 'if.else')
+	}
+
+	// 3. Emit Branch
+	// Retrieve ValueIDs for the blocks to use as operands
+	then_val := b.mod.blocks[then_blk].val_id
+	else_val := b.mod.blocks[else_blk].val_id
+
+	// br cond, then, else (or merge if no else)
+	b.mod.add_instr(.br, b.cur_block, 0, [cond_val, then_val, else_val])
+
+	// 4. Build Then Block
+	b.cur_block = then_blk
+	b.stmts(node.stmts)
+	// Jump to merge if not terminated (e.g. by return)
+	if !b.is_block_terminated(b.cur_block) {
+		merge_val := b.mod.blocks[merge_blk].val_id
+		b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
+	}
+
+	// 5. Build Else Block (if any)
+	if has_else {
+		b.cur_block = else_blk
+		b.expr(node.else_expr)
+		// The recursive call might have changed b.cur_block (nested ifs)
+		if !b.is_block_terminated(b.cur_block) {
+			merge_val := b.mod.blocks[merge_blk].val_id
+			b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
+		}
+	}
+
+	// 6. Continue generation at Merge Block
+	b.cur_block = merge_blk
+	return 0
+}
+
+fn (mut b Builder) expr_call(node ast.CallExpr) ValueID {
+	// Resolve Args
+	mut args := []ValueID{}
+	for arg in node.args {
+		args << b.expr(arg)
+	}
+	// Resolve Function Name
+	mut name := ''
+	lhs := node.lhs
+	if lhs is ast.Ident {
+		name = lhs.name
+	} else if lhs is ast.SelectorExpr {
+		// Handle C.printf or struct.method()
+		name = lhs.rhs.name
+	}
+
+	// Create a Value representing the function symbol (operand 0)
+	fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
+	args.prepend(fn_val)
+	// For this demo, assuming ret type i32
+	i32_t := b.mod.type_store.get_int(32)
+	// Note: In real compiler, we need to lookup Function ID by name to get correct ret type
+	return b.mod.add_instr(.call, b.cur_block, i32_t, args)
+}
+
+fn (mut b Builder) expr_string_literal(node ast.StringLiteral) ValueID {
+	// Treat as char* (i8*) constant
+	i8_t := b.mod.type_store.get_int(8)
+	ptr_t := b.mod.type_store.get_ptr(i8_t)
+	// Note: We wrap in quotes for the C backend to interpret as string literal
+	return b.mod.add_value_node(.constant, ptr_t, '"${node.value}"', 0)
+}
+
+fn (mut b Builder) expr_call_or_cast(node ast.CallOrCastExpr) ValueID {
+	// Handle ambiguous calls like print_int(1111)
+	mut args := []ValueID{}
+	args << b.expr(node.expr)
+
+	mut name := ''
+	if node.lhs is ast.Ident {
+		name = node.lhs.name
+	} else if node.lhs is ast.SelectorExpr {
+		name = node.lhs.rhs.name
+	}
+	fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
+	args.prepend(fn_val)
+	i32_t := b.mod.type_store.get_int(32)
+	return b.mod.add_instr(.call, b.cur_block, i32_t, args)
+}
+
+fn (mut b Builder) expr_prefix(node ast.PrefixExpr) ValueID {
+	right := b.expr(node.expr)
+	i32_t := b.mod.type_store.get_int(32)
+	match node.op {
+		.minus {
+			zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
+			return b.mod.add_instr(.sub, b.cur_block, i32_t, [zero, right])
+		}
+		.not {
+			zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
+			return b.mod.add_instr(.eq, b.cur_block, i32_t, [right, zero])
+		}
+		else {
+			return 0
+		}
+	}
+}
+
+fn (mut b Builder) expr_postfix(node ast.PostfixExpr) ValueID {
+	// Handle i++ / i--
+	if node.expr is ast.Ident {
+		name := (node.expr as ast.Ident).name
+		if ptr := b.vars[name] {
+			if ptr != 0 {
+				i32_t := b.mod.type_store.get_int(32)
+
+				// 1. Load current value
+				old_val := b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+
+				// 2. Add/Sub 1
+				one := b.mod.add_value_node(.constant, i32_t, '1', 0)
+				op := if node.op == .inc { OpCode.add } else { OpCode.sub }
+				new_val := b.mod.add_instr(op, b.cur_block, i32_t, [old_val, one])
+
+				// 3. Store new value
+				b.mod.add_instr(.store, b.cur_block, 0, [new_val, ptr])
+
+				// Postfix returns the old value
+				return old_val
+			}
+		}
+	}
+	return 0
 }
 
 fn (b Builder) is_block_terminated(blk_id int) bool {
