@@ -116,8 +116,15 @@ fn (mut g CGen) gen_instr(val_id int) {
 			g.sb.writeln('\t${res} = &_stack_${val.id};')
 		}
 		.load {
-			ptr := g.val_str(instr.operands[0])
-			g.sb.writeln('\t${res} = *${ptr};')
+			ptr_id := instr.operands[0]
+			ptr := g.val_str(ptr_id)
+			
+			// FIX: specific handling for globals (no dereference needed in C)
+			if g.mod.values[ptr_id].kind == .global {
+				g.sb.writeln('\t${res} = ${ptr};')
+			} else {
+				g.sb.writeln('\t${res} = *${ptr};')
+			}
 		}
 		.store {
 			val_op := g.val_str(instr.operands[0])

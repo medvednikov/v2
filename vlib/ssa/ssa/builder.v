@@ -178,6 +178,11 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			body_blk := b.mod.add_block(b.cur_func, 'for.body')
 			exit_blk := b.mod.add_block(b.cur_func, 'for.exit')
 
+			b.loop_stack << LoopInfo{
+				head: head_blk
+				exit: exit_blk
+			}
+
 			// Jump to Head
 			head_val := b.mod.blocks[head_blk].val_id
 			b.mod.add_instr(.jmp, b.cur_block, 0, [head_val])
@@ -211,6 +216,7 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 
 			// 6. Exit
 			b.cur_block = exit_blk
+			b.loop_stack.pop()
 		}
 		ast.FlowControlStmt {
 			if b.loop_stack.len == 0 {
@@ -269,12 +275,6 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			return 0
 		}
 		ast.Ident {
-			/*
-			// Load from variable
-			stack_ptr := b.vars[node.name]
-			i32_t := b.mod.type_store.get_int(32)
-			return b.mod.add_instr(.load, b.cur_block, i32_t, [stack_ptr])
-			*/
 			ptr := b.addr(node)
 			// Get type pointed to
 			ptr_typ := b.mod.values[ptr].typ
@@ -452,21 +452,23 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			if node.expr is ast.Ident {
 				name := (node.expr as ast.Ident).name
 				if ptr := b.vars[name] {
-					i32_t := b.mod.type_store.get_int(32)
+					if ptr != 0 {
+						i32_t := b.mod.type_store.get_int(32)
 
-					// 1. Load current value
-					old_val := b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
+						// 1. Load current value
+						old_val := b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
 
-					// 2. Add/Sub 1
-					one := b.mod.add_value_node(.constant, i32_t, '1', 0)
-					op := if node.op == .inc { OpCode.add } else { OpCode.sub }
-					new_val := b.mod.add_instr(op, b.cur_block, i32_t, [old_val, one])
+						// 2. Add/Sub 1
+						one := b.mod.add_value_node(.constant, i32_t, '1', 0)
+						op := if node.op == .inc { OpCode.add } else { OpCode.sub }
+						new_val := b.mod.add_instr(op, b.cur_block, i32_t, [old_val, one])
 
-					// 3. Store new value
-					b.mod.add_instr(.store, b.cur_block, 0, [new_val, ptr])
+						// 3. Store new value
+						b.mod.add_instr(.store, b.cur_block, 0, [new_val, ptr])
 
-					// Postfix returns the old value
-					return old_val
+						// Postfix returns the old value
+						return old_val
+					}
 				}
 			}
 			return 0
@@ -503,7 +505,10 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 		ast.Ident {
 			// Check locals
 			if ptr := b.vars[node.name] {
-				return ptr
+				// FIX: Ensure it is a valid ID (0 is invalid now)
+				if ptr != 0 {
+					return ptr
+				}
 			}
 			// Check globals
 			for g in b.mod.globals {
