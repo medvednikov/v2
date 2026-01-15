@@ -313,6 +313,9 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 		ast.IfExpr {
 			return b.expr_if(node)
 		}
+		ast.MatchExpr {
+			return b.expr_match(node)
+		}
 		ast.CallExpr {
 			return b.expr_call(node)
 		}
@@ -484,6 +487,62 @@ fn (mut b Builder) expr_if(node ast.IfExpr) ValueID {
 	}
 
 	// 6. Continue generation at Merge Block
+	b.cur_block = merge_blk
+	return 0
+}
+
+fn (mut b Builder) expr_match(node ast.MatchExpr) ValueID {
+	// 1. Eval Cond
+	cond_val := b.expr(node.expr)
+
+	// 2. Setup Blocks
+	merge_blk := b.mod.add_block(b.cur_func, 'match.merge')
+	mut default_blk := merge_blk
+
+	// We need to collect all cases and branch blocks
+	// Format: val -> block
+	// Ops: [cond, default_blk, val1, blk1, val2, blk2...]
+
+	mut cases := []ValueID{} // alternating val, blk_id
+
+	// Pre-create blocks for branches to get their IDs
+	mut branch_blks := []BlockID{}
+	for i, branch in node.branches {
+		name := if branch.cond.len == 0 { 'match.else' } else { 'match.case_${i}' }
+		blk := b.mod.add_block(b.cur_func, name)
+		branch_blks << blk
+
+		if branch.cond.len == 0 {
+			default_blk = blk
+		} else {
+			for expr in branch.cond {
+				val := b.expr(expr)
+				cases << val
+				cases << b.mod.blocks[blk].val_id
+			}
+		}
+	}
+
+	// 3. Emit switch
+	mut ops := []ValueID{}
+	ops << cond_val
+	ops << b.mod.blocks[default_blk].val_id
+	ops << cases
+
+	b.mod.add_instr(.switch_, b.cur_block, 0, ops)
+
+	// 4. Build Branches
+	for i, branch in node.branches {
+		blk := branch_blks[i]
+		b.cur_block = blk
+		b.stmts(branch.stmts)
+
+		if !b.is_block_terminated(b.cur_block) {
+			merge_val := b.mod.blocks[merge_blk].val_id
+			b.mod.add_instr(.jmp, b.cur_block, 0, [merge_val])
+		}
+	}
+
 	b.cur_block = merge_blk
 	return 0
 }

@@ -265,7 +265,44 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				g.emit(0x14000000)
 			}
 		}
-		else {}
+		.switch_ {
+			g.load_val_to_reg(8, instr.operands[0]) // Cond -> x8
+
+			// Iterate cases: pairs of (val, blk) starting at index 2
+			for i := 2; i < instr.operands.len; i += 2 {
+				// We need val in a register. x9.
+				g.load_val_to_reg(9, instr.operands[i])
+				g.emit(0xEB09011F) // cmp x8, x9
+
+				// b.eq target
+				target_blk_val := instr.operands[i + 1]
+				target_blk_idx := g.mod.values[target_blk_val].index
+
+				// Emit branch EQ (cond = 0)
+				// B.cond: 01010100 [imm19] 0[cond4] -> 0x54...0
+				if off := g.block_offsets[target_blk_idx] {
+					rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
+					g.emit(0x54000000 | ((u32(rel) & 0x7FFFF) << 5))
+				} else {
+					g.record_pending_label(target_blk_idx)
+					g.emit(0x54000000)
+				}
+			}
+
+			// Default (Unconditional Branch)
+			def_blk_val := instr.operands[1]
+			def_idx := g.mod.values[def_blk_val].index
+			if off := g.block_offsets[def_idx] {
+				rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
+				g.emit(0x14000000 | (u32(rel) & 0x3FFFFFF))
+			} else {
+				g.record_pending_label(def_idx)
+				g.emit(0x14000000)
+			}
+		}
+		else {
+			eprintln('arm64: unknown instruction ${instr}')
+		}
 	}
 }
 
