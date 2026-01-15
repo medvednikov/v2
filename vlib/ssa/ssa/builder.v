@@ -333,6 +333,9 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			// Just pass through for MVP C gen (C handles implicit casting mostly, or we assume compatible types)
 			return b.expr(node.expr)
 		}
+		ast.ParExpr {
+			return b.expr(node.expr)
+		}
 		ast.InfixExpr {
 			left := b.expr(node.lhs)
 			right := b.expr(node.rhs)
