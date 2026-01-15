@@ -99,7 +99,7 @@ pub fn (mut m MachOObject) add_undefined(name string) int {
 pub fn (mut m MachOObject) add_reloc(addr int, sym_idx int, typ int, pcrel bool) {
 	m.relocs << RelocationInfo{
 		addr:    addr
-		sym_idx: sym_idx
+		sym_idx: sym_idx // 0-based symbol table index
 		type_:   typ
 		pcrel:   pcrel
 		length:  2
