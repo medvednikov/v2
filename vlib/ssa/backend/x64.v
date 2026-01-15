@@ -346,7 +346,7 @@ fn (mut g X64Gen) load_val_to_reg(reg int, val_id int) {
 			// hardware reg indices:
 			// RAX=0, RCX=1, RDX=2, RBX=3, RSP=4, RBP=5, RSI=6, RDI=7
 			hw_reg := g.map_reg(reg)
-			rex := u8(0x48)
+			mut rex := u8(0x48)
 			if hw_reg >= 8 {
 				rex |= 4
 			}
@@ -365,7 +365,7 @@ fn (mut g X64Gen) load_val_to_reg(reg int, val_id int) {
 			// optimization: mov reg, imm32 (sign extended) -> 48 C7 C0...
 			// Simple: MOVABS (48 B8 + reg)
 			hw_reg := g.map_reg(reg)
-			rex := u8(0x48)
+			mut rex := u8(0x48)
 			if hw_reg >= 8 {
 				rex |= 1
 			}
@@ -378,7 +378,7 @@ fn (mut g X64Gen) load_val_to_reg(reg int, val_id int) {
 		// mov reg, [rip + offset]
 		// 48 8b 05 <disp32>
 		hw_reg := g.map_reg(reg)
-		rex := u8(0x48)
+		mut rex := u8(0x48)
 		if hw_reg >= 8 {
 			rex |= 4
 		}
@@ -407,7 +407,7 @@ fn (mut g X64Gen) emit_load_reg_mem(reg int, disp int) {
 	hw_reg := g.map_reg(reg)
 	// 48 8b 85 <disp32> (Load 64-bit)
 	// ModRM: Mod=10(disp32), Reg=hw_reg, RM=101(rbp/disp32) -> 0x85
-	rex := u8(0x48)
+	mut rex := u8(0x48)
 	if hw_reg >= 8 {
 		rex |= 4
 	}
@@ -421,7 +421,7 @@ fn (mut g X64Gen) emit_load_reg_mem(reg int, disp int) {
 fn (mut g X64Gen) emit_store_reg_mem(reg int, disp int) {
 	hw_reg := g.map_reg(reg)
 	// 48 89 85 <disp32>
-	rex := u8(0x48)
+	mut rex := u8(0x48)
 	if hw_reg >= 8 {
 		rex |= 4
 	}
