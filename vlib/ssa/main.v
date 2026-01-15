@@ -86,7 +86,7 @@ fn main() {
 
 	// 7. Run Reference (v run test.v)
 	println('[*] Running reference: v -enable-globals run ${input_file}...')
-	ref_res := os.execute('v -enable-globals run ${input_file}')
+	ref_res := os.execute('v -n -enable-globals run ${input_file}')
 	if ref_res.exit_code != 0 {
 		eprintln('Error: Reference run failed')
 		eprintln(ref_res.output)
