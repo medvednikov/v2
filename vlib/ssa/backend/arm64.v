@@ -42,8 +42,6 @@ pub fn (mut g Arm64Gen) gen() {
 	}
 
 	// Patch symbol addresses
-	// Section 2 (cstring) starts after Section 1 (text)
-	// Section 3 (data) starts after Section 2
 	cstring_base := u64(g.macho.text_data.len)
 	data_base := cstring_base + u64(g.macho.str_data.len)
 
@@ -80,15 +78,29 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 			}
 			instr := g.mod.instrs[val.index]
 
+			// Assign slot for result of instruction (or pointer for alloca)
 			g.stack_map[val_id] = -slot_offset
 			slot_offset += 8
 
 			if instr.op == .alloca {
-				// Align to 16 bytes for struct safety
-				// slot_offset = (slot_offset + 15) & ~0xF
-				slot_offset = (slot_offset + 7) & ~7
+				// Reserve 64 bytes for data.
+				// Align to 16 bytes.
+				slot_offset = (slot_offset + 15) & ~0xF
 				slot_offset += 64
 				g.alloca_offsets[val_id] = -slot_offset
+
+				// CRITICAL FIX: Ensure the next instruction does not use the slot
+				// overlapping with the base of the alloca data.
+				// alloca_offsets points to the bottom of the block.
+				// The next instruction would get -slot_offset (which is the bottom).
+				// We advance slot_offset to skip the block completely.
+				// Note: slot_offset is already at the bottom.
+				// But we need to ensure the *next* usage doesn't pick this address.
+				// Since stack_map assignment comes *before* this increment, the next instr
+				// will use the current slot_offset.
+				// If slot_offset is 96, next gets -96. Data is -96..-32.
+				// So we need to bump it so next gets -104.
+				slot_offset += 8
 			}
 		}
 	}
