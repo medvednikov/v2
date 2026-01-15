@@ -1,7 +1,7 @@
 module ssa
 
 import v2.ast
-import v2.token
+// import v2.token
 
 pub struct Builder {
 mut:
@@ -82,7 +82,7 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	i32_t := b.mod.type_store.get_int(32)
 
 	// FIX: Access params via decl.typ.params
-	for i, param in decl.typ.params {
+	for _, param in decl.typ.params {
 		// 1. Create Argument Value
 		arg_val := b.mod.add_value_node(.argument, i32_t, param.name, 0)
 		b.mod.funcs[fn_id].params << arg_val

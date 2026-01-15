@@ -12,6 +12,7 @@ fn main() {
 	println('--- V Compiler Pipeline ---')
 
 	// 1. Setup Parser
+	t0 := time.now()
 	prefs := &pref.Preferences{}
 	mut file_set := token.FileSet.new()
 	mut p := parser.Parser.new(prefs)
@@ -47,6 +48,7 @@ fn main() {
 		arm_gen.gen()
 		arm_gen.write_file('main.o')
 
+		println('generating main.o took ${time.since(t0)}')
 		// 6. Link
 		println('[*] Linking...')
 		// Need SDK path

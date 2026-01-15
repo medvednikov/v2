@@ -1,6 +1,6 @@
 module backend
 
-import encoding.binary
+// import encoding.binary
 import os
 
 // Mach-O Constants for ARM64
