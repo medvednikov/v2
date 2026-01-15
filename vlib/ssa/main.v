@@ -23,7 +23,6 @@ fn main() {
 	}
 
 	println('[*] Parsing ${input_file}...')
-	// This uses the parser code you submitted in prompt 1
 	file := p.parse_file(input_file, mut file_set)
 
 	if file.stmts.len == 0 {
@@ -46,6 +45,49 @@ fn main() {
 	os.write_file('out.c', c_source) or { panic(err) }
 	println('[*] Done. Wrote out.c')
 
-	println('\n--- Generated C Code ---\n')
-	println(c_source)
+	// 6. Compile C Code
+	println('[*] Compiling out.c...')
+	if os.system('cc out.c -o out_bin') != 0 {
+		eprintln('Error: C compilation failed')
+		return
+	}
+
+	// 7. Run Reference (v run test.v)
+	println('[*] Running reference: v run ${input_file}...')
+	ref_res := os.execute('v -enable-globals run ${input_file}')
+	if ref_res.exit_code != 0 {
+		eprintln('Error: Reference run failed')
+		eprintln(ref_res.output)
+		return
+	}
+	expected_out := ref_res.output.trim_space().replace('\r\n', '\n')
+
+	// 8. Run Generated Binary
+	println('[*] Running generated binary (with 2s timeout)...')
+	// Using timeout command (available on Linux/macOS) to prevent hanging on infinite loops
+	gen_res := os.execute('timeout 2s ./out_bin')
+
+	if gen_res.exit_code == 124 {
+		eprintln('Error: Execution timed out (possible infinite loop)')
+		return
+	}
+	if gen_res.exit_code != 0 {
+		eprintln('Error: Binary execution failed (code ${gen_res.exit_code})')
+		eprintln(gen_res.output)
+		return
+	}
+
+	actual_out := gen_res.output.trim_space().replace('\r\n', '\n')
+
+	// 9. Compare
+	if expected_out == actual_out {
+		println('\n[SUCCESS] Outputs match!')
+	} else {
+		println('\n[FAILURE] Outputs differ')
+		println('--- Expected ---')
+		println(expected_out)
+		println('--- Actual ---')
+		println(actual_out)
+		println('----------------')
+	}
 }
