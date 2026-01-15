@@ -420,7 +420,18 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 				args << b.expr(arg)
 			}
 			// Resolve Function Name
-			name := (node.lhs as ast.Ident).name
+			mut name := ''
+			lhs := node.lhs
+			if lhs is ast.Ident {
+				name = lhs.name
+			} else if lhs is ast.SelectorExpr {
+				// Handle C.printf or struct.method()
+				name = lhs.rhs.name
+			}
+
+			// Create a Value representing the function symbol (operand 0)
+			fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
+			args.prepend(fn_val)
 			// For this demo, assuming ret type i32
 			i32_t := b.mod.type_store.get_int(32)
 			// Note: In real compiler, we need to lookup Function ID by name to get correct ret type
