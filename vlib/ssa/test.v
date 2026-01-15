@@ -15,25 +15,29 @@ fn add(a int, b int) int {
 
 fn print_int(n int) {
 	C.printf(c'%d\n', n)
+	// println(n)
 }
 
 fn main() {
 	print_int(1111)
 
 	// 1. Struct Decl & Init
-	mut p := Point{x: 10, y: 20}
+	mut p := Point{
+		x: 10
+		y: 20
+	}
 	print_int(p.x)
 	print_int(p.y)
-	
+
 	// 2. Calls & Selector Assign
 	p.x = add(p.x, 5) // 10 + 5 = 15
 	print_int(p.x)
-	
+
 	// 3. Globals & Compound Assign
 	g_val = 50
 	g_val += 50
 	print_int(g_val) // 100
-	
+
 	// 4. Bool & Logic
 	flag := true
 	if flag {
