@@ -38,11 +38,12 @@ struct RelocationInfo {
 
 struct Symbol {
 mut:
-	name  string
-	type_ u8
-	sect  u8
-	desc  u16
-	value u64
+	name     string
+	type_    u8
+	sect     u8
+	desc     u16
+	value    u64
+	name_off int
 }
 
 pub fn MachOObject.new() &MachOObject {
@@ -54,17 +55,19 @@ pub fn MachOObject.new() &MachOObject {
 
 pub fn (mut m MachOObject) add_symbol(name string, addr u64, is_ext bool, sect u8) int {
 	idx := m.symbols.len
+	name_off := m.str_table.len
 	m.str_table << name.bytes()
 	m.str_table << 0
 
 	typ := if is_ext { u8(0x0f) } else { u8(0x0e) } // N_SECT | N_EXT : N_SECT
 
 	m.symbols << Symbol{
-		name:  name
-		type_: typ
-		sect:  sect
-		desc:  0
-		value: addr
+		name:     name
+		type_:    typ
+		sect:     sect
+		desc:     0
+		value:    addr
+		name_off: name_off
 	}
 	return idx
 }
@@ -77,15 +80,17 @@ pub fn (mut m MachOObject) add_undefined(name string) int {
 	}
 
 	idx := m.symbols.len
+	name_off := m.str_table.len
 	m.str_table << name.bytes()
 	m.str_table << 0
 
 	m.symbols << Symbol{
-		name:  name
-		type_: 0x01 // N_UNDF | N_EXT
-		sect:  0
-		desc:  0
-		value: 0
+		name:     name
+		type_:    0x01 // N_UNDF | N_EXT
+		sect:     0
+		desc:     0
+		value:    0
+		name_off: name_off
 	}
 	return idx
 }
@@ -198,10 +203,8 @@ pub fn (mut m MachOObject) write(path string) {
 		write_u32_le(mut buf, info)
 	}
 
-	mut cur_str_off := 0
 	for s in m.symbols {
-		write_u32_le(mut buf, u32(cur_str_off))
-		cur_str_off += s.name.len + 1
+		write_u32_le(mut buf, u32(s.name_off))
 		buf << s.type_
 		buf << s.sect
 		write_u16_le(mut buf, s.desc)
