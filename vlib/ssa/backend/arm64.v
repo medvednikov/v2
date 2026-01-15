@@ -273,9 +273,33 @@ fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
 	val := g.mod.values[val_id]
 	if val.kind == .constant {
 		if val.name.starts_with('"') {
-			str_content := val.name.trim('"')
+			// str_content := val.name.trim('"')
+
+			raw_content := val.name.trim('"')
+			// Handle escape sequences
+			mut str_content := []u8{}
+			mut i := 0
+			for i < raw_content.len {
+				if raw_content[i] == `\\` && i + 1 < raw_content.len {
+					next_char := raw_content[i + 1]
+					match next_char {
+						`n` { str_content << 10 }
+						`t` { str_content << 9 }
+						`r` { str_content << 13 }
+						`\\` { str_content << 92 }
+						`"` { str_content << 34 }
+						`'` { str_content << 39 }
+						else { str_content << next_char }
+					}
+					i += 2
+				} else {
+					str_content << raw_content[i]
+					i++
+				}
+			}
+
 			str_offset := g.macho.str_data.len
-			g.macho.str_data << str_content.bytes()
+			g.macho.str_data << str_content //.bytes()
 			g.macho.str_data << 0
 
 			sym_idx := g.macho.add_symbol('L_str_${str_offset}', u64(str_offset), false,
