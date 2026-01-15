@@ -31,18 +31,27 @@ pub fn (mut g Arm64Gen) gen() {
 
 	// Globals in __data (Section 3)
 	for gvar in g.mod.globals {
-		// Align to 8 bytes in data section
 		for g.macho.data_data.len % 8 != 0 {
 			g.macho.data_data << 0
 		}
-
 		addr := u64(g.macho.data_data.len)
-		// Register in Section 3 (__data)
 		g.macho.add_symbol('_' + gvar.name, addr, true, 3)
-
-		// Write 64-bit zero
 		for _ in 0 .. 8 {
 			g.macho.data_data << 0
+		}
+	}
+
+	// Patch symbol addresses
+	// Section 2 (cstring) starts after Section 1 (text)
+	// Section 3 (data) starts after Section 2
+	cstring_base := u64(g.macho.text_data.len)
+	data_base := cstring_base + u64(g.macho.str_data.len)
+
+	for mut sym in g.macho.symbols {
+		if sym.sect == 2 {
+			sym.value += cstring_base
+		} else if sym.sect == 3 {
+			sym.value += data_base
 		}
 	}
 }
@@ -54,7 +63,7 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	g.block_offsets = map[int]int{}
 	g.pending_labels = map[int][]int{}
 
-	// Calculate Stack Frame
+	// Stack Frame
 	mut slot_offset := 8
 
 	for pid in func.params {
@@ -75,6 +84,9 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 			slot_offset += 8
 
 			if instr.op == .alloca {
+				// Align to 16 bytes for struct safety
+				// slot_offset = (slot_offset + 15) & ~0xF
+				slot_offset = (slot_offset + 7) & ~7
 				slot_offset += 64
 				g.alloca_offsets[val_id] = -slot_offset
 			}
@@ -86,10 +98,11 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	g.macho.add_symbol('_' + func.name, u64(g.curr_offset), true, 1)
 
 	// Prologue
-	g.emit(0xA9BF7BFD)
-	g.emit(0x910003FD)
+	g.emit(0xA9BF7BFD) // stp fp, lr, [sp, -16]!
+	g.emit(0x910003FD) // mov fp, sp
 	g.emit_sub_sp(g.stack_size)
 
+	// Spill params
 	for i, pid in func.params {
 		offset := g.stack_map[pid]
 		if i < 8 {
@@ -269,6 +282,7 @@ fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
 			false)
 		g.emit(0xF9400000 | u32(reg) | (u32(reg) << 5))
 	} else {
+		// Handles .instruction, .argument, etc.
 		offset := g.stack_map[val_id]
 		g.emit_ldr_reg_offset(reg, 29, offset)
 	}

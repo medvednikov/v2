@@ -38,6 +38,7 @@ struct RelocationInfo {
 }
 
 struct Symbol {
+mut:
 	name     string
 	type_    u8
 	sect     u8
@@ -156,7 +157,7 @@ pub fn (mut m MachOObject) write(path string) {
 	// Section 1: __text
 	write_string_fixed(mut buf, '__text', 16)
 	write_string_fixed(mut buf, '__TEXT', 16)
-	write_u64_le(mut buf, 0)
+	write_u64_le(mut buf, 0) // Addr 0
 	write_u64_le(mut buf, u64(text_len))
 	write_u32_le(mut buf, u32(text_off))
 	write_u32_le(mut buf, 4)
@@ -170,7 +171,7 @@ pub fn (mut m MachOObject) write(path string) {
 	// Section 2: __cstring
 	write_string_fixed(mut buf, '__cstring', 16)
 	write_string_fixed(mut buf, '__TEXT', 16)
-	write_u64_le(mut buf, 0) // Addr 0 for MH_OBJECT
+	write_u64_le(mut buf, u64(text_len)) // Addr = text_len
 	write_u64_le(mut buf, u64(cstring_len))
 	write_u32_le(mut buf, u32(cstring_off))
 	write_u32_le(mut buf, 0)
@@ -184,7 +185,7 @@ pub fn (mut m MachOObject) write(path string) {
 	// Section 3: __data
 	write_string_fixed(mut buf, '__data', 16)
 	write_string_fixed(mut buf, '__DATA', 16)
-	write_u64_le(mut buf, 0) // Addr 0 for MH_OBJECT
+	write_u64_le(mut buf, u64(text_len + cstring_len)) // Addr = text_len + cstring_len
 	write_u64_le(mut buf, u64(data_len))
 	write_u32_le(mut buf, u32(data_off))
 	write_u32_le(mut buf, 3) // align 8
