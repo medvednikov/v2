@@ -37,22 +37,46 @@ fn main() {
 	mut builder := ssa.Builder.new(mod)
 	builder.build(file)
 
-	// 5. Generate C Code
-	println('[*] Generating C Backend...')
-	mut c_gen := backend.CGen.new(mod)
-	c_source := c_gen.gen()
+	native := true
 
-	os.write_file('out.c', c_source) or { panic(err) }
-	println('[*] Done. Wrote out.c')
+	if native {
+		// 5. Generate Mach-O Object
+		println('[*] Generating Mach-O ARM64 Object...')
+		mut arm_gen := backend.Arm64Gen.new(mod)
+		arm_gen.gen()
+		arm_gen.write_file('main.o')
 
-	// 6. Compile C Code
-	println('[*] Compiling out.c...')
-	// -w suppresses the return-type warnings if the fix wasn't perfect,
-	// though we fixed the builder to generate return 0.
-	cc_res := os.system('cc out.c -o out_bin -w')
-	if cc_res != 0 {
-		eprintln('Error: C compilation failed with code ${cc_res}')
-		return
+		// 6. Link
+		println('[*] Linking...')
+		// Need SDK path
+		sdk_res := os.execute('xcrun -sdk macosx --show-sdk-path')
+		sdk_path := sdk_res.output.trim_space()
+
+		// Link command
+		// -lSystem links standard libc (printf)
+		link_cmd := 'ld -o out_bin main.o -lSystem -syslibroot "${sdk_path}" -e _main -arch arm64'
+		if os.system(link_cmd) != 0 {
+			eprintln('Link failed')
+			return
+		}
+	} else {
+		// 5. Generate C Code
+		println('[*] Generating C Backend...')
+		mut c_gen := backend.CGen.new(mod)
+		c_source := c_gen.gen()
+
+		os.write_file('out.c', c_source) or { panic(err) }
+		println('[*] Done. Wrote out.c')
+
+		// 6. Compile C Code
+		println('[*] Compiling out.c...')
+		// -w suppresses the return-type warnings if the fix wasn't perfect,
+		// though we fixed the builder to generate return 0.
+		cc_res := os.system('cc out.c -o out_bin -w')
+		if cc_res != 0 {
+			eprintln('Error: C compilation failed with code ${cc_res}')
+			return
+		}
 	}
 
 	// 7. Run Reference (v run test.v)
