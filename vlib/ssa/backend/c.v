@@ -21,6 +21,7 @@ pub fn (mut g CGen) gen() string {
 	g.sb.writeln('#include <stdint.h>')
 	g.sb.writeln('#include <stdbool.h>')
 	g.sb.writeln('#include <stddef.h>')
+	g.sb.writeln('#include <stdio.h>')
 	g.sb.writeln('')
 
 	g.gen_struct_decls()
