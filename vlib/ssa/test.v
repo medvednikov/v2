@@ -13,10 +13,36 @@ fn add(a int, b int) int {
 	return a + b
 }
 
-fn print_int(n int) {
-	C.printf(c'%d\n', n)
-	// println(n)
+fn print_rec(n int) {
+	if n == 0 {
+		return
+	}
+	print_rec(n / 10)
+	rem := n - (n / 10) * 10
+	C.putchar(rem + 48)
 }
+
+ fn print_int(n int) {
+	if n == 0 {
+		C.putchar(48)
+		C.putchar(10)
+		return
+	}
+	mut v := n
+	if n < 0 {
+		C.putchar(45)
+		v = 0 - n
+	}
+	print_rec(v)
+	C.putchar(10)
+ }
+
+/*
+fn print_int(n int) {
+	// C.printf(c'%d\n', n)
+	println(n)
+}
+*/
 
 fn main() {
 	mut j := 0
