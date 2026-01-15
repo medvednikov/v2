@@ -37,6 +37,7 @@ struct RelocationInfo {
 }
 
 struct Symbol {
+mut:
 	name  string
 	type_ u8
 	sect  u8
