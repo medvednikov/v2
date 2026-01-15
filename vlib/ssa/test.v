@@ -37,6 +37,10 @@ fn print_int(n int) {
 	C.putchar(10)
 }
 
+fn print_str(s string) {
+	C.puts(s.str)
+}
+
 /*
 fn print_int(n int) {
 	// C.printf(c'%d\n', n)
@@ -45,6 +49,7 @@ fn print_int(n int) {
 */
 
 fn main() {
+	print_str('start')
 	mut j := 0
 	for j < 10 {
 		C.printf(c'HI\n')
