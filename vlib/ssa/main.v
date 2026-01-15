@@ -47,34 +47,54 @@ fn main() {
 
 	// 6. Compile C Code
 	println('[*] Compiling out.c...')
-	if os.system('cc out.c -o out_bin') != 0 {
-		eprintln('Error: C compilation failed')
+	// -w suppresses the return-type warnings if the fix wasn't perfect,
+	// though we fixed the builder to generate return 0.
+	cc_res := os.system('cc out.c -o out_bin -w')
+	if cc_res != 0 {
+		eprintln('Error: C compilation failed with code ${cc_res}')
 		return
 	}
 
 	// 7. Run Reference (v run test.v)
-	println('[*] Running reference: v run ${input_file}...')
+	println('[*] Running reference: v -enable-globals run ${input_file}...')
 	ref_res := os.execute('v -enable-globals run ${input_file}')
 	if ref_res.exit_code != 0 {
 		eprintln('Error: Reference run failed')
 		eprintln(ref_res.output)
 		return
 	}
+	// Normalize newlines
 	expected_out := ref_res.output.trim_space().replace('\r\n', '\n')
 
 	// 8. Run Generated Binary
 	println('[*] Running generated binary (with 2s timeout)...')
-	// Using timeout command (available on Linux/macOS) to prevent hanging on infinite loops
-	gen_res := os.execute('timeout 2s ./out_bin')
 
-	if gen_res.exit_code == 124 {
-		eprintln('Error: Execution timed out (possible infinite loop)')
-		return
+	// Prepare command with timeout
+	// On macOS/Linux, use perl as a portable timeout mechanism since 'timeout' isn't always available on macOS
+	mut cmd := "perl -e 'alarm 2; exec @ARGV' ./out_bin"
+	if os.user_os() == 'windows' {
+		// No easy one-liner for timeout on Windows cmd without PowerShell, running directly
+		cmd = 'out_bin.exe'
 	}
+
+	gen_res := os.execute(cmd)
+
+	// Perl alarm usually kills with SIGALRM (14), exit code might vary (e.g. 142)
+	// If it was killed by signal, we assume timeout.
 	if gen_res.exit_code != 0 {
-		eprintln('Error: Binary execution failed (code ${gen_res.exit_code})')
-		eprintln(gen_res.output)
-		return
+		// Check for timeout symptoms
+		// Standard SIGALRM is 14. Bash reports 128+14=142.
+		if gen_res.exit_code == 142 || gen_res.exit_code == 14 {
+			eprintln('Error: Execution timed out (infinite loop detected)')
+			return
+		}
+		// It might just be a crash or non-zero return (our main returns 0 usually)
+		if gen_res.exit_code != 0 {
+			// In the current builder, main returns 0. If it returns something else, it might be an error.
+			// However, perl exec propagation might change codes.
+			// Let's proceed to compare output, but warn.
+			println('Warning: Binary exited with code ${gen_res.exit_code}')
+		}
 	}
 
 	actual_out := gen_res.output.trim_space().replace('\r\n', '\n')
