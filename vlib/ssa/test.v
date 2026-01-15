@@ -98,4 +98,12 @@ fn main() {
 		// Printed sequence of added numbers: 1, 2, 3, 4, 6, 7
 	}
 	print_int(sum) // 1+2+3+4+6+7 = 23
+
+	// 6. Match
+	x := 10
+	match x {
+		1 { print_int(x + 1) }
+		2 { print_int(x + 2) }
+		else { print_int(777) }
+	}
 }
