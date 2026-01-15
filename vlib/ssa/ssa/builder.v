@@ -180,8 +180,12 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			}
 		}
 		ast.ReturnStmt {
-			val := b.expr(node.exprs[0])
-			b.mod.add_instr(.ret, b.cur_block, 0, [val])
+			if node.exprs.len > 0 {
+				val := b.expr(node.exprs[0])
+				b.mod.add_instr(.ret, b.cur_block, 0, [val])
+			} else {
+				b.mod.add_instr(.ret, b.cur_block, 0, [])
+			}
 		}
 		ast.ExprStmt {
 			b.expr(node.expr)
