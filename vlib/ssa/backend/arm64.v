@@ -82,10 +82,11 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 
 			// Slot B: Data storage for Alloca
 			if instr.op == .alloca {
-				// Allocate extra space. 64 bytes for safety in this demo.
-				// Data starts at current slot_offset
-				g.alloca_offsets[val_id] = -slot_offset
+				// Allocate extra space downwards. 64 bytes for safety.
+				// We want the base pointer to be at the bottom so positive offsets work.
+				// Range: [fp - (slot_offset + 64), fp - slot_offset]
 				slot_offset += 64
+				g.alloca_offsets[val_id] = -slot_offset
 			}
 		}
 	}
