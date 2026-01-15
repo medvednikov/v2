@@ -21,6 +21,7 @@ pub struct MachOObject {
 pub mut:
 	text_data []u8
 	str_data  []u8
+	data_data []u8
 
 	relocs    []RelocationInfo
 	symbols   []Symbol
@@ -37,7 +38,6 @@ struct RelocationInfo {
 }
 
 struct Symbol {
-mut:
 	name     string
 	type_    u8
 	sect     u8
@@ -109,7 +109,7 @@ pub fn (mut m MachOObject) add_reloc(addr int, sym_idx int, typ int, pcrel bool)
 pub fn (mut m MachOObject) write(path string) {
 	mut buf := []u8{}
 
-	n_sects := 2
+	n_sects := 3
 	header_size := 32
 	seg_cmd_size := 72 + (80 * n_sects)
 	symtab_cmd_size := 24
@@ -119,7 +119,10 @@ pub fn (mut m MachOObject) write(path string) {
 	text_len := m.text_data.len
 	cstring_off := text_off + text_len
 	cstring_len := m.str_data.len
-	reloc_off := cstring_off + cstring_len
+	data_off := cstring_off + cstring_len
+	data_len := m.data_data.len
+
+	reloc_off := data_off + data_len
 	sym_off := reloc_off + (m.relocs.len * 8)
 	sym_len := m.symbols.len * 16
 	str_off := sym_off + sym_len
@@ -142,9 +145,9 @@ pub fn (mut m MachOObject) write(path string) {
 		buf << 0
 	}
 	write_u64_le(mut buf, 0)
-	write_u64_le(mut buf, u64(text_len + cstring_len))
+	write_u64_le(mut buf, u64(text_len + cstring_len + data_len))
 	write_u64_le(mut buf, u64(text_off))
-	write_u64_le(mut buf, u64(text_len + cstring_len))
+	write_u64_le(mut buf, u64(text_len + cstring_len + data_len))
 	write_u32_le(mut buf, 7)
 	write_u32_le(mut buf, 7)
 	write_u32_le(mut buf, u32(n_sects))
@@ -167,13 +170,27 @@ pub fn (mut m MachOObject) write(path string) {
 	// Section 2: __cstring
 	write_string_fixed(mut buf, '__cstring', 16)
 	write_string_fixed(mut buf, '__TEXT', 16)
-	write_u64_le(mut buf, u64(text_len))
+	write_u64_le(mut buf, 0) // Addr 0 for MH_OBJECT
 	write_u64_le(mut buf, u64(cstring_len))
 	write_u32_le(mut buf, u32(cstring_off))
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 2) // S_CSTRING_LITERALS
+	write_u32_le(mut buf, 0)
+	write_u32_le(mut buf, 0)
+	write_u32_le(mut buf, 0)
+
+	// Section 3: __data
+	write_string_fixed(mut buf, '__data', 16)
+	write_string_fixed(mut buf, '__DATA', 16)
+	write_u64_le(mut buf, 0) // Addr 0 for MH_OBJECT
+	write_u64_le(mut buf, u64(data_len))
+	write_u32_le(mut buf, u32(data_off))
+	write_u32_le(mut buf, 3) // align 8
+	write_u32_le(mut buf, 0)
+	write_u32_le(mut buf, 0)
+	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
@@ -188,6 +205,7 @@ pub fn (mut m MachOObject) write(path string) {
 
 	buf << m.text_data
 	buf << m.str_data
+	buf << m.data_data
 
 	for r in m.relocs {
 		write_u32_le(mut buf, u32(r.addr))
@@ -216,7 +234,6 @@ pub fn (mut m MachOObject) write(path string) {
 	os.write_file_array(path, buf) or { panic(err) }
 }
 
-// Helpers changed from methods to functions
 fn write_u32_le(mut b []u8, v u32) {
 	b << u8(v)
 	b << u8(v >> 8)

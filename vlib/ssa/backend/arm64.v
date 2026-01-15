@@ -29,22 +29,20 @@ pub fn (mut g Arm64Gen) gen() {
 		g.gen_func(func)
 	}
 
-	// Globals (aligned 8)
-	for g.macho.text_data.len % 8 != 0 {
-		g.emit(0xd503201f)
-	}
+	// Globals in __data (Section 3)
 	for gvar in g.mod.globals {
-		addr := u64(g.macho.text_data.len)
-		g.macho.add_symbol('_' + gvar.name, addr, true, 1)
-		g.emit(0)
-		g.emit(0)
-	}
+		// Align to 8 bytes in data section
+		for g.macho.data_data.len % 8 != 0 {
+			g.macho.data_data << 0
+		}
 
-	// Patch symbol addresses for __cstring section (Section 2)
-	cstring_base_addr := u64(g.macho.text_data.len)
-	for mut sym in g.macho.symbols {
-		if sym.sect == 2 {
-			sym.value += cstring_base_addr
+		addr := u64(g.macho.data_data.len)
+		// Register in Section 3 (__data)
+		g.macho.add_symbol('_' + gvar.name, addr, true, 3)
+
+		// Write 64-bit zero
+		for _ in 0 .. 8 {
+			g.macho.data_data << 0
 		}
 	}
 }
@@ -57,16 +55,13 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	g.pending_labels = map[int][]int{}
 
 	// Calculate Stack Frame
-	// Iterate to assign slots
-	mut slot_offset := 8 // Starts at 8 (fp-8)
+	mut slot_offset := 8
 
-	// Params
 	for pid in func.params {
 		g.stack_map[pid] = -slot_offset
 		slot_offset += 8
 	}
 
-	// Instructions
 	for blk_id in func.blocks {
 		blk := g.mod.blocks[blk_id]
 		for val_id in blk.instrs {
@@ -76,31 +71,25 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 			}
 			instr := g.mod.instrs[val.index]
 
-			// Slot A: The result of the instruction (pointer for alloca, value for others)
 			g.stack_map[val_id] = -slot_offset
 			slot_offset += 8
 
-			// Slot B: Data storage for Alloca
 			if instr.op == .alloca {
-				// Allocate extra space downwards. 64 bytes for safety.
-				// We want the base pointer to be at the bottom so positive offsets work.
-				// Range: [fp - (slot_offset + 64), fp - slot_offset]
 				slot_offset += 64
 				g.alloca_offsets[val_id] = -slot_offset
 			}
 		}
 	}
 
-	g.stack_size = (slot_offset + 16) & ~0xF // Align 16
+	g.stack_size = (slot_offset + 16) & ~0xF
 
 	g.macho.add_symbol('_' + func.name, u64(g.curr_offset), true, 1)
 
 	// Prologue
-	g.emit(0xA9BF7BFD) // stp fp, lr, [sp, -16]!
-	g.emit(0x910003FD) // mov fp, sp
+	g.emit(0xA9BF7BFD)
+	g.emit(0x910003FD)
 	g.emit_sub_sp(g.stack_size)
 
-	// Spill params
 	for i, pid in func.params {
 		offset := g.stack_map[pid]
 		if i < 8 {
@@ -108,7 +97,6 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 		}
 	}
 
-	// Body
 	for blk_id in func.blocks {
 		blk := g.mod.blocks[blk_id]
 		g.block_offsets[blk_id] = g.macho.text_data.len - g.curr_offset
@@ -155,7 +143,7 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 					g.emit(0x9B097D08)
 				}
 				.eq, .ne, .lt, .gt, .le, .ge {
-					g.emit(0xEB09011F) // cmp
+					g.emit(0xEB09011F)
 					code := match instr.op {
 						.eq { 0x9A9F17E8 }
 						.ne { 0x9A9F07E8 }
@@ -172,27 +160,24 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			g.store_reg_to_val(8, val_id)
 		}
 		.store {
-			g.load_val_to_reg(8, instr.operands[0]) // val
-			g.load_val_to_reg(9, instr.operands[1]) // ptr (address)
-			g.emit(0xF9000128) // str x8, [x9]
+			g.load_val_to_reg(8, instr.operands[0])
+			g.load_val_to_reg(9, instr.operands[1])
+			g.emit(0xF9000128)
 		}
 		.load {
-			g.load_val_to_reg(9, instr.operands[0]) // ptr
-			g.emit(0xF9400128) // ldr x8, [x9]
+			g.load_val_to_reg(9, instr.operands[0])
+			g.emit(0xF9400128)
 			g.store_reg_to_val(8, val_id)
 		}
 		.alloca {
-			// Get offset of allocated storage (Slot B)
 			data_off := g.alloca_offsets[val_id]
-			// Compute address fp + data_off
 			g.emit_add_fp_imm(8, data_off)
-			// Store address into result slot (Slot A)
 			g.store_reg_to_val(8, val_id)
 		}
 		.get_element_ptr {
 			g.load_val_to_reg(8, instr.operands[0])
 			g.load_val_to_reg(9, instr.operands[1])
-			g.emit(0x8B090D08) // add x8, x8, x9, lsl 3
+			g.emit(0x8B090D08)
 			g.store_reg_to_val(8, val_id)
 		}
 		.call {
@@ -231,7 +216,7 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 		}
 		.br {
 			g.load_val_to_reg(8, instr.operands[0])
-			g.emit(0xF100011F) // cmp x8, 0
+			g.emit(0xF100011F)
 
 			true_blk := g.mod.values[instr.operands[1]].index
 			false_blk := g.mod.values[instr.operands[2]].index
