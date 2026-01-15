@@ -118,7 +118,7 @@ fn (mut g CGen) gen_instr(val_id int) {
 		.load {
 			ptr_id := instr.operands[0]
 			ptr := g.val_str(ptr_id)
-			
+
 			// FIX: specific handling for globals (no dereference needed in C)
 			if g.mod.values[ptr_id].kind == .global {
 				g.sb.writeln('\t${res} = ${ptr};')
