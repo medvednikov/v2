@@ -8,9 +8,10 @@ pub struct Arm64Gen {
 mut:
 	macho &MachOObject
 
-	stack_map   map[int]int
-	stack_size  int
-	curr_offset int
+	stack_map      map[int]int
+	alloca_offsets map[int]int
+	stack_size     int
+	curr_offset    int
 
 	block_offsets  map[int]int
 	pending_labels map[int][]int
@@ -38,10 +39,8 @@ pub fn (mut g Arm64Gen) gen() {
 		g.emit(0)
 		g.emit(0)
 	}
-	// Patch symbol addresses for __cstring section (Section 2).
-	// These symbols were created with values relative to the start of the string table,
-	// but Mach-O requires VM addresses relative to the section start address.
-	// Section 2 starts immediately after Section 1 (text + globals).
+
+	// Patch symbol addresses for __cstring section (Section 2)
 	cstring_base_addr := u64(g.macho.text_data.len)
 	for mut sym in g.macho.symbols {
 		if sym.sect == 2 {
@@ -53,16 +52,45 @@ pub fn (mut g Arm64Gen) gen() {
 fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	g.curr_offset = g.macho.text_data.len
 	g.stack_map = map[int]int{}
+	g.alloca_offsets = map[int]int{}
 	g.block_offsets = map[int]int{}
 	g.pending_labels = map[int][]int{}
 
-	// Stack frame calculation
-	mut val_count := 0
-	for blk_id in func.blocks {
-		val_count += g.mod.blocks[blk_id].instrs.len
+	// Calculate Stack Frame
+	// Iterate to assign slots
+	mut slot_offset := 8 // Starts at 8 (fp-8)
+
+	// Params
+	for pid in func.params {
+		g.stack_map[pid] = -slot_offset
+		slot_offset += 8
 	}
-	val_count += func.params.len
-	g.stack_size = (val_count * 8 + 16) & ~0xF
+
+	// Instructions
+	for blk_id in func.blocks {
+		blk := g.mod.blocks[blk_id]
+		for val_id in blk.instrs {
+			val := g.mod.values[val_id]
+			if val.kind != .instruction {
+				continue
+			}
+			instr := g.mod.instrs[val.index]
+
+			// Slot A: The result of the instruction (pointer for alloca, value for others)
+			g.stack_map[val_id] = -slot_offset
+			slot_offset += 8
+
+			// Slot B: Data storage for Alloca
+			if instr.op == .alloca {
+				// Allocate extra space. 64 bytes for safety in this demo.
+				// Data starts at current slot_offset
+				g.alloca_offsets[val_id] = -slot_offset
+				slot_offset += 64
+			}
+		}
+	}
+
+	g.stack_size = (slot_offset + 16) & ~0xF // Align 16
 
 	g.macho.add_symbol('_' + func.name, u64(g.curr_offset), true, 1)
 
@@ -71,28 +99,15 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	g.emit(0x910003FD) // mov fp, sp
 	g.emit_sub_sp(g.stack_size)
 
-	mut slot_offset := 8
+	// Spill params
 	for i, pid in func.params {
-		offset := -slot_offset
-		g.stack_map[pid] = offset
-		slot_offset += 8
+		offset := g.stack_map[pid]
 		if i < 8 {
 			g.emit_str_reg_offset(i, 29, offset)
 		}
 	}
-	for blk_id in func.blocks {
-		blk := g.mod.blocks[blk_id]
-		for val_id in blk.instrs {
-			val := g.mod.values[val_id]
-			if val.kind != .instruction {
-				continue
-			}
-			offset := -slot_offset
-			g.stack_map[val_id] = offset
-			slot_offset += 8
-		}
-	}
 
+	// Body
 	for blk_id in func.blocks {
 		blk := g.mod.blocks[blk_id]
 		g.block_offsets[blk_id] = g.macho.text_data.len - g.curr_offset
@@ -156,18 +171,21 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			g.store_reg_to_val(8, val_id)
 		}
 		.store {
-			g.load_val_to_reg(8, instr.operands[0])
-			g.load_val_to_reg(9, instr.operands[1])
-			g.emit(0xF9000128)
+			g.load_val_to_reg(8, instr.operands[0]) // val
+			g.load_val_to_reg(9, instr.operands[1]) // ptr (address)
+			g.emit(0xF9000128) // str x8, [x9]
 		}
 		.load {
-			g.load_val_to_reg(9, instr.operands[0])
-			g.emit(0xF9400128)
+			g.load_val_to_reg(9, instr.operands[0]) // ptr
+			g.emit(0xF9400128) // ldr x8, [x9]
 			g.store_reg_to_val(8, val_id)
 		}
 		.alloca {
-			offset := g.stack_map[val_id]
-			g.emit_add_fp_imm(8, offset)
+			// Get offset of allocated storage (Slot B)
+			data_off := g.alloca_offsets[val_id]
+			// Compute address fp + data_off
+			g.emit_add_fp_imm(8, data_off)
+			// Store address into result slot (Slot A)
 			g.store_reg_to_val(8, val_id)
 		}
 		.get_element_ptr {
@@ -293,7 +311,6 @@ fn (mut g Arm64Gen) emit_ldr_reg_offset(rt int, rn int, offset int) {
 }
 
 fn (mut g Arm64Gen) emit(code u32) {
-	// Call the helper function instead of method on []u8
 	write_u32_le(mut g.macho.text_data, code)
 }
 
