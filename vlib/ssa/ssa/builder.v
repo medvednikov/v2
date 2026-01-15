@@ -129,7 +129,16 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			// If declaration, allocate new stack slot
 
 			if node.op == .decl_assign {
-				ident := node.lhs[0] as ast.Ident
+				mut ident_node := node.lhs[0]
+				mut ident := ast.Ident{}
+				// Unwrap 'mut x'
+				if ident_node is ast.ModifierExpr {
+					mod := ident_node as ast.ModifierExpr
+					ident = mod.expr as ast.Ident
+				} else {
+					ident = ident_node as ast.Ident
+				}
+				// ident := ident_node as ast.Ident
 				name := ident.name
 				// Alloca
 
@@ -443,6 +452,22 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			ptr_t := b.mod.type_store.get_ptr(i8_t)
 			// Note: We wrap in quotes for the C backend to interpret as string literal
 			return b.mod.add_value_node(.constant, ptr_t, '"${node.value}"', 0)
+		}
+		ast.CallOrCastExpr {
+			// Handle ambiguous calls like print_int(1111)
+			mut args := []ValueID{}
+			args << b.expr(node.expr)
+
+			mut name := ''
+			if node.lhs is ast.Ident {
+				name = node.lhs.name
+			} else if node.lhs is ast.SelectorExpr {
+				name = node.lhs.rhs.name
+			}
+			fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
+			args.prepend(fn_val)
+			i32_t := b.mod.type_store.get_int(32)
+			return b.mod.add_instr(.call, b.cur_block, i32_t, args)
 		}
 		ast.PrefixExpr {
 			right := b.expr(node.expr)
