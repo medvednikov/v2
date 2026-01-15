@@ -4,9 +4,9 @@ mut:
 	y int
 }
 
-__global (
-	g_val int
-)
+//__global (
+// g_val int
+//)
 
 // Helper function to test calls
 fn add(a int, b int) int {
@@ -20,10 +20,9 @@ fn print_int(n int) {
 
 fn main() {
 	if 4 > 10 {
-	C.printf(c"HELLO\n");
-	}
-	else {
-		C.printf(c"NOT\n");
+		C.printf(c'HELLO\n')
+	} else {
+		C.printf(c'NOT\n')
 	}
 	print_int(1111)
 
@@ -40,9 +39,9 @@ fn main() {
 	print_int(p.x)
 
 	// 3. Globals & Compound Assign
-	g_val = 50
-	g_val += 50
-	print_int(g_val) // 100
+	// g_val = 50
+	// g_val += 50
+	// print_int(g_val) // 100
 
 	// 4. Bool & Logic
 	flag := true

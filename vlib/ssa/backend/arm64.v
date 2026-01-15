@@ -173,8 +173,8 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 						.eq { 0x9A9F17E8 }
 						.ne { 0x9A9F07E8 }
 						.lt { 0x9A9FA7E8 }
-						.gt { 0x9A9FC7E8 }
-						.le { 0x9A9FD7E8 }
+						.gt { 0x9A9FD7E8 }
+						.le { 0x9A9FC7E8 }
 						.ge { 0x9A9FB7E8 }
 						else { 0 }
 					}
@@ -315,11 +315,29 @@ fn (mut g Arm64Gen) emit_add_fp_imm(rd int, imm int) {
 }
 
 fn (mut g Arm64Gen) emit_str_reg_offset(rt int, rn int, offset int) {
-	g.emit(0xF8000000 | (u32(offset & 0x1FF) << 12) | (u32(rn) << 5) | u32(rt))
+	if offset >= -255 && offset <= 255 {
+		imm9 := u32(offset & 0x1FF)
+		g.emit(0xF8000000 | (imm9 << 12) | (u32(rn) << 5) | u32(rt))
+	} else {
+		// Large negative offset; use temp x10 for address
+		imm := u64(-offset) // Positive imm
+		g.emit_mov_imm(10, imm)
+		g.emit(0xCB0A03AA) // sub x10, x29, x10
+		g.emit(0xF9000140 | u32(rt)) // str xrt, [x10]
+	}
 }
 
 fn (mut g Arm64Gen) emit_ldr_reg_offset(rt int, rn int, offset int) {
-	g.emit(0xF8400000 | (u32(offset & 0x1FF) << 12) | (u32(rn) << 5) | u32(rt))
+	if offset >= -255 && offset <= 255 {
+		imm9 := u32(offset & 0x1FF)
+		g.emit(0xF8400000 | (imm9 << 12) | (u32(rn) << 5) | u32(rt))
+	} else {
+		// Large negative offset; use temp x10 for address
+		imm := u64(-offset) // Positive imm
+		g.emit_mov_imm(10, imm)
+		g.emit(0xCB0A03AA) // sub x10, x29, x10
+		g.emit(0xF9400140 | u32(rt)) // ldr xrt, [x10]
+	}
 }
 
 fn (mut g Arm64Gen) emit(code u32) {
@@ -341,4 +359,10 @@ fn (mut g Arm64Gen) write_u32(off int, v u32) {
 
 pub fn (mut g Arm64Gen) write_file(path string) {
 	g.macho.write(path)
+}
+
+fn (mut g Arm64Gen) emit_mov_imm(rd int, imm u64) {
+	// Assume imm < 65536; use MOVZ xd, #imm
+	g.emit(0xD2800000 | (u32(imm & 0xFFFF) << 5) | u32(rd))
+	// For larger imm, add MOVK(s), but not needed for stack sizes.
 }
