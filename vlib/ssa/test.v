@@ -4,9 +4,9 @@ mut:
 	y int
 }
 
-//__global (
-// g_val int
-//)
+__global (
+	g_val int
+)
 
 // Helper function to test calls
 fn add(a int, b int) int {
@@ -22,7 +22,7 @@ fn print_rec(n int) {
 	C.putchar(rem + 48)
 }
 
- fn print_int(n int) {
+fn print_int(n int) {
 	if n == 0 {
 		C.putchar(48)
 		C.putchar(10)
@@ -35,7 +35,7 @@ fn print_rec(n int) {
 	}
 	print_rec(v)
 	C.putchar(10)
- }
+}
 
 /*
 fn print_int(n int) {
@@ -70,9 +70,10 @@ fn main() {
 	print_int(p.x)
 
 	// 3. Globals & Compound Assign
-	// g_val = 50
-	// g_val += 50
-	// print_int(g_val) // 100
+	C.puts(c'global:')
+	g_val = 50
+	g_val += 50
+	print_int(g_val) // 100
 
 	// 4. Bool & Logic
 	flag := true
