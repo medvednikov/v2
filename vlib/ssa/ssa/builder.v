@@ -102,9 +102,10 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	b.stmts(decl.stmts)
 	// FIX: Ensure the function ends with a return to prevent fallthrough
 	if !b.is_block_terminated(b.cur_block) {
-		if decl.name == 'main' {
-			// main should return 0
-			zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
+		ret_type := b.mod.funcs[fn_id].typ
+		if ret_type != 0 {
+			// Return 0 for non-void functions (satisfy C signature)
+			zero := b.mod.add_value_node(.constant, ret_type, '0', 0)
 			b.mod.add_instr(.ret, b.cur_block, 0, [zero])
 		} else {
 			// void return
