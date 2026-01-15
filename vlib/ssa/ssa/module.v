@@ -22,10 +22,14 @@ pub mut:
 }
 
 pub fn Module.new(name string) &Module {
-	return &Module{
+	mut m := &Module{
 		name:       name
 		type_store: TypeStore.new()
 	}
+	// Reserve ID 0 to represent "null" or "invalid", avoiding collisions
+	// with map lookups returning 0.
+	m.values << Value{ kind: .unknown, id: 0 }
+	return m
 }
 
 pub fn (mut m Module) new_function(name string, ret TypeID, params []TypeID) int {
@@ -40,8 +44,9 @@ pub fn (mut m Module) new_function(name string, ret TypeID, params []TypeID) int
 
 pub fn (mut m Module) add_block(func_id int, name string) BlockID {
 	id := m.blocks.len
-	// FIX: Ensure unique block names for C labels by appending ID
-	unique_name := '${name}_${id}'
+	// FIX: Sanitize block names for C labels (replace . with _)
+	safe_name := name.replace('.', '_')
+	unique_name := '${safe_name}_${id}'
 	
 	// Store 'id' (index in blocks arena) in the Value
 	val_id := m.add_value_node(.basic_block, 0, unique_name, id)
