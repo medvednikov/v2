@@ -1,4 +1,5 @@
 struct Point {
+mut:
 	x int
 	y int
 }
@@ -7,48 +8,53 @@ __global (
 	g_val int
 )
 
+// Helper function to test calls
+fn add(a int, b int) int {
+	return a + b
+}
+
+fn print_int(n int) {
+	C.printf(c'%d\n', n)
+}
+
 fn main() {
-	// 1. Struct Decl & Init & SelectorExpr
-	p := Point{
-		x: 10
-		y: 20
-	}
+	print_int(1111)
 
-	// 2. Selector Assign (L-Value)
-	p.x = 100
-
+	// 1. Struct Decl & Init
+	mut p := Point{x: 10, y: 20}
+	print_int(p.x)
+	print_int(p.y)
+	
+	// 2. Calls & Selector Assign
+	p.x = add(p.x, 5) // 10 + 5 = 15
+	print_int(p.x)
+	
 	// 3. Globals & Compound Assign
-	g_val = 5
-	g_val += 5
-
-	// 4. IndexExpr & Pointers
-	// Simulate array via pointer arithmetic logic in Builder/Backend
-	// Since we don't have malloc in this MVP, we use the struct pointer as a base
-	// or just a stack variable address treated as array base.
-	// For valid C output, let's use the struct ptr cast logic implicitly handled.
-
-	// 5. Bool & Logic
+	g_val = 50
+	g_val += 50
+	print_int(g_val) // 100
+	
+	// 4. Bool & Logic
 	flag := true
 	if flag {
-		p.y = 200
+		print_int(1)
+	} else {
+		print_int(0)
 	}
 
-	// 6. Loop with Break/Continue
-	i := 0
-	sum := 0
+	// 5. Loop with Break/Continue
+	mut i := 0
+	mut sum := 0
 	for i < 10 {
 		i++
 		if i == 5 {
 			continue
 		}
-		if i > 8 {
+		if i > 7 {
 			break
 		}
 		sum += i
+		// Printed sequence of added numbers: 1, 2, 3, 4, 6, 7
 	}
-
-	// 7. Cast (implicit in this backend)
-	val := int(sum)
-
-	return val
+	print_int(sum) // 1+2+3+4+6+7 = 23
 }
