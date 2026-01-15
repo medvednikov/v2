@@ -19,7 +19,12 @@ fn print_int(n int) {
 }
 
 fn main() {
-	if 4 > 10 {
+	mut j := 0
+	for j < 10 {
+		C.printf(c'HI\n')
+		j++
+	}
+	if 4 < 10 {
 		C.printf(c'HELLO\n')
 	} else {
 		C.printf(c'NOT\n')
