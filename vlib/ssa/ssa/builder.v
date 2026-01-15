@@ -100,6 +100,17 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 
 	// Process Statements
 	b.stmts(decl.stmts)
+	// FIX: Ensure the function ends with a return to prevent fallthrough
+	if !b.is_block_terminated(b.cur_block) {
+		if decl.name == 'main' {
+			// main should return 0
+			zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
+			b.mod.add_instr(.ret, b.cur_block, 0, [zero])
+		} else {
+			// void return
+			b.mod.add_instr(.ret, b.cur_block, 0, [])
+		}
+	}
 }
 
 fn (mut b Builder) stmts(stmts []ast.Stmt) {
@@ -501,7 +512,9 @@ fn (mut b Builder) expr_string_literal(node ast.StringLiteral) ValueID {
 	i8_t := b.mod.type_store.get_int(8)
 	ptr_t := b.mod.type_store.get_ptr(i8_t)
 	// Note: We wrap in quotes for the C backend to interpret as string literal
-	return b.mod.add_value_node(.constant, ptr_t, '"${node.value}"', 0)
+	// return b.mod.add_value_node(.constant, ptr_t, '"${node.value}"', 0)
+	val := node.value.trim("'").trim('"')
+	return b.mod.add_value_node(.constant, ptr_t, '"${val}"', 0)
 }
 
 fn (mut b Builder) expr_call_or_cast(node ast.CallOrCastExpr) ValueID {
