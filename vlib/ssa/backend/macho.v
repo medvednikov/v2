@@ -4,46 +4,44 @@ import encoding.binary
 import os
 
 // Mach-O Constants for ARM64
-const (
-	mh_magic_64 = u32(0xfeedfacf)
-	cpu_type_arm64 = 0x0100000c
-	cpu_subtype_arm64_all = 0
-	
-	lc_segment_64 = 0x19
-	lc_symtab     = 0x2
-	
-	arm64_reloc_branch26      = 2
-	arm64_reloc_page21        = 3
-	arm64_reloc_pageoff12     = 4
-	arm64_reloc_got_load_page21 = 5
-	arm64_reloc_got_load_pageoff12 = 6
-)
+const mh_magic_64 = u32(0xfeedfacf)
+const cpu_type_arm64 = 0x0100000c
+const cpu_subtype_arm64_all = 0
+
+const lc_segment_64 = 0x19
+const lc_symtab = 0x2
+
+const arm64_reloc_branch26 = 2
+const arm64_reloc_page21 = 3
+const arm64_reloc_pageoff12 = 4
+const arm64_reloc_got_load_page21 = 5
+const arm64_reloc_got_load_pageoff12 = 6
 
 pub struct MachOObject {
 pub mut:
 	text_data []u8
 	str_data  []u8
-	
+
 	relocs    []RelocationInfo
 	symbols   []Symbol
 	str_table []u8
 }
 
 struct RelocationInfo {
-	addr      int
-	sym_idx   int
-	pcrel     bool
-	length    int
-	extern    bool
-	type_     int
+	addr    int
+	sym_idx int
+	pcrel   bool
+	length  int
+	extern  bool
+	type_   int
 }
 
 struct Symbol {
-	name    string
-	type_   u8
-	sect    u8
-	desc    u16
-	value   u64
+	name  string
+	type_ u8
+	sect  u8
+	desc  u16
+	value u64
 }
 
 pub fn MachOObject.new() &MachOObject {
@@ -57,9 +55,9 @@ pub fn (mut m MachOObject) add_symbol(name string, addr u64, is_ext bool, sect u
 	idx := m.symbols.len
 	m.str_table << name.bytes()
 	m.str_table << 0
-	
+
 	typ := if is_ext { u8(0x0f) } else { u8(0x0e) } // N_SECT | N_EXT : N_SECT
-	
+
 	m.symbols << Symbol{
 		name:  name
 		type_: typ
@@ -72,13 +70,15 @@ pub fn (mut m MachOObject) add_symbol(name string, addr u64, is_ext bool, sect u
 
 pub fn (mut m MachOObject) add_undefined(name string) int {
 	for i, s in m.symbols {
-		if s.name == name && s.type_ == 0x01 { return i }
+		if s.name == name && s.type_ == 0x01 {
+			return i
+		}
 	}
-	
+
 	idx := m.symbols.len
 	m.str_table << name.bytes()
 	m.str_table << 0
-	
+
 	m.symbols << Symbol{
 		name:  name
 		type_: 0x01 // N_UNDF | N_EXT
@@ -102,13 +102,13 @@ pub fn (mut m MachOObject) add_reloc(addr int, sym_idx int, typ int, pcrel bool)
 
 pub fn (mut m MachOObject) write(path string) {
 	mut buf := []u8{}
-	
+
 	n_sects := 2
 	header_size := 32
 	seg_cmd_size := 72 + (80 * n_sects)
 	symtab_cmd_size := 24
 	load_cmds_size := seg_cmd_size + symtab_cmd_size
-	
+
 	text_off := header_size + load_cmds_size
 	text_len := m.text_data.len
 	cstring_off := text_off + text_len
@@ -118,7 +118,7 @@ pub fn (mut m MachOObject) write(path string) {
 	sym_len := m.symbols.len * 16
 	str_off := sym_off + sym_len
 	str_size := m.str_table.len
-	
+
 	// 1. Header
 	write_u32_le(mut buf, mh_magic_64)
 	write_u32_le(mut buf, u32(cpu_type_arm64))
@@ -128,11 +128,13 @@ pub fn (mut m MachOObject) write(path string) {
 	write_u32_le(mut buf, u32(load_cmds_size))
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
-	
+
 	// 2. LC_SEGMENT_64
 	write_u32_le(mut buf, u32(lc_segment_64))
 	write_u32_le(mut buf, u32(seg_cmd_size))
-	for _ in 0..16 { buf << 0 }
+	for _ in 0 .. 16 {
+		buf << 0
+	}
 	write_u64_le(mut buf, 0)
 	write_u64_le(mut buf, u64(text_len + cstring_len))
 	write_u64_le(mut buf, u64(text_off))
@@ -141,10 +143,10 @@ pub fn (mut m MachOObject) write(path string) {
 	write_u32_le(mut buf, 7)
 	write_u32_le(mut buf, u32(n_sects))
 	write_u32_le(mut buf, 0)
-	
+
 	// Section 1: __text
-	write_string_fixed(mut buf, "__text", 16)
-	write_string_fixed(mut buf, "__TEXT", 16)
+	write_string_fixed(mut buf, '__text', 16)
+	write_string_fixed(mut buf, '__TEXT', 16)
 	write_u64_le(mut buf, 0)
 	write_u64_le(mut buf, u64(text_len))
 	write_u32_le(mut buf, u32(text_off))
@@ -155,10 +157,10 @@ pub fn (mut m MachOObject) write(path string) {
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
-	
+
 	// Section 2: __cstring
-	write_string_fixed(mut buf, "__cstring", 16)
-	write_string_fixed(mut buf, "__TEXT", 16)
+	write_string_fixed(mut buf, '__cstring', 16)
+	write_string_fixed(mut buf, '__TEXT', 16)
 	write_u64_le(mut buf, u64(text_len))
 	write_u64_le(mut buf, u64(cstring_len))
 	write_u32_le(mut buf, u32(cstring_off))
@@ -169,7 +171,7 @@ pub fn (mut m MachOObject) write(path string) {
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
 	write_u32_le(mut buf, 0)
-	
+
 	// 3. LC_SYMTAB
 	write_u32_le(mut buf, u32(lc_symtab))
 	write_u32_le(mut buf, u32(symtab_cmd_size))
@@ -177,20 +179,24 @@ pub fn (mut m MachOObject) write(path string) {
 	write_u32_le(mut buf, u32(m.symbols.len))
 	write_u32_le(mut buf, u32(str_off))
 	write_u32_le(mut buf, u32(str_size))
-	
+
 	buf << m.text_data
 	buf << m.str_data
-	
+
 	for r in m.relocs {
 		write_u32_le(mut buf, u32(r.addr))
 		mut info := u32(r.sym_idx)
-		if r.pcrel { info |= (1 << 24) }
+		if r.pcrel {
+			info |= (1 << 24)
+		}
 		info |= (u32(r.length) << 25)
-		if r.extern { info |= (1 << 27) }
+		if r.extern {
+			info |= (1 << 27)
+		}
 		info |= (u32(r.type_) << 28)
 		write_u32_le(mut buf, info)
 	}
-	
+
 	mut cur_str_off := 0
 	for s in m.symbols {
 		write_u32_le(mut buf, u32(cur_str_off))
@@ -200,9 +206,9 @@ pub fn (mut m MachOObject) write(path string) {
 		write_u16_le(mut buf, s.desc)
 		write_u64_le(mut buf, s.value)
 	}
-	
+
 	buf << m.str_table
-	
+
 	os.write_file_array(path, buf) or { panic(err) }
 }
 
@@ -232,6 +238,10 @@ fn write_u16_le(mut b []u8, v u16) {
 
 fn write_string_fixed(mut b []u8, s string, len int) {
 	mut bytes := s.bytes()
-	for bytes.len < len { bytes << 0 }
-	for i in 0..len { b << bytes[i] }
+	for bytes.len < len {
+		bytes << 0
+	}
+	for i in 0 .. len {
+		b << bytes[i]
+	}
 }
