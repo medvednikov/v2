@@ -333,7 +333,7 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			// Just pass through for MVP C gen (C handles implicit casting mostly, or we assume compatible types)
 			return b.expr(node.expr)
 		}
-		ast.ParExpr {
+		ast.ParenExpr {
 			return b.expr(node.expr)
 		}
 		ast.InfixExpr {
@@ -477,8 +477,11 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 			return 0
 		}
 		else {
-			// println('Builder: Unhandled expr ${node.type_name()}')
-			return 0
+			println('Builder: Unhandled expr ${node.type_name()}')
+			// Return constant 0 (i32) to prevent cascading void errors
+			i32_t := b.mod.type_store.get_int(32)
+			return b.mod.add_value_node(.constant, i32_t, '0', 0)
+			// return 0
 		}
 	}
 }
