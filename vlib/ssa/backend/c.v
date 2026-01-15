@@ -205,6 +205,21 @@ fn (mut g CGen) gen_instr(val_id int) {
 				g.sb.writeln('\t${res} = &${base}[${idx}];')
 			}
 		}
+		.switch_ {
+			cond := g.val_str(instr.operands[0])
+			g.sb.writeln('\tswitch (${cond}) {')
+			// Operands: 0=cond, 1=def, 2=val, 3=blk, 4=val, 5=blk...
+			for i := 2; i < instr.operands.len; i += 2 {
+				val2 := g.val_str(instr.operands[i])
+				blk_val_id := instr.operands[i + 1]
+				blk_name := g.get_block_name(blk_val_id)
+				g.sb.writeln('\tcase ${val2}: goto ${blk_name};')
+			}
+			def_blk_val_id := instr.operands[1]
+			def_name := g.get_block_name(def_blk_val_id)
+			g.sb.writeln('\tdefault: goto ${def_name};')
+			g.sb.writeln('\t}')
+		}
 		else {
 			g.sb.writeln('\t// Unhandled C op: ${instr.op}')
 		}

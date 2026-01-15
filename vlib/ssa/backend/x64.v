@@ -303,7 +303,43 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 			g.record_pending_label(false_blk)
 			g.emit_u32(0)
 		}
-		else {}
+		.switch_ {
+			g.load_val_to_reg(0, instr.operands[0]) // Cond -> RAX
+
+			for i := 2; i < instr.operands.len; i += 2 {
+				// cmp rax, val
+				g.load_val_to_reg(1, instr.operands[i]) // Val -> RCX
+
+				// cmp rax, rcx -> 48 39 c8
+				g.emit(0x48)
+				g.emit(0x39)
+				g.emit(0xC8)
+
+				// je target (0F 84 rel32)
+				g.emit(0x0F)
+				g.emit(0x84)
+
+				target_blk_val := instr.operands[i + 1]
+				target_idx := g.mod.values[target_blk_val].index
+
+				if off := g.block_offsets[target_idx] {
+					rel := off - (g.elf.text_data.len - g.curr_offset + 4)
+					g.emit_u32(u32(rel))
+				} else {
+					g.record_pending_label(target_idx)
+					g.emit_u32(0)
+				}
+			}
+
+			// Default jmp
+			def_blk_val := instr.operands[1]
+			def_idx := g.mod.values[def_blk_val].index
+			g.emit_jmp(def_idx)
+		}
+		else {
+			eprintln('x64: unknown instruction ${instr}')
+			exit(1)
+		}
 	}
 }
 

@@ -302,6 +302,7 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 		}
 		else {
 			eprintln('arm64: unknown instruction ${instr}')
+			exit(1)
 		}
 	}
 }
