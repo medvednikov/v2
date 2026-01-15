@@ -167,6 +167,9 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				.mul {
 					g.emit(0x9B097D08)
 				}
+				.sdiv {
+					g.emit(0x9AC90D08)
+				}
 				.eq, .ne, .lt, .gt, .le, .ge {
 					g.emit(0xEB09011F)
 					code := match instr.op {
