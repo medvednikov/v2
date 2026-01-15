@@ -28,7 +28,10 @@ pub fn Module.new(name string) &Module {
 	}
 	// Reserve ID 0 to represent "null" or "invalid", avoiding collisions
 	// with map lookups returning 0.
-	m.values << Value{ kind: .unknown, id: 0 }
+	m.values << Value{
+		kind: .unknown
+		id:   0
+	}
 	return m
 }
 
@@ -47,7 +50,7 @@ pub fn (mut m Module) add_block(func_id int, name string) BlockID {
 	// FIX: Sanitize block names for C labels (replace . with _)
 	safe_name := name.replace('.', '_')
 	unique_name := '${safe_name}_${id}'
-	
+
 	// Store 'id' (index in blocks arena) in the Value
 	val_id := m.add_value_node(.basic_block, 0, unique_name, id)
 
@@ -105,12 +108,12 @@ pub fn (mut m Module) add_instr(op OpCode, block BlockID, typ TypeID, operands [
 pub fn (mut m Module) add_global(name string, typ TypeID, is_const bool) int {
 	id := m.globals.len
 	g := GlobalVar{
-		name: name
-		typ: typ
+		name:        name
+		typ:         typ
 		is_constant: is_const
 	}
 	m.globals << g
-	
+
 	// FIX: The Value representing a global is a POINTER to the data
 	ptr_typ := m.type_store.get_ptr(typ)
 	return m.add_value_node(.global, ptr_typ, name, id)
