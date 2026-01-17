@@ -49,7 +49,7 @@ fn print_int(n int) {
 */
 
 fn main() {
-	print_str('start')
+	// print_str('start')
 	mut j := 0
 	for j < 10 {
 		C.printf(c'HI\n')

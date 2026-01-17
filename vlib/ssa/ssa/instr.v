@@ -58,6 +58,7 @@ pub enum OpCode {
 	phi
 	call
 	select
+	assign // copy for phi elimination
 }
 
 pub enum AtomicOrdering {
