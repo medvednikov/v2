@@ -300,6 +300,12 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				g.emit(0x14000000)
 			}
 		}
+		.bitcast {
+			if instr.operands.len > 0 {
+				g.load_val_to_reg(8, instr.operands[0])
+				g.store_reg_to_val(8, val_id)
+			}
+		}
 		.phi {
 			// Phi nodes are handled by elim_phi_nodes inserting assignments in predecessors.
 			// We just need to ensure the slot exists (handled in gen_func loop).
