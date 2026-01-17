@@ -214,11 +214,17 @@ fn (mut g Gen) gen_fn_decl(node &ast.FnDecl, skip bool) {
 
 	g.returned_var_names.clear()
 	old_g_autofree := g.is_autofree
+	old_gc_mode := g.pref.gc_mode
 	if node.is_manualfree {
 		g.is_autofree = false
+		g.pref.gc_mode = .no_gc
+		if g.fileis('a.v') {
+			eprintln('FFF setting am ${node.name}')
+		}
 	}
 	defer {
 		g.is_autofree = old_g_autofree
+		g.pref.gc_mode = old_gc_mode
 	}
 	if node.generic_names.len > 0 && g.cur_concrete_types.len == 0 {
 		// need the cur_concrete_type check to avoid inf. recursion

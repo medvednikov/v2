@@ -34,13 +34,13 @@ const result_name = ast.result_name
 const option_name = ast.option_name
 
 pub struct Gen {
-	pref                &pref.Preferences = unsafe { nil }
 	field_data_type     ast.Type // cache her to avoid map lookups
 	enum_data_type      ast.Type // cache her to avoid map lookups
 	variant_data_type   ast.Type // cache her to avoid map lookups
 	module_built        string
 	timers_should_print bool
 mut:
+	pref       &pref.Preferences = unsafe { nil }
 	out        strings.Builder
 	extern_out strings.Builder // extern declarations for -parallel-cc
 	// line_nr                   int
