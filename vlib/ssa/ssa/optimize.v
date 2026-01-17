@@ -178,8 +178,10 @@ fn (mut m Module) promote_memory_to_register() {
 			for val_id in blk.instrs {
 				instr := m.instrs[m.values[val_id].index]
 				if instr.op == .alloca {
-					promotable << val_id
-					ctx.stacks[val_id] = []
+					if m.is_promotable(val_id) {
+						promotable << val_id
+						ctx.stacks[val_id] = []
+					}
 				}
 
 				if instr.op == .store {
@@ -223,6 +225,38 @@ fn (mut m Module) promote_memory_to_register() {
 	}
 }
 
+fn (m Module) is_promotable(alloc_id int) bool {
+	uses := m.values[alloc_id].uses
+	for u in uses {
+		if u >= m.values.len {
+			continue
+		}
+		user := m.values[u]
+		if user.kind != .instruction {
+			return false
+		}
+		instr := m.instrs[user.index]
+		match instr.op {
+			.load {
+				if instr.operands.len == 0 || instr.operands[0] != alloc_id {
+					return false
+				}
+			}
+			.store {
+				// Only safe if used as pointer (index 1)
+				if instr.operands.len < 2 || instr.operands[1] != alloc_id {
+					return false
+				}
+			}
+			else {
+				// Escape (GEP, Call, Phi, etc.)
+				return false
+			}
+		}
+	}
+	return true
+}
+
 fn (mut m Module) compute_dominance_frontier(func Function) map[int][]int {
 	mut df := map[int][]int{}
 	for blk_id in func.blocks {
@@ -258,7 +292,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 	}
 
 	// 2. Process Instructions
-	// Record initial stack heights to pop later
 	mut stack_counts := map[int]int{}
 	for k, v in ctx.stacks {
 		stack_counts[k] = v.len
@@ -272,7 +305,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 			.store {
 				ptr := instr.operands[1]
 				val := instr.operands[0]
-				// Only if ptr is a promotable alloca
 				if _ := ctx.stacks[ptr] {
 					ctx.stacks[ptr] << val
 					instrs_to_nop << val_id
@@ -286,7 +318,9 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 						repl = stack.last()
 					} else {
 						// Undef / Zero
-						repl = m.add_value_node(.constant, m.values[ptr].typ, '0', 0)
+						// Use the type of the value being loaded
+						res_type := m.values[val_id].typ
+						repl = m.add_value_node(.constant, res_type, '0', 0)
 					}
 					m.replace_uses(val_id, repl)
 					instrs_to_nop << val_id
@@ -301,12 +335,7 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 		}
 	}
 
-	// Remove processed allocas/stores/loads
 	for vid in instrs_to_nop {
-		// We set op to a new 'nop' or just ignore in backend?
-		// For now, let's just make it a comment or bitcast to self?
-		// Better: set op to .bitcast with 0 operands (invalid but ignored?)
-		// Or introduce .nop. Reusing bitcast with no operands as NOP.
 		m.instrs[m.values[vid].index].op = .bitcast
 		m.instrs[m.values[vid].index].operands = []
 	}
@@ -315,7 +344,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 	for succ_id in blk.succs {
 		if phis := ctx.phi_placements[succ_id] {
 			for alloc_id in phis {
-				// Find phi in succ
 				succ_blk := m.blocks[succ_id]
 				for vid in succ_blk.instrs {
 					v := m.values[vid]
@@ -323,8 +351,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 						continue
 					}
 					ins := m.instrs[v.index]
-					// Identify by name convention or map.
-					// Since we renamed phi to `name.phi`, check match.
 					if ins.op == .phi && v.name == '${m.values[alloc_id].name}.phi' {
 						mut val := 0
 						if ctx.stacks[alloc_id].len > 0 {
@@ -332,9 +358,7 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 						} else {
 							val = m.add_value_node(.constant, 0, '0', 0)
 						}
-						// Append [val, current_blk_val]
 						m.instrs[v.index].operands << val
-						// We need value ID for block
 						m.instrs[v.index].operands << m.blocks[blk_id].val_id
 					}
 				}
@@ -369,17 +393,11 @@ fn (mut m Module) eliminate_phi_nodes() {
 
 			for phi_id in phis {
 				instr := m.instrs[m.values[phi_id].index]
-				// op = .phi
-				// operands = [val, blk_val, val, blk_val ...]
-
 				for i := 0; i < instr.operands.len; i += 2 {
 					val_in := instr.operands[i]
 					blk_val := instr.operands[i + 1]
 					pred_blk_idx := m.values[blk_val].index
 
-					// Insert assign in predecessor
-					// op: .assign, operands: [phi_id, val_in]
-					// We must insert at the end of predecessor, BUT before terminator.
 					m.insert_copy_in_block(pred_blk_idx, phi_id, val_in)
 				}
 			}
@@ -388,16 +406,16 @@ fn (mut m Module) eliminate_phi_nodes() {
 }
 
 fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
-	// Find insertion point: before last instruction (terminator)
 	blk := m.blocks[blk_id]
 	if blk.instrs.len == 0 {
 		return
 	}
-	term_id := blk.instrs.last()
 
-	// Create instr
-	// We use 'dest' as operand[0] just to convey target. Result ID is unused/dummy.
-	// This is a pseudo-instruction for the backend.
+	// Insert before terminator
+	// We need to identify valid insertion point.
+	// If the block ends with Br/Jmp/Ret, insert before it.
+	// If we just insert at end - 1, it should be fine for now.
+
 	typ := m.values[dest].typ
 	m.instrs << Instruction{
 		op:       .assign
@@ -407,6 +425,10 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	}
 	val_id := m.add_value_node(.instruction, typ, 'copy', m.instrs.len - 1)
 
-	// Insert in array before last
-	m.blocks[blk_id].instrs.insert(m.blocks[blk_id].instrs.len - 1, val_id)
+	// Safety check: insert before last instruction
+	if m.blocks[blk_id].instrs.len > 0 {
+		m.blocks[blk_id].instrs.insert(m.blocks[blk_id].instrs.len - 1, val_id)
+	} else {
+		m.blocks[blk_id].instrs << val_id
+	}
 }
