@@ -16,10 +16,10 @@ pub:
 	id   ValueID
 	kind ValueKind
 	typ  TypeID
-	name string
 	// Index into the specific arena (instrs, blocks, globals)
 	index int
 pub mut:
+	name string
 	uses []ValueID
 }
 

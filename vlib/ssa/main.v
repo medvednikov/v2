@@ -39,17 +39,21 @@ fn main() {
 	mut builder := ssa.Builder.new(mod)
 	builder.build(file)
 
+	// Optimize
+	println('[*] Optimizing SSA...')
+	mod.optimize()
+
 	native := true
 
 	if native {
-		// 5. Generate Mach-O Object
+		// Generate Mach-O Object
 		println('[*] Generating Mach-O ARM64 Object...')
 		mut arm_gen := backend.Arm64Gen.new(mod)
 		arm_gen.gen()
 		arm_gen.write_file('main.o')
 
 		println('generating main.o took ${time.since(t0)}')
-		// 6. Link
+		// Link
 		println('[*] Linking...')
 		// Need SDK path
 		sdk_res := os.execute('xcrun -sdk macosx --show-sdk-path')

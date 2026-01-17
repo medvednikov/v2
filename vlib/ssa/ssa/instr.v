@@ -72,13 +72,13 @@ pub enum AtomicOrdering {
 }
 
 pub struct Instruction {
-pub:
-	op    OpCode
-	block BlockID
-	typ   TypeID // Result type
-
+pub mut:
+	op OpCode
 	// Operands are IDs of other Values
 	operands []ValueID
+pub:
+	block BlockID
+	typ   TypeID // Result type
 
 	pos        token.Pos
 	atomic_ord AtomicOrdering
