@@ -77,6 +77,10 @@ pub fn (mut m Module) add_value_node(kind ValueKind, typ TypeID, name string, in
 	return id
 }
 
+pub fn (m Module) get_block_from_val(val_id int) int {
+	return m.values[val_id].index
+}
+
 pub fn (mut m Module) add_instr(op OpCode, block BlockID, typ TypeID, operands []ValueID) ValueID {
 	// 1. Save Instruction Index
 	instr_idx := m.instrs.len
@@ -117,4 +121,46 @@ pub fn (mut m Module) add_global(name string, typ TypeID, is_const bool) int {
 	// FIX: The Value representing a global is a POINTER to the data
 	ptr_typ := m.type_store.get_ptr(typ)
 	return m.add_value_node(.global, ptr_typ, name, id)
+}
+
+pub fn (mut m Module) add_instr_front(op OpCode, block BlockID, typ TypeID, operands []ValueID) ValueID {
+	instr_idx := m.instrs.len
+	instr := Instruction{
+		op:       op
+		block:    block
+		typ:      typ
+		operands: operands
+	}
+	m.instrs << instr
+	val_id := m.add_value_node(.instruction, typ, 'v${m.values.len}', instr_idx)
+
+	// Prepend to block instructions
+	m.blocks[block].instrs.prepend(val_id)
+
+	for op_id in operands {
+		if op_id < m.values.len {
+			m.values[op_id].uses << val_id
+		}
+	}
+	return val_id
+}
+
+pub fn (mut m Module) replace_uses(old_val int, new_val int) {
+	// Copy uses, because we modify instr operands which might change things?
+	// Actually uses list tracks who uses `old_val`.
+	// We need to update those instructions to use `new_val` instead.
+	uses := m.values[old_val].uses.clone()
+	for use_id in uses {
+		use_val := m.values[use_id]
+		if use_val.kind == .instruction {
+			mut instr := m.instrs[use_val.index]
+			for i in 0 .. instr.operands.len {
+				if instr.operands[i] == old_val {
+					m.instrs[use_val.index].operands[i] = new_val
+				}
+			}
+			m.values[new_val].uses << use_id
+		}
+	}
+	m.values[old_val].uses = []
 }
