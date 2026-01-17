@@ -218,9 +218,9 @@ fn (mut g Gen) gen_fn_decl(node &ast.FnDecl, skip bool) {
 	if node.is_manualfree {
 		g.is_autofree = false
 		g.pref.gc_mode = .no_gc
-		if g.fileis('a.v') {
-			eprintln('FFF setting am ${node.name}')
-		}
+		// if g.fileis('a.v') {
+		// eprintln('setting mf ${node.name}')
+		//}
 	}
 	defer {
 		g.is_autofree = old_g_autofree
