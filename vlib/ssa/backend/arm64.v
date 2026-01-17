@@ -300,6 +300,19 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				g.emit(0x14000000)
 			}
 		}
+		.phi {
+			// Phi nodes are handled by elim_phi_nodes inserting assignments in predecessors.
+			// We just need to ensure the slot exists (handled in gen_func loop).
+		}
+		.assign {
+			// assign dest_id, src_id
+			// Used for Phi elimination: store src into dest's slot
+			dest_id := instr.operands[0]
+			src_id := instr.operands[1]
+
+			g.load_val_to_reg(8, src_id)
+			g.store_reg_to_val(8, dest_id)
+		}
 		else {
 			eprintln('arm64: unknown instruction ${instr}')
 			exit(1)

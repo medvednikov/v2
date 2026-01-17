@@ -403,7 +403,7 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 		op:       .assign
 		block:    blk_id
 		typ:      typ
-		operands: [dest, src]
+		operands: [ValueID(dest), src]
 	}
 	val_id := m.add_value_node(.instruction, typ, 'copy', m.instrs.len - 1)
 
