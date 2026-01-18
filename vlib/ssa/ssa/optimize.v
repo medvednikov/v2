@@ -74,10 +74,13 @@ fn (mut m Module) compute_dominators() {
 		}
 		m.blocks[entry].idom = entry
 
+		mut rpo := m.get_rpo(func)
+
 		mut changed := true
 		for changed {
 			changed = false
-			for blk_id in func.blocks {
+			// for blk_id in func.blocks {
+			for blk_id in rpo {
 				if blk_id == entry {
 					continue
 				}

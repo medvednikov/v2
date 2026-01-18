@@ -164,3 +164,20 @@ pub fn (mut m Module) replace_uses(old_val int, new_val int) {
 	}
 	m.values[old_val].uses = []
 }
+
+fn (mut m Module) get_rpo(func Function) []int {
+	mut visited := map[int]bool{}
+	mut rpo := []int{}
+	mut rec := fn (mut m Module, blk int, mut visited map[int]bool, mut rpo []int) {
+		visited[blk] = true
+		for s in m.blocks[blk].succs {
+			if !visited[s] {
+				rec(mut m, s, mut visited, mut rpo)
+			}
+		}
+		rpo << blk
+	}
+	rec(mut m, func.blocks[0], mut visited, mut rpo)
+	rpo.reverse_inplace()
+	return rpo
+}
