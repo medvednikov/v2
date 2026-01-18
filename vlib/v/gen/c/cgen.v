@@ -349,7 +349,7 @@ pub fn gen(files []&ast.File, mut table ast.Table, pref_ &pref.Preferences) GenO
 		json_forward_decls:   strings.new_builder(100)
 		sql_buf:              strings.new_builder(100)
 		table:                table
-		pref:                 pref_
+		pref:                 unsafe { pref_ }
 		fn_decl:              unsafe { nil }
 		anon_fn:              unsafe { nil }
 		is_autofree:          pref_.autofree
