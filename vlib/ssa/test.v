@@ -15,6 +15,15 @@ fn fib(n int) int {
 	return fib(n - 1) + fib(n - 2)
 }
 
+fn sum_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
+	return a + b + c + d + e + f + g + h
+}
+
+fn modify_struct(mut p Point) {
+	p.x = 999
+	p.y = 888
+}
+
 // Helper function to test calls
 fn add(a int, b int) int {
 	return a + b
@@ -143,4 +152,21 @@ fn main() {
 		r++
 	}
 	print_int(count)
+	// 10. Infinite Loop
+	mut iter := 0
+	for {
+		iter++
+		if iter == 5 {
+			break
+		}
+	}
+	print_int(iter)
+
+	// 11. Many Arguments (8 args to fill registers x0-x7)
+	print_int(sum_many(1, 1, 1, 1, 1, 1, 1, 1))
+
+	// 12. Modifying struct (Reference semantics)
+	// modify_struct(mut p)
+	// print_str('p.x after modification via a function call:')
+	// print_int(p.x) // Should be 999
 }
