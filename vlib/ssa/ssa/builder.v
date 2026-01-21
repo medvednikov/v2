@@ -734,8 +734,9 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 
 			// Safety check for index
 			if idx >= val_typ.fields.len {
-				// FIX for MVP: Allow accessing "first field" of non-struct (like string passed as int)
-				// If we access index 0 of a non-struct type, treat the base as the value.
+				// TODO: The builder currently maps all function parameters to int64.
+				// This workaround allows accessing the first field of such "opaque" types
+				// (like s.str where s is int64) by returning the base address, as field 0 is at
 				if idx == 0 && val_typ.kind != .struct_t {
 					return actual_base
 				}
