@@ -121,7 +121,7 @@ fn (mut b Builder) stmts(stmts []ast.Stmt) {
 }
 
 fn (mut b Builder) stmt(node ast.Stmt) {
-	println('stmt ${node}')
+	// println('stmt ${node}')
 	match node {
 		ast.AssignStmt {
 			// x := 10 or x = 10
