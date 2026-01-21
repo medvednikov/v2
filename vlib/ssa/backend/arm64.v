@@ -130,7 +130,8 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 		if i + 1 < g.used_regs.len {
 			r2 = g.used_regs[i + 1]
 		}
-		code := 0xA9BF0000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+		// code := 0xA9BF0000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+		code := 0xA9BF0000 | (u32(r2) << 10) | (31 << 5) | u32(r1)
 		g.emit(code)
 	}
 
@@ -267,7 +268,8 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 					r2 = g.used_regs[base + 1]
 				}
 				// ldp r1, r2, [sp], 16
-				code := 0xA8C10000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+				// code := 0xA8C10000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+				code := 0xA8C10000 | (u32(r2) << 10) | (31 << 5) | u32(r1)
 				g.emit(code)
 				j -= 2
 			}
