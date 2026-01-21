@@ -8,6 +8,13 @@ __global (
 	g_val int
 )
 
+fn fib(n int) int {
+	if n < 2 {
+		return n
+	}
+	return fib(n - 1) + fib(n - 2)
+}
+
 // Helper function to test calls
 fn add(a int, b int) int {
 	return a + b
@@ -67,6 +74,7 @@ fn main() {
 		x: 10
 		y: 20
 	}
+	// C.printf(c'Point address: %d\n', &p)
 	print_int(p.x)
 	print_int(p.y)
 
@@ -111,4 +119,28 @@ fn main() {
 		2 { print_int(x + 2) }
 		else { print_int(777) }
 	}
+
+	// 7. C-style Loop & Factorial
+	mut fact := 1
+	for k := 1; k <= 5; k++ {
+		fact = fact * k
+	}
+	print_int(fact)
+
+	// 8. Recursive Fib
+	print_str('fib(10)=')
+	print_int(fib(10))
+
+	// 9. Nested Loops
+	mut r := 0
+	mut count := 0
+	for r < 3 {
+		mut c := 0
+		for c < 3 {
+			count++
+			c++
+		}
+		r++
+	}
+	print_int(count)
 }
