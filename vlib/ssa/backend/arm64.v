@@ -126,7 +126,7 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	// Save callee-saved regs
 	for i := 0; i < g.used_regs.len; i += 2 {
 		r1 := g.used_regs[i]
-		mut r2 := r1 // dummy
+		mut r2 := 31 // xzr // r1 // dummy
 		if i + 1 < g.used_regs.len {
 			r2 = g.used_regs[i + 1]
 		}
@@ -254,7 +254,10 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			if instr.operands.len > 0 {
 				g.load_val_to_reg(0, instr.operands[0])
 			}
-			g.emit(0x910003BF)
+			// Reset SP to the bottom of the callee-saved registers area
+			// SP = FP - callee_saved_size
+			callee_size := ((g.used_regs.len + 1) / 2) * 16
+			g.emit(0xD1000000 | (u32(callee_size) << 10) | (29 << 5) | 31)
 			// Restore callee-saved regs
 			mut j := g.used_regs.len
 			if j % 2 != 0 {
@@ -263,7 +266,8 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			for j > 0 {
 				base := j - 2
 				r1 := g.used_regs[base]
-				mut r2 := r1
+				// mut r2 := r1
+				mut r2 := 31 // xzr // r1 // dummy
 				if base + 1 < g.used_regs.len {
 					r2 = g.used_regs[base + 1]
 				}
