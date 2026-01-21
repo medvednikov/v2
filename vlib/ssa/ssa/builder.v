@@ -734,6 +734,11 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 
 			// Safety check for index
 			if idx >= val_typ.fields.len {
+				// FIX for MVP: Allow accessing "first field" of non-struct (like string passed as int)
+				// If we access index 0 of a non-struct type, treat the base as the value.
+				if idx == 0 && val_typ.kind != .struct_t {
+					return actual_base
+				}
 				// If fields are empty (e.g. type resolution failed), prevent panic
 				// Return a dummy value or handle error
 				println('SSA Error: Struct fields empty or index out of bounds')
