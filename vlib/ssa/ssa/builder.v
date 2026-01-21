@@ -44,7 +44,7 @@ pub fn (mut b Builder) build(file ast.File) {
 	for stmt in file.stmts {
 		if stmt is ast.FnDecl {
 			// For MVP, assume (i32, i32) -> i32
-			i32_t := b.mod.type_store.get_int(32)
+			i32_t := b.mod.type_store.get_int(64)
 
 			// Map params
 			mut param_types := []TypeID{}
@@ -79,7 +79,7 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	b.cur_block = entry
 
 	// Define Arguments
-	i32_t := b.mod.type_store.get_int(32)
+	i32_t := b.mod.type_store.get_int(64)
 
 	// FIX: Access params via decl.typ.params
 	for _, param in decl.typ.params {
@@ -259,7 +259,7 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			// Simplification: Assume all fields are i32 for this demo unless specified
 			mut field_types := []TypeID{}
 			for _ in node.fields {
-				field_types << b.mod.type_store.get_int(32)
+				field_types << b.mod.type_store.get_int(64)
 			}
 
 			// We manually constructing the struct type in the store
@@ -272,7 +272,7 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			b.mod.type_store.register(t)
 		}
 		ast.GlobalDecl {
-			i32_t := b.mod.type_store.get_int(32)
+			i32_t := b.mod.type_store.get_int(64)
 			for field in node.fields {
 				// Register global
 				b.mod.add_global(field.name, i32_t, false)
@@ -334,7 +334,7 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 		else {
 			println('Builder: Unhandled expr ${node.type_name()}')
 			// Return constant 0 (i32) to prevent cascading void errors
-			i32_t := b.mod.type_store.get_int(32)
+			i32_t := b.mod.type_store.get_int(64)
 			return b.mod.add_value_node(.constant, i32_t, '0', 0)
 		}
 	}
@@ -343,11 +343,11 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 fn (mut b Builder) expr_basic_literal(node ast.BasicLiteral) ValueID {
 	if node.kind == .number {
 		// Constant
-		i32_t := b.mod.type_store.get_int(32)
+		i32_t := b.mod.type_store.get_int(64)
 		val := b.mod.add_value_node(.constant, i32_t, node.value, 0)
 		return val
 	} else if node.kind in [.key_true, .key_false] {
-		i32_t := b.mod.type_store.get_int(32)
+		i32_t := b.mod.type_store.get_int(64)
 		val_str := if node.kind == .key_true { '1' } else { '0' }
 		val := b.mod.add_value_node(.constant, i32_t, val_str, 0)
 		return val
@@ -385,11 +385,11 @@ fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
 	// We assume fields in InitExpr are in order for this demo
 	for i, field in node.fields {
 		val := b.expr(field.value)
-		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(32), i.str(),
+		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), i.str(),
 			0)
 
 		// GEP to field
-		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(b.mod.type_store.get_int(32)),
+		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(b.mod.type_store.get_int(64)),
 			[struct_ptr, idx_val])
 		b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
 	}
@@ -401,14 +401,14 @@ fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
 fn (mut b Builder) expr_selector(node ast.SelectorExpr) ValueID {
 	// Load value from field
 	ptr := b.addr(node)
-	i32_t := b.mod.type_store.get_int(32) // Assume i32
+	i32_t := b.mod.type_store.get_int(64) // Assume i32
 	return b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
 }
 
 fn (mut b Builder) expr_index(node ast.IndexExpr) ValueID {
 	// Load value from index
 	ptr := b.addr(node)
-	i32_t := b.mod.type_store.get_int(32) // Assume i32
+	i32_t := b.mod.type_store.get_int(64) // Assume i32
 	return b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
 }
 
@@ -431,7 +431,7 @@ fn (mut b Builder) expr_infix(node ast.InfixExpr) ValueID {
 		else { OpCode.add }
 	}
 
-	i32_t := b.mod.type_store.get_int(32)
+	i32_t := b.mod.type_store.get_int(64)
 	return b.mod.add_instr(op, b.cur_block, i32_t, [left, right])
 }
 
@@ -567,7 +567,7 @@ fn (mut b Builder) expr_call(node ast.CallExpr) ValueID {
 	fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
 	args.prepend(fn_val)
 	// For this demo, assuming ret type i32
-	i32_t := b.mod.type_store.get_int(32)
+	i32_t := b.mod.type_store.get_int(64)
 	// Note: In real compiler, we need to lookup Function ID by name to get correct ret type
 	return b.mod.add_instr(.call, b.cur_block, i32_t, args)
 }
@@ -595,13 +595,13 @@ fn (mut b Builder) expr_call_or_cast(node ast.CallOrCastExpr) ValueID {
 	}
 	fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
 	args.prepend(fn_val)
-	i32_t := b.mod.type_store.get_int(32)
+	i32_t := b.mod.type_store.get_int(64)
 	return b.mod.add_instr(.call, b.cur_block, i32_t, args)
 }
 
 fn (mut b Builder) expr_prefix(node ast.PrefixExpr) ValueID {
 	right := b.expr(node.expr)
-	i32_t := b.mod.type_store.get_int(32)
+	i32_t := b.mod.type_store.get_int(64)
 	match node.op {
 		.minus {
 			zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
@@ -623,7 +623,7 @@ fn (mut b Builder) expr_postfix(node ast.PostfixExpr) ValueID {
 		name := (node.expr as ast.Ident).name
 		if ptr := b.vars[name] {
 			if ptr != 0 {
-				i32_t := b.mod.type_store.get_int(32)
+				i32_t := b.mod.type_store.get_int(64)
 
 				// 1. Load current value
 				old_val := b.mod.add_instr(.load, b.cur_block, i32_t, [ptr])
@@ -740,7 +740,7 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 				return 0
 			}
 
-			idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(32), idx.str(),
+			idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), idx.str(),
 				0)
 
 			// GEP
