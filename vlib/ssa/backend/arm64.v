@@ -15,6 +15,10 @@ mut:
 
 	block_offsets  map[int]int
 	pending_labels map[int][]int
+
+	// Register allocation
+	reg_map   map[int]int
+	used_regs []int
 }
 
 pub fn Arm64Gen.new(mod &ssa.Module) &Arm64Gen {
@@ -60,6 +64,9 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	g.alloca_offsets = map[int]int{}
 	g.block_offsets = map[int]int{}
 	g.pending_labels = map[int][]int{}
+	g.reg_map = map[int]int{}
+	g.used_regs = []int{}
+	g.allocate_registers(func)
 
 	// Stack Frame
 	mut slot_offset := 8
@@ -78,6 +85,9 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 			}
 			instr := g.mod.instrs[val.index]
 
+			if val_id in g.reg_map {
+				continue
+			}
 			// Assign slot for result of instruction (or pointer for alloca)
 			g.stack_map[val_id] = -slot_offset
 			slot_offset += 8
@@ -112,13 +122,29 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 	// Prologue
 	g.emit(0xA9BF7BFD) // stp fp, lr, [sp, -16]!
 	g.emit(0x910003FD) // mov fp, sp
+
+	// Save callee-saved regs
+	for i := 0; i < g.used_regs.len; i += 2 {
+		r1 := g.used_regs[i]
+		mut r2 := r1 // dummy
+		if i + 1 < g.used_regs.len {
+			r2 = g.used_regs[i + 1]
+		}
+		code := 0xA9BF0000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+		g.emit(code)
+	}
+
 	g.emit_sub_sp(g.stack_size)
 
 	// Spill params
 	for i, pid in func.params {
-		offset := g.stack_map[pid]
 		if i < 8 {
-			g.emit_str_reg_offset(i, 29, offset)
+			if reg := g.reg_map[pid] {
+				g.emit_mov_reg(reg, i)
+			} else {
+				offset := g.stack_map[pid]
+				g.emit_str_reg_offset(i, 29, offset)
+			}
 		}
 	}
 
@@ -228,6 +254,23 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				g.load_val_to_reg(0, instr.operands[0])
 			}
 			g.emit(0x910003BF)
+			// Restore callee-saved regs
+			mut j := g.used_regs.len
+			if j % 2 != 0 {
+				j += 1
+			}
+			for j > 0 {
+				base := j - 2
+				r1 := g.used_regs[base]
+				mut r2 := r1
+				if base + 1 < g.used_regs.len {
+					r2 = g.used_regs[base + 1]
+				}
+				// ldp r1, r2, [sp], 16
+				code := 0xA8C10000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+				g.emit(code)
+				j -= 2
+			}
 			g.emit(0xA8C17BFD)
 			g.emit(0xD65F03C0)
 		}
@@ -379,14 +422,26 @@ fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
 		g.emit(0xF9400000 | u32(reg) | (u32(reg) << 5))
 	} else {
 		// Handles .instruction, .argument, etc.
-		offset := g.stack_map[val_id]
-		g.emit_ldr_reg_offset(reg, 29, offset)
+		if reg_idx := g.reg_map[val_id] {
+			if reg_idx != reg {
+				g.emit_mov_reg(reg, reg_idx)
+			}
+		} else {
+			offset := g.stack_map[val_id]
+			g.emit_ldr_reg_offset(reg, 29, offset)
+		}
 	}
 }
 
 fn (mut g Arm64Gen) store_reg_to_val(reg int, val_id int) {
-	offset := g.stack_map[val_id]
-	g.emit_str_reg_offset(reg, 29, offset)
+	if reg_idx := g.reg_map[val_id] {
+		if reg_idx != reg {
+			g.emit_mov_reg(reg_idx, reg)
+		}
+	} else {
+		offset := g.stack_map[val_id]
+		g.emit_str_reg_offset(reg, 29, offset)
+	}
 }
 
 fn (mut g Arm64Gen) emit_sub_sp(imm int) {
@@ -449,4 +504,94 @@ fn (mut g Arm64Gen) emit_mov_imm(rd int, imm u64) {
 	// Assume imm < 65536; use MOVZ xd, #imm
 	g.emit(0xD2800000 | (u32(imm & 0xFFFF) << 5) | u32(rd))
 	// For larger imm, add MOVK(s), but not needed for stack sizes.
+}
+
+fn (mut g Arm64Gen) emit_mov_reg(rd int, rm int) {
+	// ORR xd, xzr, xm
+	g.emit(0xAA0003E0 | (u32(rm) << 16) | u32(rd))
+}
+
+struct Interval {
+mut:
+	val_id int
+	start  int
+	end    int
+}
+
+fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
+	mut intervals := map[int]&Interval{}
+	mut instr_idx := 0
+
+	for pid in func.params {
+		intervals[pid] = &Interval{
+			val_id: pid
+			start:  0
+			end:    0
+		}
+	}
+
+	for blk_id in func.blocks {
+		blk := g.mod.blocks[blk_id]
+		for val_id in blk.instrs {
+			val := g.mod.values[val_id]
+			if val.kind == .instruction || val.kind == .argument {
+				if unsafe { intervals[val_id] == nil } {
+					intervals[val_id] = &Interval{
+						val_id: val_id
+						start:  instr_idx
+						end:    instr_idx
+					}
+				}
+			}
+
+			instr := g.mod.instrs[val.index]
+			for op in instr.operands {
+				if g.mod.values[op].kind in [.instruction, .argument] {
+					if mut interval := intervals[op] {
+						if instr_idx > interval.end {
+							interval.end = instr_idx
+						}
+					}
+				}
+			}
+			instr_idx++
+		}
+	}
+
+	mut sorted := []&Interval{}
+	for _, i in intervals {
+		sorted << i
+	}
+	sorted.sort(a.start < b.start)
+
+	mut active := []&Interval{}
+	// x19..x28
+	regs := [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+
+	for i in sorted {
+		for j := 0; j < active.len; j++ {
+			if active[j].end < i.start {
+				active.delete(j)
+				j--
+			}
+		}
+
+		if active.len < regs.len {
+			mut used := []bool{len: 32, init: false}
+			for a in active {
+				used[g.reg_map[a.val_id]] = true
+			}
+			for r in regs {
+				if !used[r] {
+					g.reg_map[i.val_id] = r
+					active << i
+					if r !in g.used_regs {
+						g.used_regs << r
+					}
+					break
+				}
+			}
+		}
+	}
+	g.used_regs.sort()
 }
