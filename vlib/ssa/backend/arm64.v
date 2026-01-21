@@ -47,7 +47,8 @@ pub fn (mut g Arm64Gen) gen() {
 
 	// Patch symbol addresses
 	cstring_base := u64(g.macho.text_data.len)
-	data_base := cstring_base + u64(g.macho.str_data.len)
+	// Align data section to 8 bytes
+	data_base := (cstring_base + u64(g.macho.str_data.len) + 7) & ~7
 
 	for mut sym in g.macho.symbols {
 		if sym.sect == 2 {
@@ -420,12 +421,12 @@ fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
 		}
 	} else if val.kind == .global {
 		sym_idx := g.macho.add_undefined('_' + val.name)
-		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_got_load_page21,
+		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_page21,
 			true)
 		g.emit(0x90000000 | u32(reg))
-		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_got_load_pageoff12,
+		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_pageoff12,
 			false)
-		g.emit(0xF9400000 | u32(reg) | (u32(reg) << 5))
+		g.emit(0x91000000 | u32(reg) | (u32(reg) << 5))
 	} else {
 		// Handles .instruction, .argument, etc.
 		if reg_idx := g.reg_map[val_id] {
