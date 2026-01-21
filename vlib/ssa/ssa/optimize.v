@@ -220,6 +220,15 @@ fn (mut m Module) promote_memory_to_register() {
 			}
 		}
 
+		// FIX: Insert Phis BEFORE renaming, so predecessors can populate them.
+		for blk_id, allocs in ctx.phi_placements {
+			for alloc_id in allocs {
+				typ := m.type_store.types[m.values[alloc_id].typ].elem_type
+				phi_val := m.add_instr_front(.phi, blk_id, typ, [])
+				m.values[phi_val].name = '${m.values[alloc_id].name}.phi'
+			}
+		}
+
 		// 3. Rename Variables
 		if func.blocks.len > 0 {
 			entry := func.blocks[0]
@@ -284,13 +293,24 @@ fn (mut m Module) compute_dominance_frontier(func Function) map[int][]int {
 fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 	blk := m.blocks[blk_id]
 
-	// 1. Insert Phis defined in this block
+	// 1. Push Phis to stack
+	// Phis were already inserted. We need to find them and push to stack
+	// so that uses in this block refer to the Phi result.
 	if phis := ctx.phi_placements[blk_id] {
 		for alloc_id in phis {
-			typ := m.type_store.types[m.values[alloc_id].typ].elem_type
-			phi_val := m.add_instr_front(.phi, blk_id, typ, [])
-			m.values[phi_val].name = '${m.values[alloc_id].name}.phi'
-			ctx.stacks[alloc_id] << phi_val
+			// Find the Phi for this alloc_id
+			name := '${m.values[alloc_id].name}.phi'
+			for val_id in blk.instrs {
+				// Phis are at the front, so this loop terminates early
+				instr := m.instrs[m.values[val_id].index]
+				if instr.op != .phi {
+					break
+				}
+				if m.values[val_id].name == name {
+					ctx.stacks[alloc_id] << val_id
+					break
+				}
+			}
 		}
 	}
 
