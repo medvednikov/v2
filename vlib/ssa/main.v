@@ -8,6 +8,11 @@ import ssa
 import backend
 import time
 
+enum Arch {
+	arm64
+	x64
+}
+
 fn main() {
 	println('--- V Compiler Pipeline ---')
 
@@ -43,14 +48,23 @@ fn main() {
 	println('[*] Optimizing SSA...')
 	mod.optimize()
 
-	native := true
+	native := false
+
+	arch := Arch.x64 // Arch.arm64
 
 	if native {
-		// Generate Mach-O Object
-		println('[*] Generating Mach-O ARM64 Object...')
-		mut arm_gen := backend.Arm64Gen.new(mod)
-		arm_gen.gen()
-		arm_gen.write_file('main.o')
+		if arch == .arm64 {
+			// Generate Mach-O Object
+			println('[*] Generating Mach-O ARM64 Object...')
+			mut arm_gen := backend.Arm64Gen.new(mod)
+			arm_gen.gen()
+			arm_gen.write_file('main.o')
+		} else if arch == .x64 {
+			println('[*] Generating ELF AMD64 Object...')
+			mut x64_gen := backend.X64Gen.new(mod)
+			x64_gen.gen()
+			x64_gen.write_file('main.o')
+		}
 
 		println('generating main.o took ${time.since(t0)}')
 		// Link
