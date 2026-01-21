@@ -85,13 +85,6 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 			}
 			instr := g.mod.instrs[val.index]
 
-			if val_id in g.reg_map {
-				continue
-			}
-			// Assign slot for result of instruction (or pointer for alloca)
-			g.stack_map[val_id] = -slot_offset
-			slot_offset += 8
-
 			if instr.op == .alloca {
 				// Reserve 64 bytes for data.
 				// Align to 16 bytes.
@@ -112,6 +105,13 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 				// So we need to bump it so next gets -104.
 				slot_offset += 8
 			}
+
+			if val_id in g.reg_map {
+				continue
+			}
+			// Assign slot for result of instruction (or pointer for alloca)
+			g.stack_map[val_id] = -slot_offset
+			slot_offset += 8
 		}
 	}
 
