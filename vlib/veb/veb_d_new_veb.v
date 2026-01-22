@@ -113,10 +113,11 @@ fn handle_request_and_route[A, X](mut app A, req http.Request, client_fd int, pa
 	page_gen_start := if params.benchmark_page_generation { time.ticks() } else { 0 }
 	mut ctx := &Context{
 		req:            req
-		page_gen_start: time.ticks()
-		query:          query
-		form:           form
-		files:          files
+		page_gen_start: page_gen_start
+		// page_gen_start: time.ticks()
+		query: query
+		form:  form
+		files: files
 	}
 	if connection_header := req.header.get(.connection) {
 		if connection_header.to_lower() == 'close' {
