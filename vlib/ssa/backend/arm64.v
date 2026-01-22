@@ -416,16 +416,49 @@ fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
 			g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_pageoff12, false)
 			g.emit(0x91000000 | u32(reg) | (u32(reg) << 5))
 		} else {
-			int_val := val.name.int()
-			g.emit(0xD2800000 | (u32(int_val) << 5) | u32(reg))
+			int_val := val.name.i64()
+
+			// Handle 0 specifically (XZR is register 31, but we want to move 0 into a register)
+			if int_val == 0 {
+				g.emit_mov_reg(reg, 31) // mov reg, xzr
+			} else if int_val > 0 && int_val <= 0xFFFF {
+				// MOVZ xd, #imm16
+				g.emit(0xD2800000 | (u32(int_val) << 5) | u32(reg))
+			} else {
+				// For large integers, use the literal pool (same as strings/globals)
+				// This is easier than generating multiple MOVK instructions for this architecture setup
+
+				// 1. Add to literal pool (reusing .rodata/str_data logic or creating a new int pool)
+				// For simplicity here, we append raw bytes to the Mach-O text/data and use a relocation
+				// But since we have a MachOObject wrapper, let's use the literal pool approach:
+
+				// Write 8 bytes (64-bit int)
+				lit_off := g.macho.data_data.len
+				write_u64_le(mut g.macho.data_data, u64(int_val))
+
+				// Create a symbol for this literal
+				sym_name := 'L_int_${lit_off}'
+
+				// Add symbol to section 3 (__data)
+				// Note: In real Mach-O, literals usually go to __text or __const, but __data works for this toy
+				sym_idx := g.macho.add_symbol(sym_name, u64(lit_off), false, 3)
+
+				// ADRP (Page)
+				g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_got_load_page21,
+					true)
+				g.emit(0x90000000 | u32(reg))
+
+				// LDR (Offset)
+				g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_got_load_pageoff12,
+					false)
+				g.emit(0xF9400000 | u32(reg) | (u32(reg) << 5))
+			}
 		}
 	} else if val.kind == .global {
 		sym_idx := g.macho.add_undefined('_' + val.name)
-		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_page21,
-			true)
+		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_page21, true)
 		g.emit(0x90000000 | u32(reg))
-		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_pageoff12,
-			false)
+		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_pageoff12, false)
 		g.emit(0x91000000 | u32(reg) | (u32(reg) << 5))
 	} else {
 		// Handles .instruction, .argument, etc.
