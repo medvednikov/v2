@@ -257,10 +257,18 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 				}
 			}
 			fn_val := g.mod.values[instr.operands[0]]
+
+			// xor eax, eax (Clear AL for variadic function calls)
+			g.emit(0x31)
+			g.emit(0xC0)
+
 			g.emit(0xE8) // call rel32
 			sym_idx := g.elf.add_undefined(fn_val.name)
-			g.elf.add_text_reloc(u64(g.elf.text_data.len), sym_idx, 2, -4)
+
+			// Use R_X86_64_PLT32 (4) for function calls to support shared libraries (libc)
+			g.elf.add_text_reloc(u64(g.elf.text_data.len), sym_idx, 4, -4)
 			g.emit_u32(0)
+
 			if g.mod.type_store.types[g.mod.values[val_id].typ].kind != .void_t {
 				g.store_reg_to_val(0, val_id)
 			}
