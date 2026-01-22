@@ -100,8 +100,14 @@ fn main() {
 		println('linking took ${time.since(t)}')
 	} else {
 		// 5. Generate C Code
-		println('[*] Generating C Backend...')
-		mut c_gen := backend.CGen.new(mod)
+		// println('[*] Generating C Backend...')
+		// mut c_gen := backend.CGen.new(mod)
+
+		// 5. Generate Clean C Code
+		println('[*] Generating Clean C Backend...')
+		// We use the file AST directly instead of SSA for readable C
+		mut c_gen := backend.CleanCGen.new(file)
+
 		c_source := c_gen.gen()
 
 		os.write_file('out.c', c_source) or { panic(err) }
