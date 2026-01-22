@@ -173,4 +173,18 @@ fn main() {
 	// modify_struct(mut p)
 	// print_str('p.x after modification via a function call:')
 	// print_int(p.x) // Should be 999
+
+	// 13. Assert (Should pass)
+	assert 1 == 1
+	print_str('Assert passed')
+
+	/*
+	// 14. Heap allocation
+	p2 := &Point{
+		x: 10
+		y: 20
+	}
+	print_str('allocated &Point{}:')
+	print_int(p2.x)
+	*/
 }
