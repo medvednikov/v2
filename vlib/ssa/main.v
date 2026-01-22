@@ -50,7 +50,10 @@ fn main() {
 
 	native := true
 
-	arch := Arch.x64 // Arch.arm64
+	mut arch := Arch.arm64
+	if os.args.contains('x64') {
+		arch = .x64
+	}
 
 	if native {
 		if arch == .arm64 {
