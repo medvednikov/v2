@@ -5,7 +5,7 @@ pub fn (mut m Module) optimize() {
 	// 1. Build Control Flow Graph (Predecessors)
 	m.build_cfg()
 
-	// 2. Compute Dominator Tree
+	// 2. Compute Dominator Tree (Lengauer-Tarjan)
 	m.compute_dominators()
 
 	// 3. Promote Memory to Register (Construct SSA / Phi Nodes)
@@ -59,62 +59,100 @@ fn (mut m Module) build_cfg() {
 	}
 }
 
-// --- 2. Dominators (Lengauer-Tarjan / Iterative) ---
+// --- 2. Dominators (Lengauer-Tarjan) ---
+
+struct LTContext {
+mut:
+	parent   []int   // DFS tree parent
+	semi     []int   // Semidominator (BlockID)
+	vertex   []int   // Map DFS number -> BlockID
+	bucket   [][]int // bucket[w] = set of vertices v s.t. semi[v] = w
+	dfnum    []int   // DFS number (0 means unvisited)
+	ancestor []int   // DSU parent
+	label    []int   // DSU label (min semi in path)
+	n        int     // Counter
+}
+
 fn (mut m Module) compute_dominators() {
 	for func in m.funcs {
 		if func.blocks.len == 0 {
 			continue
 		}
 
-		entry := func.blocks[0]
+		// Calculate total block count to size arrays correctly
+		// Note: func.blocks contains IDs, max_id could be larger than len
+		max_id := m.blocks.len
 
-		// Initialize
+		mut ctx := LTContext{
+			parent:   []int{len: max_id, init: -1}
+			semi:     []int{len: max_id, init: -1}
+			vertex:   []int{len: max_id, init: -1} // we only need size = func.blocks.len + 1 actually
+			bucket:   [][]int{len: max_id}
+			dfnum:    []int{len: max_id, init: 0}
+			ancestor: []int{len: max_id, init: -1}
+			label:    []int{len: max_id, init: -1}
+			n:        0
+		}
+
+		// Initialize DSU labels
 		for blk_id in func.blocks {
+			ctx.label[blk_id] = blk_id
+			ctx.semi[blk_id] = blk_id
+			// Initialize idom to -1
 			m.blocks[blk_id].idom = -1
 		}
-		m.blocks[entry].idom = entry
 
-		mut rpo := m.get_rpo(func)
+		entry := func.blocks[0]
+		m.lt_dfs(entry, mut ctx)
 
-		mut changed := true
-		for changed {
-			changed = false
-			// for blk_id in func.blocks {
-			for blk_id in rpo {
-				if blk_id == entry {
+		// Process in reverse DFS order (skip root)
+		for i := ctx.n; i >= 2; i-- {
+			w := ctx.vertex[i]
+
+			// 1. Calculate Semidominator
+			for p in m.blocks[w].preds {
+				// Only process reachable predecessors
+				if ctx.dfnum[p] == 0 {
 					continue
 				}
 
-				preds := m.blocks[blk_id].preds
-				if preds.len == 0 {
-					continue
-				}
-
-				mut new_idom := -1
-				// Find first processed pred
-				for p in preds {
-					if m.blocks[p].idom != -1 {
-						new_idom = p
-						break
-					}
-				}
-
-				if new_idom == -1 {
-					continue
-				}
-
-				for p in preds {
-					if p != new_idom && m.blocks[p].idom != -1 {
-						new_idom = m.intersect(p, new_idom)
-					}
-				}
-
-				if m.blocks[blk_id].idom != new_idom {
-					m.blocks[blk_id].idom = new_idom
-					changed = true
+				u := ctx.eval(p)
+				if ctx.dfnum[ctx.semi[u]] < ctx.dfnum[ctx.semi[w]] {
+					ctx.semi[w] = ctx.semi[u]
 				}
 			}
+
+			// Add w to bucket of its semidominator
+			ctx.bucket[ctx.semi[w]] << w
+
+			// Link to parent in forest
+			ctx.link(ctx.parent[w], w)
+
+			// 2. Implicitly compute IDom
+			parent_w := ctx.parent[w]
+			// Drain bucket of parent
+			// Note: We copy to iterate because we might clear/modify?
+			// Standard algo drains bucket[parent_w] now.
+			for v in ctx.bucket[parent_w] {
+				u := ctx.eval(v)
+				if ctx.semi[u] == ctx.semi[v] {
+					m.blocks[v].idom = parent_w
+				} else {
+					m.blocks[v].idom = u // Deferred: idom[v] = idom[u]
+				}
+			}
+			ctx.bucket[parent_w] = []
 		}
+
+		// 3. Explicitly compute IDom
+		for i := 2; i <= ctx.n; i++ {
+			w := ctx.vertex[i]
+			if m.blocks[w].idom != ctx.vertex[ctx.dfnum[ctx.semi[w]]] {
+				m.blocks[w].idom = m.blocks[m.blocks[w].idom].idom
+			}
+		}
+
+		m.blocks[entry].idom = entry
 
 		// Build Dom Tree Children
 		for blk_id in func.blocks {
@@ -129,31 +167,47 @@ fn (mut m Module) compute_dominators() {
 	}
 }
 
-fn (m Module) intersect(b1 int, b2 int) int {
-	mut finger1 := b1
-	mut finger2 := b2
+fn (mut m Module) lt_dfs(v int, mut ctx LTContext) {
+	ctx.n++
+	ctx.dfnum[v] = ctx.n
+	ctx.vertex[ctx.n] = v
 
-	mut ancestors := map[int]bool{}
-	mut curr := finger1
-	for curr != -1 {
-		ancestors[curr] = true
-		if curr == m.blocks[curr].idom {
-			break
+	for w in m.blocks[v].succs {
+		if ctx.dfnum[w] == 0 {
+			ctx.parent[w] = v
+			m.lt_dfs(w, mut ctx)
 		}
-		curr = m.blocks[curr].idom
 	}
+}
 
-	curr = finger2
-	for curr != -1 {
-		if ancestors[curr] {
-			return curr
+fn (mut ctx LTContext) compress(v int) {
+	if ctx.ancestor[ctx.ancestor[v]] != -1 {
+		ctx.compress(ctx.ancestor[v])
+
+		// Update label based on ancestor
+		if ctx.dfnum[ctx.semi[ctx.label[ctx.ancestor[v]]]] < ctx.dfnum[ctx.semi[ctx.label[v]]] {
+			ctx.label[v] = ctx.label[ctx.ancestor[v]]
 		}
-		if curr == m.blocks[curr].idom {
-			break
-		}
-		curr = m.blocks[curr].idom
+		ctx.ancestor[v] = ctx.ancestor[ctx.ancestor[v]]
 	}
-	return 0
+}
+
+fn (mut ctx LTContext) eval(v int) int {
+	if ctx.ancestor[v] == -1 {
+		return ctx.label[v]
+	}
+	ctx.compress(v)
+	// If label[ancestor[v]] is better than label[v], use it?
+	// The path compression updates label[v] to be the best in the path.
+	// However, standard EVAL checks:
+	if ctx.dfnum[ctx.semi[ctx.label[ctx.ancestor[v]]]] >= ctx.dfnum[ctx.semi[ctx.label[v]]] {
+		return ctx.label[v]
+	}
+	return ctx.label[ctx.ancestor[v]]
+}
+
+fn (mut ctx LTContext) link(v int, w int) {
+	ctx.ancestor[w] = v
 }
 
 // --- 3. Mem2Reg (Promote Allocas) ---
@@ -220,7 +274,7 @@ fn (mut m Module) promote_memory_to_register() {
 			}
 		}
 
-		// FIX: Insert Phis BEFORE renaming, so predecessors can populate them.
+		// Insert Phis
 		for blk_id, allocs in ctx.phi_placements {
 			for alloc_id in allocs {
 				typ := m.type_store.types[m.values[alloc_id].typ].elem_type
@@ -277,6 +331,7 @@ fn (mut m Module) compute_dominance_frontier(func Function) map[int][]int {
 			for p in preds {
 				mut runner := p
 				idom := m.blocks[blk_id].idom
+				// Safety check: idom != -1
 				for runner != -1 && runner != idom {
 					df[runner] << blk_id
 					if runner == m.blocks[runner].idom {
@@ -294,14 +349,10 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 	blk := m.blocks[blk_id]
 
 	// 1. Push Phis to stack
-	// Phis were already inserted. We need to find them and push to stack
-	// so that uses in this block refer to the Phi result.
 	if phis := ctx.phi_placements[blk_id] {
 		for alloc_id in phis {
-			// Find the Phi for this alloc_id
 			name := '${m.values[alloc_id].name}.phi'
 			for val_id in blk.instrs {
-				// Phis are at the front, so this loop terminates early
 				instr := m.instrs[m.values[val_id].index]
 				if instr.op != .phi {
 					break
@@ -341,7 +392,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 						repl = stack.last()
 					} else {
 						// Undef / Zero
-						// Use the type of the value being loaded
 						res_type := m.values[val_id].typ
 						repl = m.add_value_node(.constant, res_type, '0', 0)
 					}
@@ -430,14 +480,6 @@ fn (mut m Module) eliminate_phi_nodes() {
 
 fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	blk := m.blocks[blk_id]
-	if blk.instrs.len == 0 {
-		return
-	}
-
-	// Insert before terminator
-	// We need to identify valid insertion point.
-	// If the block ends with Br/Jmp/Ret, insert before it.
-	// If we just insert at end - 1, it should be fine for now.
 
 	typ := m.values[dest].typ
 	m.instrs << Instruction{
@@ -448,10 +490,16 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	}
 	val_id := m.add_value_node(.instruction, typ, 'copy', m.instrs.len - 1)
 
-	// Safety check: insert before last instruction
-	if m.blocks[blk_id].instrs.len > 0 {
-		m.blocks[blk_id].instrs.insert(m.blocks[blk_id].instrs.len - 1, val_id)
-	} else {
-		m.blocks[blk_id].instrs << val_id
+	// Safe insertion: find terminator
+	mut insert_idx := m.blocks[blk_id].instrs.len
+	if insert_idx > 0 {
+		last_val := m.blocks[blk_id].instrs.last()
+		last_instr := m.instrs[m.values[last_val].index]
+
+		if last_instr.op in [.ret, .br, .jmp, .switch_, .unreachable] {
+			insert_idx = m.blocks[blk_id].instrs.len - 1
+		}
 	}
+
+	m.blocks[blk_id].instrs.insert(insert_idx, val_id)
 }
