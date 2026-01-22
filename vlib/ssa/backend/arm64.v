@@ -182,11 +182,18 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 
 	match instr.op {
 		.add, .sub, .mul, .sdiv, .eq, .ne, .lt, .gt, .le, .ge {
-			g.load_val_to_reg(8, instr.operands[0])
-			// Check for immediate operand optimization.
-			// ARM64 arithmetic instructions like ADD/SUB support 12-bit immediates (0-4095).
+			// Optimization: Use actual registers if allocated, avoid shuffling to x8/x9
+			// Dest register
+			dest_reg := if r := g.reg_map[val_id] { r } else { 8 }
+
+			// Op0 (LHS)
+			lhs_reg := g.get_operand_reg(instr.operands[0], 8)
+
+			// Op1 (RHS) - Check immediate optimization
 			mut is_imm := false
 			mut imm_val := i64(0)
+			mut rhs_reg := 9 // Default scratch for RHS
+
 			op1 := g.mod.values[instr.operands[1]]
 			if op1.kind == .constant && instr.op in [.add, .sub] {
 				v := op1.name.i64()
@@ -197,52 +204,61 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			}
 
 			if !is_imm {
-				g.load_val_to_reg(9, instr.operands[1])
+				// Don't use x8 as scratch if LHS is in x8
+				scratch := if lhs_reg == 8 { 9 } else { 8 }
+				rhs_reg = g.get_operand_reg(instr.operands[1], scratch)
 			}
 
 			match instr.op {
 				.add {
 					if is_imm {
-						// ADD x8, x8, #imm
-						// Opcode 0x91000000: 0[1]01000100[imm12][Rn][Rd]
-						g.emit(0x91000000 | (u32(imm_val) << 10) | (8 << 5) | 8)
+						// ADD Rd, Rn, #imm
+						g.emit(0x91000000 | (u32(imm_val) << 10) | (u32(lhs_reg) << 5) | u32(dest_reg))
 					} else {
-						// ADD x8, x8, x9
-						g.emit(0x8B090108)
+						// ADD Rd, Rn, Rm
+						g.emit(0x8B000000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
 					}
 				}
 				.sub {
 					if is_imm {
-						// SUB x8, x8, #imm
-						// Opcode 0xD1000000: 1[1]01000100[imm12][Rn][Rd]
-						g.emit(0xD1000000 | (u32(imm_val) << 10) | (8 << 5) | 8)
+						// SUB Rd, Rn, #imm
+						g.emit(0xD1000000 | (u32(imm_val) << 10) | (u32(lhs_reg) << 5) | u32(dest_reg))
 					} else {
-						// SUB x8, x8, x9
-						g.emit(0xCB090108)
+						// SUB Rd, Rn, Rm
+						g.emit(0xCB000000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
 					}
 				}
 				.mul {
-					g.emit(0x9B097D08)
+					// MADD Rd, Rn, Rm, xzr (Ra=31) -> 0x9B007C00
+					g.emit(0x9B007C00 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
 				}
 				.sdiv {
-					g.emit(0x9AC90D08)
+					// SDIV Rd, Rn, Rm -> 0x9AC00C00
+					g.emit(0x9AC00C00 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
 				}
 				.eq, .ne, .lt, .gt, .le, .ge {
-					g.emit(0xEB09011F)
+					// CMP Rn, Rm (SUBS xzr, Rn, Rm) -> 0xEB00001F
+					g.emit(0xEB00001F | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5))
+
+					// CSET Rd, cond
 					code := match instr.op {
-						.eq { 0x9A9F17E8 }
-						.ne { 0x9A9F07E8 }
-						.lt { 0x9A9FA7E8 }
-						.gt { 0x9A9FD7E8 }
-						.le { 0x9A9FC7E8 }
-						.ge { 0x9A9FB7E8 }
+						.eq { 0x9A9F17E0 } // EQ
+						.ne { 0x9A9F07E0 } // NE
+						.lt { 0x9A9FA7E0 } // LT
+						.gt { 0x9A9FD7E0 } // GT
+						.le { 0x9A9FC7E0 } // LE
+						.ge { 0x9A9FB7E0 } // GE
 						else { 0 }
 					}
-					g.emit(u32(code))
+					g.emit(u32(code) | u32(dest_reg))
 				}
 				else {}
 			}
-			g.store_reg_to_val(8, val_id)
+			// If dest_reg was not the allocated one (e.g. was 8), move it.
+			// Only if spilled (not in reg_map) do we need to store.
+			if val_id !in g.reg_map {
+				g.store_reg_to_val(dest_reg, val_id)
+			}
 		}
 		.store {
 			g.load_val_to_reg(8, instr.operands[0])
@@ -250,9 +266,15 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			g.emit(0xF9000128)
 		}
 		.load {
-			g.load_val_to_reg(9, instr.operands[0])
-			g.emit(0xF9400128)
-			g.store_reg_to_val(8, val_id)
+			ptr_reg := g.get_operand_reg(instr.operands[0], 9)
+			dest_reg := if r := g.reg_map[val_id] { r } else { 8 }
+
+			// LDR Rd, [Rn] -> 0xF9400000
+			g.emit(0xF9400000 | (u32(ptr_reg) << 5) | u32(dest_reg))
+
+			if val_id !in g.reg_map {
+				g.store_reg_to_val(dest_reg, val_id)
+			}
 		}
 		.alloca {
 			data_off := g.alloca_offsets[val_id]
@@ -403,6 +425,16 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			exit(1)
 		}
 	}
+}
+
+fn (mut g Arm64Gen) get_operand_reg(val_id int, fallback int) int {
+	// If value is in a register, return it
+	if r := g.reg_map[val_id] {
+		return r
+	}
+	// Otherwise load it into fallback
+	g.load_val_to_reg(fallback, val_id)
+	return fallback
 }
 
 fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
