@@ -48,7 +48,7 @@ fn main() {
 	println('[*] Optimizing SSA...')
 	mod.optimize()
 
-	native := false
+	native := true
 
 	arch := Arch.x64 // Arch.arm64
 
