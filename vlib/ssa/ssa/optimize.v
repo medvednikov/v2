@@ -12,6 +12,7 @@ pub fn (mut m Module) optimize() {
 	m.promote_memory_to_register()
 
 	m.constant_fold()
+	m.dead_code_elimination()
 
 	// 4. Eliminate Phi Nodes (Lower to Copies for Backend)
 	m.eliminate_phi_nodes()
@@ -559,6 +560,52 @@ fn (mut m Module) constant_fold() {
 					}
 				}
 			}
+		}
+	}
+}
+
+fn (mut m Module) dead_code_elimination() {
+	mut changed := true
+	for changed {
+		changed = false
+		for func in m.funcs {
+			for blk_id in func.blocks {
+				mut blk := m.blocks[blk_id]
+				mut new_instrs := []int{}
+				for val_id in blk.instrs {
+					val := m.values[val_id]
+					// If converted to constant, it stays (backend handles it)
+					// If instruction, check uses and side effects
+					if val.kind == .instruction {
+						instr := m.instrs[val.index]
+						side_effects := instr.op in [.store, .call, .ret, .br, .jmp, .switch_,
+							.unreachable]
+						if !side_effects && val.uses.len == 0 {
+							// Kill
+							for op_id in instr.operands {
+								m.remove_use(op_id, val_id)
+							}
+							changed = true
+							continue
+						}
+					}
+					new_instrs << val_id
+				}
+				m.blocks[blk_id].instrs = new_instrs
+			}
+		}
+	}
+}
+
+fn (mut m Module) remove_use(val_id int, user_id int) {
+	if val_id >= m.values.len {
+		return
+	}
+	mut val := &m.values[val_id]
+	for i := 0; i < val.uses.len; i++ {
+		if val.uses[i] == user_id {
+			val.uses.delete(i)
+			break
 		}
 	}
 }
