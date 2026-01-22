@@ -154,7 +154,7 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 	// Temps: 0=RAX, 1=RCX
 
 	match instr.op {
-		.add, .sub, .mul, .eq, .ne, .lt, .gt, .le, .ge {
+		.add, .sub, .mul, .sdiv, .eq, .ne, .lt, .gt, .le, .ge {
 			g.load_val_to_reg(0, instr.operands[0]) // RAX
 			g.load_val_to_reg(1, instr.operands[1]) // RCX
 
@@ -174,6 +174,15 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 					g.emit(0x0F)
 					g.emit(0xAF)
 					g.emit(0xC1) // imul rax, rcx
+				}
+				.sdiv {
+					// cqo: sign-extend rax to rdx:rax
+					g.emit(0x48)
+					g.emit(0x99)
+					// idiv rcx
+					g.emit(0x48)
+					g.emit(0xF7)
+					g.emit(0xF9)
 				}
 				.eq, .ne, .lt, .gt, .le, .ge {
 					g.emit(0x48)
@@ -328,6 +337,10 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 				g.load_val_to_reg(0, instr.operands[0])
 				g.store_reg_to_val(0, val_id)
 			}
+		}
+		.phi {
+			// Phi nodes are eliminated by optimization (converted to assignments)
+			// but the instructions remain in the block. We ignore them here.
 		}
 		else {
 			eprintln('x64: unknown op ${instr.op}')
