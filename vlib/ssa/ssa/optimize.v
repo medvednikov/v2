@@ -17,6 +17,7 @@ pub fn (mut m Module) optimize() {
 	// 4. Scalar Optimizations
 	m.constant_fold()
 	m.dead_code_elimination()
+	m.merge_blocks()
 	m.remove_unreachable_blocks()
 
 	// 5. Eliminate Phi Nodes (Lower to Copies for Backend)
@@ -645,5 +646,93 @@ fn (mut m Module) remove_unreachable_blocks() {
 			}
 		}
 		func.blocks = new_blocks
+	}
+}
+
+fn (mut m Module) merge_blocks() {
+	// If Block A jumps unconditionally to B, and B has only A as predecessor:
+	// 1. Move instructions from B to A
+	// 2. Update A's successors to B's successors
+	// 3. Remove B
+
+	// We need to be careful about iteration while modifying.
+	// Loop until no changes.
+	mut changed := true
+	for changed {
+		changed = false
+		m.build_cfg() // Refresh preds
+
+		for mut func in m.funcs {
+			// We iterate through blocks.
+			// If we merge A->B, we can't merge B->C in same pass easily.
+			mut merged := map[int]bool{}
+
+			for blk_id in func.blocks {
+				if merged[blk_id] {
+					continue
+				}
+				blk := m.blocks[blk_id]
+
+				// Check if unconditional jump
+				if blk.instrs.len > 0 {
+					last_val := blk.instrs.last()
+					last_instr := m.instrs[m.values[last_val].index]
+
+					if last_instr.op == .jmp {
+						target_val := last_instr.operands[0]
+						target_id := m.get_block_from_val(target_val)
+
+						// Candidate: target_id
+						if target_id != blk_id && m.blocks[target_id].preds.len == 1
+							&& m.blocks[target_id].preds[0] == blk_id {
+							// MERGE
+							// Remove JMP from A
+							m.blocks[blk_id].instrs.delete_last()
+
+							// Append B's instrs to A
+							m.blocks[blk_id].instrs << m.blocks[target_id].instrs
+
+							// Update instructions in B to point to A (for their 'block' field)?
+							// Not strictly needed if we just use the list.
+							// But we need to update Phis in successors of B?
+							// If B has successors, their Phis might refer to B.
+							// Since B is gone, they now refer to A.
+							for succ_id in m.blocks[target_id].succs {
+								succ := m.blocks[succ_id]
+								for iv in succ.instrs {
+									v := m.values[iv]
+									if v.kind != .instruction {
+										continue
+									}
+									mut ins := m.instrs[v.index]
+									if ins.op == .phi {
+										for i := 1; i < ins.operands.len; i += 2 {
+											if ins.operands[i] == m.blocks[target_id].val_id {
+												m.instrs[v.index].operands[i] = m.blocks[blk_id].val_id
+											}
+										}
+									}
+								}
+							}
+
+							// Remove B from func
+							merged[target_id] = true
+							changed = true
+						}
+					}
+				}
+			}
+
+			// Filter out merged blocks
+			if changed {
+				mut new_blks := []int{}
+				for b in func.blocks {
+					if !merged[b] {
+						new_blks << b
+					}
+				}
+				func.blocks = new_blks
+			}
+		}
 	}
 }
