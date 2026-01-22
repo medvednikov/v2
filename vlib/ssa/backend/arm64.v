@@ -183,14 +183,43 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 	match instr.op {
 		.add, .sub, .mul, .sdiv, .eq, .ne, .lt, .gt, .le, .ge {
 			g.load_val_to_reg(8, instr.operands[0])
-			g.load_val_to_reg(9, instr.operands[1])
+			// Check for immediate operand optimization.
+			// ARM64 arithmetic instructions like ADD/SUB support 12-bit immediates (0-4095).
+			mut is_imm := false
+			mut imm_val := i64(0)
+			op1 := g.mod.values[instr.operands[1]]
+			if op1.kind == .constant && instr.op in [.add, .sub] {
+				v := op1.name.i64()
+				if v >= 0 && v < 4096 {
+					is_imm = true
+					imm_val = v
+				}
+			}
+
+			if !is_imm {
+				g.load_val_to_reg(9, instr.operands[1])
+			}
 
 			match instr.op {
 				.add {
-					g.emit(0x8B090108)
+					if is_imm {
+						// ADD x8, x8, #imm
+						// Opcode 0x91000000: 0[1]01000100[imm12][Rn][Rd]
+						g.emit(0x91000000 | (u32(imm_val) << 10) | (8 << 5) | 8)
+					} else {
+						// ADD x8, x8, x9
+						g.emit(0x8B090108)
+					}
 				}
 				.sub {
-					g.emit(0xCB090108)
+					if is_imm {
+						// SUB x8, x8, #imm
+						// Opcode 0xD1000000: 1[1]01000100[imm12][Rn][Rd]
+						g.emit(0xD1000000 | (u32(imm_val) << 10) | (8 << 5) | 8)
+					} else {
+						// SUB x8, x8, x9
+						g.emit(0xCB090108)
+					}
 				}
 				.mul {
 					g.emit(0x9B097D08)
