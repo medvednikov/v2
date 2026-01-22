@@ -428,7 +428,7 @@ fn (mut g X64Gen) load_val_to_reg(reg int, val_id int) {
 			rex |= 4
 		}
 		g.emit(rex)
-		g.emit(0x8B)
+		g.emit(0x8D)
 		g.emit(0x05 | ((hw_reg & 7) << 3))
 		sym_idx := g.elf.add_undefined(val.name)
 		g.elf.add_text_reloc(u64(g.elf.text_data.len), sym_idx, 2, -4)
