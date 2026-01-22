@@ -311,21 +311,21 @@ pub fn (mut e ElfObject) write(path string) {
 	}
 
 	// 0: Null
-	write_shdr(mut buf, 0, 0, 0, 0, 0, 0, 0, 0)
+	write_shdr(mut buf, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 
 	// 1: .text
 	write_shdr(mut buf, u32(off_text_name), sht_progbits, shf_alloc | shf_execinstr, u64(off_text),
-		u64(e.text_data.len), 0, 0, 16)
+		u64(e.text_data.len), 0, 0, 16, 0)
 
 	// 2: .data
 	write_shdr(mut buf, u32(off_data_name), sht_progbits, shf_alloc | shf_write, u64(off_data),
-		u64(e.data_data.len), 0, 0, 8)
+		u64(e.data_data.len), 0, 0, 8, 0)
 
 	// 3: .rodata
 	write_shdr(mut buf, u32(off_rodata_name), sht_progbits, shf_alloc, u64(off_rodata),
-		u64(e.rodata.len), 0, 0, 4)
+		u64(e.rodata.len), 0, 0, 4, 0)
 
-	// 4: .symtab
+	// 4: .symtab (EntSize = 24)
 	mut first_global := 1
 	for i, s in e.symbols {
 		if (s.info >> 4) == 1 { // STB_GLOBAL
@@ -334,24 +334,24 @@ pub fn (mut e ElfObject) write(path string) {
 		}
 	}
 	write_shdr(mut buf, u32(off_symtab_name), sht_symtab, 0, u64(off_symtab), u64(size_symtab),
-		5, u32(first_global), 8)
+		5, u32(first_global), 8, 24)
 
 	// 5: .strtab
 	write_shdr(mut buf, u32(off_strtab_name), sht_strtab, 0, u64(off_strtab), u64(e.str_table.len),
-		0, 0, 1)
+		0, 0, 1, 0)
 
-	// 6: .rela.text
+	// 6: .rela.text (EntSize = 24)
 	write_shdr(mut buf, u32(off_rela_text_name), sht_rela, 0, u64(off_rela_text), u64(size_rela_text),
-		4, 1, 8) // Align 8 for Rela
+		4, 1, 8, 24)
 
 	// 7: .shstrtab
 	write_shdr(mut buf, u32(off_shstrtab_name), sht_strtab, 0, u64(off_shstrtab), u64(e.shstr_table.len),
-		0, 0, 1)
+		0, 0, 1, 0)
 
 	os.write_file_array(path, buf) or { panic(err) }
 }
 
-fn write_shdr(mut b []u8, name u32, type_ u32, flags u64, off u64, size u64, link u32, info u32, align u64) {
+fn write_shdr(mut b []u8, name u32, type_ u32, flags u64, off u64, size u64, link u32, info u32, align u64, entsize u64) {
 	write_u32_le(mut b, name)
 	write_u32_le(mut b, type_)
 	write_u64_le(mut b, flags)
@@ -361,5 +361,5 @@ fn write_shdr(mut b []u8, name u32, type_ u32, flags u64, off u64, size u64, lin
 	write_u32_le(mut b, link)
 	write_u32_le(mut b, info)
 	write_u64_le(mut b, align)
-	write_u64_le(mut b, 0) // EntSize
+	write_u64_le(mut b, entsize)
 }
