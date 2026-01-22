@@ -70,20 +70,33 @@ fn main() {
 		}
 
 		println('generating main.o took ${time.since(t0)}')
+
 		// Link
 		println('[*] Linking...')
-		// Need SDK path
-		sdk_res := os.execute('xcrun -sdk macosx --show-sdk-path')
-		sdk_path := sdk_res.output.trim_space()
-
-		// Link command
-		// -lSystem links standard libc (printf)
 		t := time.now()
-		link_cmd := 'ld -o out_bin main.o -lSystem -syslibroot "${sdk_path}" -e _main -arch arm64 -platform_version macos 11.0.0 11.0.0'
-		if os.system(link_cmd) != 0 {
-			eprintln('Link failed')
-			return
+
+		if os.user_os() == 'macos' {
+			// macOS Linking (Mach-O)
+			sdk_res := os.execute('xcrun -sdk macosx --show-sdk-path')
+			sdk_path := sdk_res.output.trim_space()
+			arch_flag := if arch == .arm64 { 'arm64' } else { 'x86_64' }
+			// -lSystem links standard libc (printf)
+			link_cmd := 'ld -o out_bin main.o -lSystem -syslibroot "${sdk_path}" -e _main -arch ${arch_flag} -platform_version macos 11.0.0 11.0.0'
+			if os.system(link_cmd) != 0 {
+				eprintln('Link failed')
+				return
+			}
+		} else {
+			// Linux Linking (ELF)
+			// Using 'cc' is easier than 'ld' because it handles libc paths and crt objects automatically.
+			// main.o is relocatable, so cc will link it properly.
+			link_cmd := 'cc main.o -o out_bin -no-pie'
+			if os.system(link_cmd) != 0 {
+				eprintln('Link failed')
+				return
+			}
 		}
+
 		println('linking took ${time.since(t)}')
 	} else {
 		// 5. Generate C Code

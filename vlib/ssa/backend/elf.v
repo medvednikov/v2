@@ -171,20 +171,28 @@ pub fn (mut e ElfObject) write(path string) {
 
 	mut current_offset := ehdr_size
 
-	// .text
+	// .text (Align 16)
+	if current_offset % 16 != 0 {
+		current_offset += (16 - (current_offset % 16))
+	}
 	off_text := current_offset
 	current_offset += e.text_data.len
 
-	// .data
+	// .data (Align 8)
+	if current_offset % 8 != 0 {
+		current_offset += (8 - (current_offset % 8))
+	}
 	off_data := current_offset
 	current_offset += e.data_data.len
 
-	// .rodata
+	// .rodata (Align 4)
+	if current_offset % 4 != 0 {
+		current_offset += (4 - (current_offset % 4))
+	}
 	off_rodata := current_offset
 	current_offset += e.rodata.len
 
-	// .symtab
-	// Align to 8
+	// .symtab (Align 8)
 	if current_offset % 8 != 0 {
 		current_offset += (8 - (current_offset % 8))
 	}
@@ -192,11 +200,11 @@ pub fn (mut e ElfObject) write(path string) {
 	size_symtab := e.symbols.len * 24
 	current_offset += size_symtab
 
-	// .strtab
+	// .strtab (Align 1)
 	off_strtab := current_offset
 	current_offset += e.str_table.len
 
-	// .rela.text
+	// .rela.text (Align 8)
 	if current_offset % 8 != 0 {
 		current_offset += (8 - (current_offset % 8))
 	}
@@ -204,11 +212,11 @@ pub fn (mut e ElfObject) write(path string) {
 	size_rela_text := e.text_relocs.len * 24
 	current_offset += size_rela_text
 
-	// .shstrtab
+	// .shstrtab (Align 1)
 	off_shstrtab := current_offset
 	current_offset += e.shstr_table.len
 
-	// Align for Section Headers
+	// Section Headers (Align 8)
 	if current_offset % 8 != 0 {
 		current_offset += (8 - (current_offset % 8))
 	}
@@ -242,15 +250,27 @@ pub fn (mut e ElfObject) write(path string) {
 	write_u16_le(mut buf, u16(num_sections))
 	write_u16_le(mut buf, 7) // Shstrndx
 
-	// --- 3. Write Data ---
-	// Text
+	// --- 3. Write Data with Padding ---
+
+	// Pad to Text
+	for buf.len < off_text {
+		buf << 0
+	}
 	buf << e.text_data
-	// Data
+
+	// Pad to Data
+	for buf.len < off_data {
+		buf << 0
+	}
 	buf << e.data_data
-	// Rodata
+
+	// Pad to Rodata
+	for buf.len < off_rodata {
+		buf << 0
+	}
 	buf << e.rodata
 
-	// Symtab
+	// Pad to Symtab
 	for buf.len < off_symtab {
 		buf << 0
 	}
@@ -264,6 +284,9 @@ pub fn (mut e ElfObject) write(path string) {
 	}
 
 	// Strtab
+	for buf.len < off_strtab {
+		buf << 0
+	}
 	buf << e.str_table
 
 	// Rela Text
@@ -273,10 +296,13 @@ pub fn (mut e ElfObject) write(path string) {
 	for r in e.text_relocs {
 		write_u64_le(mut buf, r.offset)
 		write_u64_le(mut buf, r.info)
-		write_u64_le(mut buf, u64(r.addend)) // Cast i64 to u64 for write
+		write_u64_le(mut buf, u64(r.addend))
 	}
 
 	// Shstrtab
+	for buf.len < off_shstrtab {
+		buf << 0
+	}
 	buf << e.shstr_table
 
 	// --- 4. Write Section Headers ---
@@ -300,7 +326,6 @@ pub fn (mut e ElfObject) write(path string) {
 		u64(e.rodata.len), 0, 0, 4)
 
 	// 4: .symtab
-	// Link = .strtab index (5), Info = index of first global sym (Assume 1 for now if only null is local, logic simplified)
 	mut first_global := 1
 	for i, s in e.symbols {
 		if (s.info >> 4) == 1 { // STB_GLOBAL
@@ -316,9 +341,8 @@ pub fn (mut e ElfObject) write(path string) {
 		0, 0, 1)
 
 	// 6: .rela.text
-	// Link = .symtab index (4), Info = target section index (1 .text)
 	write_shdr(mut buf, u32(off_rela_text_name), sht_rela, 0, u64(off_rela_text), u64(size_rela_text),
-		4, 1, 24)
+		4, 1, 8) // Align 8 for Rela
 
 	// 7: .shstrtab
 	write_shdr(mut buf, u32(off_shstrtab_name), sht_strtab, 0, u64(off_shstrtab), u64(e.shstr_table.len),
@@ -339,5 +363,3 @@ fn write_shdr(mut b []u8, name u32, type_ u32, flags u64, off u64, size u64, lin
 	write_u64_le(mut b, align)
 	write_u64_le(mut b, 0) // EntSize
 }
-
-
