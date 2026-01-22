@@ -1,7 +1,10 @@
 module ssa
 
+import time
+
 // Optimize Module
 pub fn (mut m Module) optimize() {
+	t := time.now()
 	// 1. Build Control Flow Graph (Predecessors)
 	m.build_cfg()
 
@@ -11,11 +14,14 @@ pub fn (mut m Module) optimize() {
 	// 3. Promote Memory to Register (Construct SSA / Phi Nodes)
 	m.promote_memory_to_register()
 
+	// 4. Scalar Optimizations
 	m.constant_fold()
 	m.dead_code_elimination()
+	m.remove_unreachable_blocks()
 
-	// 4. Eliminate Phi Nodes (Lower to Copies for Backend)
+	// 5. Eliminate Phi Nodes (Lower to Copies for Backend)
 	m.eliminate_phi_nodes()
+	println('SSA optimization took ${time.since(t)}')
 }
 
 // --- 1. CFG Construction ---
@@ -607,5 +613,37 @@ fn (mut m Module) remove_use(val_id int, user_id int) {
 			val.uses.delete(i)
 			break
 		}
+	}
+}
+
+fn (mut m Module) remove_unreachable_blocks() {
+	// Re-build CFG first
+	m.build_cfg()
+	for mut func in m.funcs {
+		if func.blocks.len == 0 {
+			continue
+		}
+		// BFS/DFS from entry
+		mut reachable := map[int]bool{}
+		mut q := [func.blocks[0]]
+		reachable[func.blocks[0]] = true
+
+		for q.len > 0 {
+			curr := q.pop()
+			for succ in m.blocks[curr].succs {
+				if !reachable[succ] {
+					reachable[succ] = true
+					q << succ
+				}
+			}
+		}
+
+		mut new_blocks := []int{}
+		for blk in func.blocks {
+			if reachable[blk] {
+				new_blocks << blk
+			}
+		}
+		func.blocks = new_blocks
 	}
 }
