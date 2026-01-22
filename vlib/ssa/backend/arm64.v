@@ -19,6 +19,7 @@ mut:
 	// Register allocation
 	reg_map   map[int]int
 	used_regs []int
+	next_blk  int
 }
 
 pub fn Arm64Gen.new(mod &ssa.Module) &Arm64Gen {
@@ -77,7 +78,8 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 		slot_offset += 8
 	}
 
-	for blk_id in func.blocks {
+	for i, blk_id in func.blocks {
+		g.next_blk = if i + 1 < func.blocks.len { func.blocks[i + 1] } else { -1 }
 		blk := g.mod.blocks[blk_id]
 		for val_id in blk.instrs {
 			val := g.mod.values[val_id]
@@ -131,7 +133,7 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 		if i + 1 < g.used_regs.len {
 			r2 = g.used_regs[i + 1]
 		}
-		// code := 0xA9BF0000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+		// code := 0xA9BF0000 | (u32(r2) << 10) | (31 << 5) | u32(r1)
 		code := 0xA9BF0000 | (u32(r2) << 10) | (31 << 5) | u32(r1)
 		g.emit(code)
 	}
@@ -162,9 +164,15 @@ fn (mut g Arm64Gen) gen_func(func ssa.Function) {
 				instr := g.read_u32(abs_off)
 
 				mut new_instr := u32(0)
-				if (instr & 0xFC000000) == 0x14000000 {
+				// Check for CBNZ (0xB5...) vs B (0x14...) vs B.cond (0x54...)
+				if (instr & 0xFF000000) == 0xB5000000 {
+					// CBNZ
+					new_instr = (instr & 0xFF000000) | ((u32(rel) & 0x7FFFF) << 5) | (instr & 0x1F)
+				} else if (instr & 0xFC000000) == 0x14000000 {
+					// B imm26
 					new_instr = (instr & 0xFC000000) | (u32(rel) & 0x3FFFFFF)
 				} else {
+					// B.cond
 					new_instr = (instr & 0xFF000000) | ((u32(rel) & 0x7FFFF) << 5) | (instr & 0x1F)
 				}
 				g.write_u32(abs_off, new_instr)
@@ -261,9 +269,11 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			}
 		}
 		.store {
-			g.load_val_to_reg(8, instr.operands[0])
-			g.load_val_to_reg(9, instr.operands[1])
-			g.emit(0xF9000128)
+			val_reg := g.get_operand_reg(instr.operands[0], 8)
+			ptr_reg := g.get_operand_reg(instr.operands[1], 9)
+
+			// STR Rt, [Rn] -> 0xF9000000 | Rn<<5 | Rt
+			g.emit(0xF9000000 | (u32(ptr_reg) << 5) | u32(val_reg))
 		}
 		.load {
 			ptr_reg := g.get_operand_reg(instr.operands[0], 9)
@@ -282,9 +292,19 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			g.store_reg_to_val(8, val_id)
 		}
 		.get_element_ptr {
-			g.load_val_to_reg(8, instr.operands[0])
-			g.load_val_to_reg(9, instr.operands[1])
-			g.emit(0x8B090D08)
+			// GEP: Base + Index * 8 (assuming 64-bit/pointer types for now)
+			base_reg := g.get_operand_reg(instr.operands[0], 8)
+
+			// Ensure index load doesn't clobber base if base is 8
+			idx_scratch := if base_reg == 8 { 9 } else { 8 }
+			idx_reg := g.get_operand_reg(instr.operands[1], idx_scratch)
+
+			// ADD Rd, Rn, Rm, LSL #3  (Shifted Register Add)
+			// Encoding 64-bit: 0x8B200000 | (Rm<<16) | (imm6<<10) | (Rn<<5) | Rd
+			// shift=3 -> imm6=000011 -> 0xC00
+			// Dest is 8 (scratch)
+			g.emit(0x8B200C00 | (u32(idx_reg) << 16) | (u32(base_reg) << 5) | 8)
+
 			g.store_reg_to_val(8, val_id)
 		}
 		.call {
@@ -324,7 +344,7 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 					r2 = g.used_regs[base + 1]
 				}
 				// ldp r1, r2, [sp], 16
-				// code := 0xA8C10000 | (u32(r2) << 10) | (u32(r1) << 5) | 0x1F
+				// code := 0xA8C10000 | (u32(r2) << 10) | (31 << 5) | u32(r1)
 				code := 0xA8C10000 | (u32(r2) << 10) | (31 << 5) | u32(r1)
 				g.emit(code)
 				j -= 2
@@ -335,6 +355,12 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 		.jmp {
 			target_blk := instr.operands[0]
 			target_idx := g.mod.values[target_blk].index
+
+			// Fallthrough optimization: Don't jump if target is next block
+			if target_idx == g.next_blk {
+				return
+			}
+
 			if off := g.block_offsets[target_idx] {
 				rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
 				g.emit(0x14000000 | (u32(rel) & 0x3FFFFFF))
@@ -345,29 +371,25 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 		}
 		.br {
 			g.load_val_to_reg(8, instr.operands[0])
-
-			// Optimization: Use CBNZ/CBZ if possible
-			// CBZ Xt, label (Compare and Branch on Zero)
-			// CBNZ Xt, label (Compare and Branch Non-Zero)
-			// Current logic: cmp x8, 0; b.ne true_blk; b false_blk
-			// We can map this to: cbnz x8, true_blk; b false_blk
-
-			// Old: CMP x8, 0 -> F100011F
-			// g.emit(0xF100011F)
+			// Replaced CMP x8, #0; B.NE with CBNZ x8
 
 			true_blk := g.mod.values[instr.operands[1]].index
 			false_blk := g.mod.values[instr.operands[2]].index
 
+			// Fallthrough optimization for False block
+			// If false block is next, we only need CBNZ to true block
+
 			if off := g.block_offsets[true_blk] {
 				rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
-				// CBNZ x8, offset
-				// 10110101 [imm19] Rt
-				// 0xB5000000 | (imm19 << 5) | Rt
+				// CBNZ x8, offset (0xB5...)
 				g.emit(0xB5000008 | ((u32(rel) & 0x7FFFF) << 5))
 			} else {
 				g.record_pending_label(true_blk)
-				// Emit CBNZ placeholder
 				g.emit(0xB5000008)
+			}
+
+			if false_blk == g.next_blk {
+				return
 			}
 
 			if off := g.block_offsets[false_blk] {
@@ -626,13 +648,15 @@ fn (mut g Arm64Gen) emit_mov_reg(rd int, rm int) {
 
 struct Interval {
 mut:
-	val_id int
-	start  int
-	end    int
+	val_id   int
+	start    int
+	end      int
+	has_call bool
 }
 
 fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 	mut intervals := map[int]&Interval{}
+	mut call_indices := []int{}
 	mut instr_idx := 0
 
 	for pid in func.params {
@@ -658,6 +682,10 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 			}
 
 			instr := g.mod.instrs[val.index]
+			if instr.op == .call {
+				call_indices << instr_idx
+			}
+
 			for op in instr.operands {
 				if g.mod.values[op].kind in [.instruction, .argument] {
 					if mut interval := intervals[op] {
@@ -670,6 +698,15 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 			instr_idx++
 		}
 	}
+	// Mark intervals that cross a function call
+	for _, mut interval in intervals {
+		for call_idx in call_indices {
+			if interval.start < call_idx && interval.end > call_idx {
+				interval.has_call = true
+				break
+			}
+		}
+	}
 
 	mut sorted := []&Interval{}
 	for _, i in intervals {
@@ -678,8 +715,13 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 	sorted.sort(a.start < b.start)
 
 	mut active := []&Interval{}
-	// x19..x28
-	regs := [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+
+	// Registers
+	// Caller-saved (Temporaries): x9..x15
+	// Callee-saved (Preserved): x19..x28
+	// Reserve x8 and x9 as backend scratch registers
+	short_regs := [10, 11, 12, 13, 14, 15]
+	long_regs := [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
 
 	for i in sorted {
 		for j := 0; j < active.len; j++ {
@@ -689,20 +731,28 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 			}
 		}
 
-		if active.len < regs.len {
-			mut used := []bool{len: 32, init: false}
-			for a in active {
-				used[g.reg_map[a.val_id]] = true
-			}
-			for r in regs {
-				if !used[r] {
-					g.reg_map[i.val_id] = r
-					active << i
-					if r !in g.used_regs {
-						g.used_regs << r
-					}
-					break
+		// Decide which pool to use
+		// mut pool := unsafe { short_regs }
+		mut pool := short_regs.clone()
+		if i.has_call {
+			pool = long_regs.clone()
+		}
+
+		// Try allocation
+		mut used := []bool{len: 32, init: false}
+		for a in active {
+			used[g.reg_map[a.val_id]] = true
+		}
+
+		for r in pool {
+			if !used[r] {
+				g.reg_map[i.val_id] = r
+				active << i
+				// Only track used callee-saved regs for prologue saving
+				if r >= 19 && r <= 28 && r !in g.used_regs {
+					g.used_regs << r
 				}
+				break
 			}
 		}
 	}
