@@ -11,6 +11,8 @@ pub fn (mut m Module) optimize() {
 	// 3. Promote Memory to Register (Construct SSA / Phi Nodes)
 	m.promote_memory_to_register()
 
+	m.constant_fold()
+
 	// 4. Eliminate Phi Nodes (Lower to Copies for Backend)
 	m.eliminate_phi_nodes()
 }
@@ -502,4 +504,61 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	}
 
 	m.blocks[blk_id].instrs.insert(insert_idx, val_id)
+}
+
+fn (mut m Module) constant_fold() {
+	for func in m.funcs {
+		for blk_id in func.blocks {
+			mut instrs := m.blocks[blk_id].instrs.clone()
+
+			for val_id in instrs {
+				// Ensure value is an instruction
+				if m.values[val_id].kind != .instruction {
+					continue
+				}
+
+				instr := m.instrs[m.values[val_id].index]
+
+				// Example: Binary Ops
+				if instr.operands.len == 2 {
+					lhs := m.values[instr.operands[0]]
+					rhs := m.values[instr.operands[1]]
+
+					if lhs.kind == .constant && rhs.kind == .constant {
+						// Assuming integer math for MVP
+						l_int := lhs.name.i64()
+						r_int := rhs.name.i64()
+
+						mut result := i64(0)
+						mut folded := false
+
+						match instr.op {
+							.add {
+								result = l_int + r_int
+								folded = true
+							}
+							.sub {
+								result = l_int - r_int
+								folded = true
+							}
+							.mul {
+								result = l_int * r_int
+								folded = true
+							}
+							// Add div check for 0
+							else {}
+						}
+
+						if folded {
+							// Turn the instruction value into a constant
+							m.values[val_id].kind = .constant
+							m.values[val_id].name = result.str()
+							// Clear operands/instr data (optional cleanup)
+							// Now users of val_id will see a Constant, not an Instruction
+						}
+					}
+				}
+			}
+		}
+	}
 }

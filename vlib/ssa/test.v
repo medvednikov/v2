@@ -19,6 +19,10 @@ fn sum_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
 	return a + b + c + d + e + f + g + h
 }
 
+fn constant_folding() int {
+	return 2 + 3
+}
+
 fn modify_struct(mut p Point) {
 	p.x = 999
 	p.y = 888
