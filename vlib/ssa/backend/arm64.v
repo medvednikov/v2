@@ -345,17 +345,29 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 		}
 		.br {
 			g.load_val_to_reg(8, instr.operands[0])
-			g.emit(0xF100011F)
+
+			// Optimization: Use CBNZ/CBZ if possible
+			// CBZ Xt, label (Compare and Branch on Zero)
+			// CBNZ Xt, label (Compare and Branch Non-Zero)
+			// Current logic: cmp x8, 0; b.ne true_blk; b false_blk
+			// We can map this to: cbnz x8, true_blk; b false_blk
+
+			// Old: CMP x8, 0 -> F100011F
+			// g.emit(0xF100011F)
 
 			true_blk := g.mod.values[instr.operands[1]].index
 			false_blk := g.mod.values[instr.operands[2]].index
 
 			if off := g.block_offsets[true_blk] {
 				rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
-				g.emit(0x54000001 | ((u32(rel) & 0x7FFFF) << 5))
+				// CBNZ x8, offset
+				// 10110101 [imm19] Rt
+				// 0xB5000000 | (imm19 << 5) | Rt
+				g.emit(0xB5000008 | ((u32(rel) & 0x7FFFF) << 5))
 			} else {
 				g.record_pending_label(true_blk)
-				g.emit(0x54000001)
+				// Emit CBNZ placeholder
+				g.emit(0xB5000008)
 			}
 
 			if off := g.block_offsets[false_blk] {
