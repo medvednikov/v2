@@ -467,6 +467,7 @@ fn (db &DB) handle_error_or_rows(res voidptr, elabel string) ![]Row {
 	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
 	if e != '' {
 		C.PQclear(res)
+		// TODO make it default
 		$if trace_pg_error ? {
 			eprintln('pg error: ${e}')
 		}
