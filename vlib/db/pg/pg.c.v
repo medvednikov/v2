@@ -59,9 +59,19 @@ $if windows {
 
 #include "@VMODROOT/vlib/db/pg/compatibility.h"
 
-pub struct DB {
+// Conn represents a single physical connection to the database.
+// It is NOT thread-safe and should be managed by DB.
+struct Conn {
 mut:
 	conn voidptr = unsafe { nil }
+}
+
+// DB represents a pool of connections or a specific transaction context.
+// It is thread-safe by default (like Go's sql.DB).
+pub struct DB {
+mut:
+	pool chan &Conn // The connection pool
+	conn &Conn = unsafe { nil } // If set, this DB instance is bound to this connection (Transaction)
 }
 
 pub struct Row {
@@ -90,11 +100,12 @@ pub:
 
 pub struct Config {
 pub:
-	host     string = 'localhost'
-	port     int    = 5432
-	user     string
-	password string
-	dbname   string
+	host      string = 'localhost'
+	port      int    = 5432
+	user      string
+	password  string
+	dbname    string
+	pool_size int = 10
 }
 
 //
@@ -216,29 +227,55 @@ fn C.PQescapeLiteral(conn &C.PGconn, str &char, length usize) &char
 pub fn connect(config Config) !DB {
 	conninfo := 'host=${config.host} port=${config.port} user=${config.user} dbname=${config.dbname} password=${config.password}'
 
-	return connect_with_conninfo(conninfo)!
+	return connect_with_conninfo(conninfo, config.pool_size)!
 }
 
 // connect_with_conninfo makes a new connection to the database server using
 // the `conninfo` connection string, returning
 // a connection error when something goes wrong
-pub fn connect_with_conninfo(conninfo string) !DB {
-	conn := C.PQconnectdb(&char(conninfo.str))
-	if conn == 0 {
-		return error('libpq memory allocation error')
+pub fn connect_with_conninfo(conninfo string, pool_size int) !DB {
+	// Create the pool
+	size := if pool_size > 0 { pool_size } else { 1 }
+	mut pool := chan &Conn{cap: size}
+
+	for _ in 0 .. size {
+		conn_ptr := C.PQconnectdb(&char(conninfo.str))
+		if conn_ptr == 0 {
+			return error('libpq memory allocation error')
+		}
+		status := unsafe { ConnStatusType(C.PQstatus(conn_ptr)) }
+		if status != .ok {
+			c_error_msg := unsafe { C.PQerrorMessage(conn_ptr).vstring() }
+			error_msg := '${c_error_msg}'
+			C.PQfinish(conn_ptr)
+			return error('Connection to a PG database failed: ${error_msg}')
+		}
+
+		c := &Conn{
+			conn: conn_ptr
+		}
+		pool <- c
 	}
-	status := unsafe { ConnStatusType(C.PQstatus(conn)) }
-	if status != .ok {
-		// We force the construction of a new string as the
-		// error message will be freed by the next `PQfinish`
-		// call
-		c_error_msg := unsafe { C.PQerrorMessage(conn).vstring() }
-		error_msg := '${c_error_msg}'
-		C.PQfinish(conn)
-		return error('Connection to a PG database failed: ${error_msg}')
-	}
+
 	return DB{
-		conn: conn
+		pool: pool
+		conn: unsafe { nil }
+	}
+}
+
+// Internal helper to get a connection (borrow from pool or use bound conn)
+fn (db &DB) get_conn() (&Conn, bool) {
+	if db.conn != 0 {
+		return db.conn, false
+	}
+	conn := <-db.pool
+	return conn, true
+}
+
+// Internal helper to return a connection
+fn (db &DB) release_conn(conn &Conn, should_return bool) {
+	if should_return {
+		db.pool <- conn
 	}
 }
 
@@ -309,8 +346,24 @@ fn res_to_result(res voidptr) Result {
 }
 
 // close frees the underlying resource allocated by the database connection
-pub fn (db &DB) close() ! {
-	C.PQfinish(db.conn)
+pub fn (mut db DB) close() ! {
+	if db.conn != 0 {
+		// Just a transaction handle, do nothing? Or close the underlying connection?
+		// Typically Tx should use rollback/commit.
+		return
+	}
+
+	// Close all connections in the pool
+	// We read until channel is empty and close them
+	// Note: This assumes no one else is using the pool.
+	for _ in 0 .. db.pool.cap {
+		select {
+			c := <-db.pool {
+				C.PQfinish(c.conn)
+			}
+			else {}
+		}
+	}
 }
 
 // q_int submit a command to the database server and
@@ -355,8 +408,20 @@ pub fn (db &DB) q_strings(query string) ![]Row {
 
 // exec submits a command to the database server and wait for the result, returning an error on failure and a row set on success
 pub fn (db &DB) exec(query string) ![]Row {
-	res := C.PQexec(db.conn, &char(query.str))
-	return db.handle_error_or_rows(res, 'exec')
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	res := C.PQexec(conn.conn, &char(query.str))
+	return db.handle_error_or_rows(conn, res, 'exec')
+}
+
+// exec_no_null works like exec, but the fields can't be NULL, no optionals
+pub fn (db &DB) exec_no_null(query string) ![]RowNoNull {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	res := C.PQexec(conn.conn, &char(query.str))
+	return db.handle_error_or_rows_no_null(conn, res, 'exec')
 }
 
 // exec_no_null works like exec, but the fields can't be NULL, no optionals
@@ -367,8 +432,11 @@ pub fn (db &DB) exec_no_null(query string) ![]RowNoNull {
 
 // exec_result submits a command to the database server and wait for the result, returning an error on failure and a `Result` set on success
 pub fn (db &DB) exec_result(query string) !Result {
-	res := C.PQexec(db.conn, &char(query.str))
-	return db.handle_error_or_result(res, 'exec_result')
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	res := C.PQexec(conn.conn, &char(query.str))
+	return db.handle_error_or_result(conn, res, 'exec_result')
 }
 
 fn rows_first_or_empty(rows []Row) !Row {
@@ -380,8 +448,11 @@ fn rows_first_or_empty(rows []Row) !Row {
 
 // exec_one executes a query and returns its first row as a result, or an error on failure
 pub fn (db &DB) exec_one(query string) !Row {
-	res := C.PQexec(db.conn, &char(query.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	res := C.PQexec(conn.conn, &char(query.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg exec error: "${e}"')
 	}
@@ -391,29 +462,35 @@ pub fn (db &DB) exec_one(query string) !Row {
 
 // exec_param_many executes a query with the parameters provided as ($1), ($2), ($n)
 pub fn (db &DB) exec_param_many(query string, params []string) ![]Row {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	unsafe {
 		mut param_vals := []&char{len: params.len}
 		for i in 0 .. params.len {
 			param_vals[i] = &char(params[i].str)
 		}
 
-		res := C.PQexecParams(db.conn, &char(query.str), params.len, 0, param_vals.data,
+		res := C.PQexecParams(conn.conn, &char(query.str), params.len, 0, param_vals.data,
 			0, 0, 0)
-		return db.handle_error_or_rows(res, 'exec_param_many')
+		return db.handle_error_or_rows(conn, res, 'exec_param_many')
 	}
 }
 
 // exec_param_many executes a query with the parameters provided as ($1), ($2), ($n) and returns a `Result`
 pub fn (db &DB) exec_param_many_result(query string, params []string) !Result {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	unsafe {
 		mut param_vals := []&char{len: params.len}
 		for i in 0 .. params.len {
 			param_vals[i] = &char(params[i].str)
 		}
 
-		res := C.PQexecParams(db.conn, &char(query.str), params.len, 0, param_vals.data,
+		res := C.PQexecParams(conn.conn, &char(query.str), params.len, 0, param_vals.data,
 			0, 0, 0)
-		return db.handle_error_or_result(res, 'exec_param_many_result')
+		return db.handle_error_or_result(conn, res, 'exec_param_many_result')
 	}
 }
 
@@ -429,42 +506,51 @@ pub fn (db &DB) exec_param2(query string, param string, param2 string) ![]Row {
 
 // prepare submits a request to create a prepared statement with the given parameters, and waits for completion. You must provide the number of parameters (`$1, $2, $3 ...`) used in the statement
 pub fn (db &DB) prepare(name string, query string, num_params int) ! {
-	res := C.PQprepare(db.conn, &char(name.str), &char(query.str), num_params, 0) // defining param types is optional
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
 
-	return db.handle_error(res, 'prepare')
+	res := C.PQprepare(conn.conn, &char(name.str), &char(query.str), num_params, 0) // defining param types is optional
+
+	return db.handle_error(conn, res, 'prepare')
 }
 
 // exec_prepared sends a request to execute a prepared statement with given parameters, and waits for the result. The number of parameters must match with the parameters declared in the prepared statement.
 pub fn (db &DB) exec_prepared(name string, params []string) ![]Row {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	unsafe {
 		mut param_vals := []&char{len: params.len}
 		for i in 0 .. params.len {
 			param_vals[i] = &char(params[i].str)
 		}
 
-		res := C.PQexecPrepared(db.conn, &char(name.str), params.len, param_vals.data,
+		res := C.PQexecPrepared(conn.conn, &char(name.str), params.len, param_vals.data,
 			0, 0, 0)
-		return db.handle_error_or_rows(res, 'exec_prepared')
+		return db.handle_error_or_rows(conn, res, 'exec_prepared')
 	}
 }
 
 // exec_prepared sends a request to execute a prepared statement with given parameters, and waits for the result. The number of parameters must match with the parameters declared in the prepared statement.
 // returns `Result`
 pub fn (db &DB) exec_prepared_result(name string, params []string) !Result {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	unsafe {
 		mut param_vals := []&char{len: params.len}
 		for i in 0 .. params.len {
 			param_vals[i] = &char(params[i].str)
 		}
 
-		res := C.PQexecPrepared(db.conn, &char(name.str), params.len, param_vals.data,
+		res := C.PQexecPrepared(conn.conn, &char(name.str), params.len, param_vals.data,
 			0, 0, 0)
-		return db.handle_error_or_result(res, 'exec_prepared_result')
+		return db.handle_error_or_result(conn, res, 'exec_prepared_result')
 	}
 }
 
-fn (db &DB) handle_error_or_rows(res voidptr, elabel string) ![]Row {
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+fn (db &DB) handle_error_or_rows(conn &Conn, res voidptr, elabel string) ![]Row {
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		C.PQclear(res)
 		// TODO make it default
@@ -476,9 +562,9 @@ fn (db &DB) handle_error_or_rows(res voidptr, elabel string) ![]Row {
 	return res_to_rows(res)
 }
 
-fn (db &DB) handle_error_or_rows_no_null(res voidptr, elabel string) ![]RowNoNull {
+fn (db &DB) handle_error_or_rows_no_null(conn &Conn, res voidptr, elabel string) ![]RowNoNull {
 	// TODO copypasta
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		C.PQclear(res)
 		$if trace_pg_error ? {
@@ -490,8 +576,8 @@ fn (db &DB) handle_error_or_rows_no_null(res voidptr, elabel string) ![]RowNoNul
 }
 
 // hande_error_or_result is an internal function similar to handle_error_or_rows that returns `Result` instead of `[]Row`
-fn (db &DB) handle_error_or_result(res voidptr, elabel string) !Result {
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+fn (db &DB) handle_error_or_result(conn &Conn, res voidptr, elabel string) !Result {
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		C.PQclear(res)
 		$if trace_pg_error ? {
@@ -502,8 +588,8 @@ fn (db &DB) handle_error_or_result(res voidptr, elabel string) !Result {
 	return res_to_result(res)
 }
 
-fn (db &DB) handle_error(res voidptr, elabel string) ! {
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+fn (db &DB) handle_error(conn &Conn, res voidptr, elabel string) ! {
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		C.PQclear(res)
 		$if trace_pg_error ? {
@@ -516,13 +602,16 @@ fn (db &DB) handle_error(res voidptr, elabel string) ! {
 // copy_expert executes COPY command
 // https://www.postgresql.org/docs/9.5/libpq-copy.html
 pub fn (db &DB) copy_expert(query string, mut file io.ReaderWriter) !int {
-	mut res := C.PQexec(db.conn, &char(query.str))
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	mut res := C.PQexec(conn.conn, &char(query.str))
 	status := unsafe { ExecStatusType(C.PQresultStatus(res)) }
 	defer {
 		C.PQclear(res)
 	}
 
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg copy error:\n${e}')
 	}
@@ -532,20 +621,20 @@ pub fn (db &DB) copy_expert(query string, mut file io.ReaderWriter) !int {
 		for {
 			n := file.read(mut buf) or {
 				msg := 'pg copy error: Failed to read from input'
-				C.PQputCopyEnd(db.conn, &char(msg.str))
+				C.PQputCopyEnd(conn.conn, &char(msg.str))
 				return err
 			}
 			if n <= 0 {
 				break
 			}
 
-			code := C.PQputCopyData(db.conn, buf.data, n)
+			code := C.PQputCopyData(conn.conn, buf.data, n)
 			if code == -1 {
 				return error('pg copy error: Failed to send data, code=${code}')
 			}
 		}
 
-		code := C.PQputCopyEnd(db.conn, &char(unsafe { nil }))
+		code := C.PQputCopyEnd(conn.conn, &char(unsafe { nil }))
 
 		if code != 1 {
 			return error('pg copy error: Failed to finish copy command, code: ${code}')
@@ -553,7 +642,7 @@ pub fn (db &DB) copy_expert(query string, mut file io.ReaderWriter) !int {
 	} else if status == .copy_out {
 		for {
 			address := &char(unsafe { nil })
-			n_bytes := C.PQgetCopyData(db.conn, &address, 0)
+			n_bytes := C.PQgetCopyData(conn.conn, &address, 0)
 			if n_bytes > 0 {
 				mut local_buf := []u8{len: n_bytes}
 				unsafe { C.memcpy(&u8(local_buf.data), address, n_bytes) }
@@ -576,7 +665,10 @@ pub fn (db &DB) copy_expert(query string, mut file io.ReaderWriter) !int {
 	return 0
 }
 
-fn pg_stmt_worker(db &DB, query string, data orm.QueryData, where orm.QueryData) ![]Row {
+fn pg_stmt_worker(db DB, query string, data orm.QueryData, where orm.QueryData) ![]Row {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	mut param_types := []u32{}
 	mut param_vals := []&char{}
 	mut param_lens := []int{}
@@ -587,9 +679,9 @@ fn pg_stmt_worker(db &DB, query string, data orm.QueryData, where orm.QueryData)
 	pg_stmt_binder(mut param_types, mut param_vals, mut param_lens, mut param_formats,
 		where)
 
-	res := C.PQexecParams(db.conn, &char(query.str), param_vals.len, param_types.data,
+	res := C.PQexecParams(conn.conn, &char(query.str), param_vals.len, param_types.data,
 		param_vals.data, param_lens.data, param_formats.data, 0) // here, the last 0 means require text results, 1 - binary results
-	return db.handle_error_or_rows(res, 'orm_stmt_worker')
+	return db.handle_error_or_rows(conn, res, 'orm_stmt_worker')
 }
 
 pub enum PQTransactionLevel {
@@ -605,7 +697,13 @@ pub struct PQTransactionParam {
 }
 
 // begin begins a new transaction.
-pub fn (db &DB) begin(param PQTransactionParam) ! {
+// It returns a new DB instance that is bound to a single connection.
+// You must use the returned DB instance for subsequent queries in the transaction.
+pub fn (db &DB) begin(param PQTransactionParam) !DB {
+	// Acquire a dedicated connection for the transaction
+	// Since we return a new DB, we don't "return" this conn to pool until user commits/rollbacks
+	conn := <-db.pool
+
 	mut sql_stmt := 'BEGIN TRANSACTION ISOLATION LEVEL '
 	match param.transaction_level {
 		.read_uncommitted { sql_stmt += 'READ UNCOMMITTED' }
@@ -613,17 +711,31 @@ pub fn (db &DB) begin(param PQTransactionParam) ! {
 		.repeatable_read { sql_stmt += 'REPEATABLE READ' }
 		.serializable { sql_stmt += 'SERIALIZABLE' }
 	}
-	_ := C.PQexec(db.conn, &char(sql_stmt.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	_ := C.PQexec(conn.conn, &char(sql_stmt.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
+		// Return conn to pool if begin failed
+		db.pool <- conn
 		return error('pg exec error: "${e}"')
+	}
+
+	return DB{
+		pool: db.pool
+		conn: conn
 	}
 }
 
 // commit commits the current transaction.
 pub fn (db &DB) commit() ! {
-	_ := C.PQexec(db.conn, c'COMMIT;')
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	if db.conn == 0 {
+		return error('commit called on non-transaction DB')
+	}
+	_ := C.PQexec(db.conn.conn, c'COMMIT;')
+	e := unsafe { C.PQerrorMessage(db.conn.conn).vstring() }
+
+	// Release the dedicated connection back to the pool
+	db.pool <- db.conn
+
 	if e != '' {
 		return error('pg exec error: "${e}"')
 	}
@@ -631,8 +743,15 @@ pub fn (db &DB) commit() ! {
 
 // rollback rollbacks the current transaction.
 pub fn (db &DB) rollback() ! {
-	_ := C.PQexec(db.conn, c'ROLLBACK;')
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	if db.conn == 0 {
+		return error('rollback called on non-transaction DB')
+	}
+	_ := C.PQexec(db.conn.conn, c'ROLLBACK;')
+	e := unsafe { C.PQerrorMessage(db.conn.conn).vstring() }
+
+	// Release the dedicated connection back to the pool
+	db.pool <- db.conn
+
 	if e != '' {
 		return error('pg exec error: "${e}"')
 	}
@@ -640,12 +759,16 @@ pub fn (db &DB) rollback() ! {
 
 // rollback_to rollbacks to a specified savepoint.
 pub fn (db &DB) rollback_to(savepoint string) ! {
+	conn, _ := db.get_conn()
+	// Note: rollback_to should technically only be used inside a transaction (where db.conn is set).
+	// If called on the pool, it will pick a random conn and fail or do nothing useful.
+
 	if !savepoint.is_identifier() {
 		return error('savepoint should be a identifier string')
 	}
 	sql_stmt := 'ROLLBACK TO SAVEPOINT ${savepoint};'
-	_ := C.PQexec(db.conn, &char(sql_stmt.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	_ := C.PQexec(conn.conn, &char(sql_stmt.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg exec error: "${e}"')
 	}
@@ -653,12 +776,14 @@ pub fn (db &DB) rollback_to(savepoint string) ! {
 
 // savepoint create a new savepoint.
 pub fn (db &DB) savepoint(savepoint string) ! {
+	conn, _ := db.get_conn()
+
 	if !savepoint.is_identifier() {
 		return error('savepoint should be a identifier string')
 	}
 	sql_stmt := 'SAVEPOINT ${savepoint};'
-	_ := C.PQexec(db.conn, &char(sql_stmt.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	_ := C.PQexec(conn.conn, &char(sql_stmt.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg exec error: "${e}"')
 	}
@@ -687,12 +812,19 @@ pub fn (res Result) as_structs[T](mapper fn (Result, Row) !T) ![]T {
 // listen registers the connection to receive notifications on the specified channel.
 // After calling this, use consume_input() and get_notification() to receive notifications.
 pub fn (db &DB) listen(channel string) ! {
+	// Listen should lock a connection? Or just pick one?
+	// In pool mode, 'listen' is tricky because subsequent get_notification must read from the SAME connection.
+	// For LISTEN/NOTIFY, the user SHOULD use a dedicated connection or a dedicated DB instance (via begin/fake-tx?).
+	// We will just use whatever get_conn gives us. If it's a pool, this might be brittle.
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	if !channel.is_identifier() {
 		return error('channel name should be a valid identifier')
 	}
 	sql_stmt := 'LISTEN ${channel};'
-	_ := C.PQexec(db.conn, &char(sql_stmt.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	_ := C.PQexec(conn.conn, &char(sql_stmt.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg listen error: "${e}"')
 	}
@@ -701,12 +833,15 @@ pub fn (db &DB) listen(channel string) ! {
 // unlisten unregisters the connection from receiving notifications on the specified channel.
 // Use unlisten_all() to unregister from all channels.
 pub fn (db &DB) unlisten(channel string) ! {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	if !channel.is_identifier() {
 		return error('channel name should be a valid identifier')
 	}
 	sql_stmt := 'UNLISTEN ${channel};'
-	_ := C.PQexec(db.conn, &char(sql_stmt.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	_ := C.PQexec(conn.conn, &char(sql_stmt.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg unlisten error: "${e}"')
 	}
@@ -714,8 +849,11 @@ pub fn (db &DB) unlisten(channel string) ! {
 
 // unlisten_all unregisters the connection from all notification channels.
 pub fn (db &DB) unlisten_all() ! {
-	_ := C.PQexec(db.conn, c'UNLISTEN *;')
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	_ := C.PQexec(conn.conn, c'UNLISTEN *;')
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg unlisten error: "${e}"')
 	}
@@ -724,15 +862,18 @@ pub fn (db &DB) unlisten_all() ! {
 // notify sends a notification on the specified channel with an optional payload.
 // All connections currently listening on that channel will receive the notification.
 pub fn (db &DB) notify(channel string, payload string) ! {
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
 	if !channel.is_identifier() {
 		return error('channel name should be a valid identifier')
 	}
 	mut sql_stmt := ''
 	if payload.len > 0 {
 		// Use PQescapeLiteral to safely escape the payload
-		escaped := C.PQescapeLiteral(db.conn, &char(payload.str), usize(payload.len))
+		escaped := C.PQescapeLiteral(conn.conn, &char(payload.str), usize(payload.len))
 		if escaped == unsafe { nil } {
-			e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+			e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 			return error('pg notify error: failed to escape payload: "${e}"')
 		}
 		sql_stmt = unsafe { 'NOTIFY ${channel}, ' + escaped.vstring() + ';' }
@@ -740,8 +881,8 @@ pub fn (db &DB) notify(channel string, payload string) ! {
 	} else {
 		sql_stmt = 'NOTIFY ${channel};'
 	}
-	_ := C.PQexec(db.conn, &char(sql_stmt.str))
-	e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+	_ := C.PQexec(conn.conn, &char(sql_stmt.str))
+	e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 	if e != '' {
 		return error('pg notify error: "${e}"')
 	}
@@ -751,9 +892,12 @@ pub fn (db &DB) notify(channel string, payload string) ! {
 // This must be called before get_notification() to ensure pending notifications are processed.
 // Returns true on success, false if there was an error reading from the connection.
 pub fn (db &DB) consume_input() !bool {
-	result := C.PQconsumeInput(db.conn)
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	result := C.PQconsumeInput(conn.conn)
 	if result == 0 {
-		e := unsafe { C.PQerrorMessage(db.conn).vstring() }
+		e := unsafe { C.PQerrorMessage(conn.conn).vstring() }
 		return error('pg consume_input error: "${e}"')
 	}
 	return true
@@ -763,7 +907,10 @@ pub fn (db &DB) consume_input() !bool {
 // Returns none if there are no pending notifications.
 // You should call consume_input() before this to ensure all pending notifications are available.
 pub fn (db &DB) get_notification() ?Notification {
-	notify := C.PQnotifies(db.conn)
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	notify := C.PQnotifies(conn.conn)
 	if notify == unsafe { nil } {
 		return none
 	}
@@ -781,5 +928,8 @@ pub fn (db &DB) get_notification() ?Notification {
 // This is useful for applications that want to use select() or poll() to wait
 // for notifications without blocking. Returns -1 if no valid socket.
 pub fn (db &DB) socket() int {
-	return C.PQsocket(db.conn)
+	conn, should_ret := db.get_conn()
+	defer { db.release_conn(conn, should_ret) }
+
+	return C.PQsocket(conn.conn)
 }
