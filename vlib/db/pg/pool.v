@@ -32,7 +32,7 @@ pub fn (mut pool ConnectionPool) release(conn DB) {
 // close closes all connections in the pool.
 pub fn (mut pool ConnectionPool) close() {
 	for _ in 0 .. pool.connections.len {
-		conn := <-pool.connections or { break }
+		mut conn := <-pool.connections or { break }
 		conn.close() or { break }
 	}
 }

@@ -265,7 +265,7 @@ pub fn connect_with_conninfo(conninfo string, pool_size int) !DB {
 
 // Internal helper to get a connection (borrow from pool or use bound conn)
 fn (db &DB) get_conn() (&Conn, bool) {
-	if db.conn != 0 {
+	if db.conn != unsafe { nil } {
 		return db.conn, false
 	}
 	conn := <-db.pool
@@ -347,7 +347,7 @@ fn res_to_result(res voidptr) Result {
 
 // close frees the underlying resource allocated by the database connection
 pub fn (mut db DB) close() ! {
-	if db.conn != 0 {
+	if db.conn != unsafe { nil } {
 		// Just a transaction handle, do nothing? Or close the underlying connection?
 		// Typically Tx should use rollback/commit.
 		return
@@ -727,7 +727,7 @@ pub fn (db &DB) begin(param PQTransactionParam) !DB {
 
 // commit commits the current transaction.
 pub fn (db &DB) commit() ! {
-	if db.conn == 0 {
+	if db.conn != unsafe { nil } {
 		return error('commit called on non-transaction DB')
 	}
 	_ := C.PQexec(db.conn.conn, c'COMMIT;')
@@ -743,7 +743,8 @@ pub fn (db &DB) commit() ! {
 
 // rollback rollbacks the current transaction.
 pub fn (db &DB) rollback() ! {
-	if db.conn == 0 {
+	// if db.conn == 0 {
+	if db.conn != unsafe { nil } {
 		return error('rollback called on non-transaction DB')
 	}
 	_ := C.PQexec(db.conn.conn, c'ROLLBACK;')

@@ -10,7 +10,7 @@ fn test_large_exec() {
 		return
 	}
 
-	db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
+	mut db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
 	defer {
 		db.close() or {}
 	}
@@ -38,7 +38,7 @@ fn test_prepared() {
 		eprintln('> This test requires a working postgres server running on localhost.')
 		return
 	}
-	db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
+	mut db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
 	defer {
 		db.close() or {}
 	}
@@ -57,7 +57,7 @@ fn test_transaction() {
 		return
 	}
 
-	db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
+	mut db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
 	defer {
 		db.close() or {}
 	}
@@ -88,7 +88,7 @@ fn test_listen_notify() {
 		return
 	}
 
-	db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
+	mut db := pg.connect(pg.Config{ user: 'postgres', password: '12345678', dbname: 'postgres' })!
 	defer {
 		db.close() or {}
 	}
