@@ -14,6 +14,9 @@ mut:
 
 	// Stack for break/continue targets
 	loop_stack []LoopInfo
+
+	// Maps struct name to TypeID
+	struct_types map[string]TypeID
 }
 
 struct LoopInfo {
@@ -23,9 +26,10 @@ struct LoopInfo {
 
 pub fn Builder.new(mod &Module) &Builder {
 	return &Builder{
-		mod:        mod
-		vars:       map[string]ValueID{}
-		loop_stack: []LoopInfo{}
+		mod:          mod
+		vars:         map[string]ValueID{}
+		loop_stack:   []LoopInfo{}
+		struct_types: map[string]TypeID{}
 	}
 }
 
@@ -83,12 +87,27 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 
 	// FIX: Access params via decl.typ.params
 	for _, param in decl.typ.params {
+		// Determine actual parameter type
+		mut param_type := i32_t
+
+		// Check if parameter type is a struct (look up by name)
+		if param.typ is ast.Ident {
+			if struct_t := b.struct_types[param.typ.name] {
+				// For mut params, it's a pointer to the struct
+				if param.is_mut {
+					param_type = b.mod.type_store.get_ptr(struct_t)
+				} else {
+					param_type = struct_t
+				}
+			}
+		}
+
 		// 1. Create Argument Value
-		arg_val := b.mod.add_value_node(.argument, i32_t, param.name, 0)
+		arg_val := b.mod.add_value_node(.argument, param_type, param.name, 0)
 		b.mod.funcs[fn_id].params << arg_val
 
 		// 2. Allocate Stack Slot (so we can modify it if needed)
-		stack_ptr := b.mod.add_instr(.alloca, entry, b.mod.type_store.get_ptr(i32_t),
+		stack_ptr := b.mod.add_instr(.alloca, entry, b.mod.type_store.get_ptr(param_type),
 			[])
 
 		// 3. Store Argument to Stack
@@ -258,18 +277,23 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			// Register Struct Type
 			// Simplification: Assume all fields are i32 for this demo unless specified
 			mut field_types := []TypeID{}
-			for _ in node.fields {
+			mut field_names := []string{}
+			for field in node.fields {
 				field_types << b.mod.type_store.get_int(64)
+				field_names << field.name
 			}
 
 			// We manually constructing the struct type in the store
 			// In a real compiler, we'd map AST types to SSA types properly
 			t := Type{
-				kind:   .struct_t
-				fields: field_types
-				width:  0
+				kind:        .struct_t
+				fields:      field_types
+				field_names: field_names
+				width:       0
 			}
-			b.mod.type_store.register(t)
+			type_id := b.mod.type_store.register(t)
+			// Register struct name for type lookup
+			b.struct_types[node.name] = type_id
 		}
 		ast.GlobalDecl {
 			i32_t := b.mod.type_store.get_int(64)
@@ -331,6 +355,10 @@ fn (mut b Builder) expr(node ast.Expr) ValueID {
 		ast.PostfixExpr {
 			return b.expr_postfix(node)
 		}
+		ast.ModifierExpr {
+			// Handle 'mut x' - just unwrap and process the inner expression
+			return b.expr(node.expr)
+		}
 		else {
 			println('Builder: Unhandled expr ${node.type_name()}')
 			// Return constant 0 (i32) to prevent cascading void errors
@@ -368,13 +396,22 @@ fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
 	// Struct Init: MyStruct{ a: 1, b: 2 }
 	// 1. Allocate Struct
 	// Need to find the TypeID for the struct.
-	// For MVP, we search TypeStore for a struct type.
-	// In real compiler, AST node has type info.
 	mut struct_t := 0
-	for i, t in b.mod.type_store.types {
-		if t.kind == .struct_t {
-			struct_t = i
-			break
+
+	// Try to get struct type from the type name in the init expression
+	if node.typ is ast.Ident {
+		if st := b.struct_types[node.typ.name] {
+			struct_t = st
+		}
+	}
+
+	// Fallback: search for first struct type (for backwards compatibility)
+	if struct_t == 0 {
+		for i, t in b.mod.type_store.types {
+			if t.kind == .struct_t {
+				struct_t = i
+				break
+			}
 		}
 	}
 
@@ -726,10 +763,20 @@ fn (mut b Builder) addr(node ast.Expr) ValueID {
 				// In a real compiler, this checks if it's a struct.
 			}
 
-			// Find field index (Simulated)
-			mut idx := 0
-			if node.rhs.name == 'y' || node.rhs.name == 'b' {
-				idx = 1
+			// Find field index by name
+			mut idx := -1
+			for i, name in val_typ.field_names {
+				if name == node.rhs.name {
+					idx = i
+					break
+				}
+			}
+			if idx == -1 {
+				// Fallback to old behavior for backwards compatibility
+				idx = 0
+				if node.rhs.name == 'y' || node.rhs.name == 'b' {
+					idx = 1
+				}
 			}
 
 			// Safety check for index

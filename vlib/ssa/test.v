@@ -170,9 +170,9 @@ fn main() {
 	print_int(sum_many(1, 1, 1, 1, 1, 1, 1, 1))
 
 	// 12. Modifying struct (Reference semantics)
-	// modify_struct(mut p)
-	// print_str('p.x after modification via a function call:')
-	// print_int(p.x) // Should be 999
+	 modify_struct(mut p)
+	 print_str('p.x after modification via a function call:')
+	 print_int(p.x) // Should be 999
 
 	// 13. Assert (Should pass)
 	assert 1 == 1

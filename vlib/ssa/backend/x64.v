@@ -670,6 +670,10 @@ fn (mut g X64Gen) allocate_registers(func ssa.Function) {
 		}
 	}
 
+	// Track which values are alloca results - don't register allocate these
+	// as they hold addresses that may be needed across the function
+	mut alloca_vals := map[int]bool{}
+
 	for blk_id in func.blocks {
 		blk := g.mod.blocks[blk_id]
 		for val_id in blk.instrs {
@@ -684,6 +688,10 @@ fn (mut g X64Gen) allocate_registers(func ssa.Function) {
 				}
 			}
 			instr := g.mod.instrs[val.index]
+			// Mark alloca results as non-register-allocatable
+			if instr.op == .alloca {
+				alloca_vals[val_id] = true
+			}
 			for op in instr.operands {
 				if g.mod.values[op].kind in [.instruction, .argument] {
 					if mut interval := intervals[op] {
@@ -708,6 +716,10 @@ fn (mut g X64Gen) allocate_registers(func ssa.Function) {
 	regs := [3, 12, 13, 14, 15]
 
 	for i in sorted {
+		// Skip alloca results - they must stay on stack to preserve addresses
+		if alloca_vals[i.val_id] {
+			continue
+		}
 		for j := 0; j < active.len; j++ {
 			if active[j].end < i.start {
 				active.delete(j)

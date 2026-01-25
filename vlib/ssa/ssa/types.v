@@ -16,13 +16,14 @@ pub enum TypeKind {
 
 pub struct Type {
 pub:
-	kind      TypeKind
-	width     int      // Bit width
-	elem_type TypeID   // For Ptr, Array
-	len       int      // For Array
-	fields    []TypeID // For Structs
-	params    []TypeID // For Funcs
-	ret_type  TypeID
+	kind        TypeKind
+	width       int        // Bit width
+	elem_type   TypeID     // For Ptr, Array
+	len         int        // For Array
+	fields      []TypeID   // For Structs
+	field_names []string   // Field names for Structs
+	params      []TypeID   // For Funcs
+	ret_type    TypeID
 }
 
 pub struct TypeStore {
