@@ -186,4 +186,23 @@ fn main() {
 	print_str('allocated &Point{}:')
 	print_int(p2.x)
 	print_int(p2.y)
+
+	// 15. Bitwise operations
+	print_str('bitwise ops:')
+	a := 0b1100  // 12
+	b := 0b1010  // 10
+	print_int(a & b)   // AND: 0b1000 = 8
+	print_int(a | b)   // OR:  0b1110 = 14
+	print_int(a ^ b)   // XOR: 0b0110 = 6
+
+	// 16. Shift operations
+	print_str('shift ops:')
+	print_int(1 << 4)   // 16
+	print_int(32 >> 2)  // 8
+	print_int(255 >> 4) // 15
+
+	// 17. Modulo
+	print_str('modulo:')
+	print_int(17 % 5)  // 2
+	print_int(100 % 7) // 2
 }

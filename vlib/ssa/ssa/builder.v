@@ -459,6 +459,12 @@ fn (mut b Builder) expr_infix(node ast.InfixExpr) ValueID {
 		.minus { OpCode.sub }
 		.mul { OpCode.mul }
 		.div { OpCode.sdiv }
+		.mod { OpCode.srem }
+		.amp { OpCode.and_ }
+		.pipe { OpCode.or_ }
+		.xor { OpCode.xor }
+		.left_shift { OpCode.shl }
+		.right_shift { OpCode.ashr }
 		.gt { OpCode.gt }
 		.lt { OpCode.lt }
 		.eq { OpCode.eq }

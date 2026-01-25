@@ -172,7 +172,7 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 	// Temps: 0=RAX, 1=RCX
 
 	match instr.op {
-		.add, .sub, .mul, .sdiv, .eq, .ne, .lt, .gt, .le, .ge {
+		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt, .le, .ge {
 			g.load_val_to_reg(0, instr.operands[0]) // RAX
 			g.load_val_to_reg(1, instr.operands[1]) // RCX
 
@@ -201,6 +201,52 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 					g.emit(0x48)
 					g.emit(0xF7)
 					g.emit(0xF9)
+				}
+				.srem {
+					// cqo: sign-extend rax to rdx:rax
+					g.emit(0x48)
+					g.emit(0x99)
+					// idiv rcx (quotient in rax, remainder in rdx)
+					g.emit(0x48)
+					g.emit(0xF7)
+					g.emit(0xF9)
+					// mov rax, rdx (move remainder to rax)
+					g.emit(0x48)
+					g.emit(0x89)
+					g.emit(0xD0)
+				}
+				.and_ {
+					g.emit(0x48)
+					g.emit(0x21)
+					g.emit(0xC8) // and rax, rcx
+				}
+				.or_ {
+					g.emit(0x48)
+					g.emit(0x09)
+					g.emit(0xC8) // or rax, rcx
+				}
+				.xor {
+					g.emit(0x48)
+					g.emit(0x31)
+					g.emit(0xC8) // xor rax, rcx
+				}
+				.shl {
+					// shl rax, cl (shift by low 8 bits of rcx)
+					g.emit(0x48)
+					g.emit(0xD3)
+					g.emit(0xE0)
+				}
+				.ashr {
+					// sar rax, cl (arithmetic shift right)
+					g.emit(0x48)
+					g.emit(0xD3)
+					g.emit(0xF8)
+				}
+				.lshr {
+					// shr rax, cl (logical shift right)
+					g.emit(0x48)
+					g.emit(0xD3)
+					g.emit(0xE8)
 				}
 				.eq, .ne, .lt, .gt, .le, .ge {
 					g.emit(0x48)
