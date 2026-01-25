@@ -110,12 +110,19 @@ fn (mut g X64Gen) gen_func(func ssa.Function) {
 	// sub rsp, stack_size
 	if g.stack_size > 0 {
 		g.emit(0x48)
-		g.emit(0x81)
-		g.emit(0xEC)
-		g.emit_u32(u32(g.stack_size))
+		if g.stack_size <= 127 {
+			g.emit(0x83) // sub r/m64, imm8
+			g.emit(0xEC)
+			g.emit(u8(g.stack_size))
+		} else {
+			g.emit(0x81) // sub r/m64, imm32
+			g.emit(0xEC)
+			g.emit_u32(u32(g.stack_size))
+		}
 	}
 
 	// Move Params (ABI: RDI, RSI, RDX, RCX, R8, R9)
+	// First 6 args in registers, rest on stack at [rbp+16], [rbp+24], ...
 	abi_regs := [7, 6, 2, 1, 8, 9]
 	for i, pid in func.params {
 		if i < 6 {
@@ -125,6 +132,17 @@ fn (mut g X64Gen) gen_func(func ssa.Function) {
 			} else {
 				offset := g.stack_map[pid]
 				g.emit_store_reg_mem(src, offset)
+			}
+		} else {
+			// Stack parameters: [rbp+16] is 7th param, [rbp+24] is 8th, etc.
+			stack_param_offset := 16 + (i - 6) * 8
+			// Load from stack into RAX, then store to our slot
+			g.emit_load_reg_mem(0, stack_param_offset)
+			if reg := g.reg_map[pid] {
+				g.emit_mov_reg_reg(reg, 0)
+			} else {
+				offset := g.stack_map[pid]
+				g.emit_store_reg_mem(0, offset)
 			}
 		}
 	}
@@ -230,8 +248,13 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 			// lea rax, [rbp + off]
 			g.emit(0x48)
 			g.emit(0x8D)
-			g.emit(0x85)
-			g.emit_u32(u32(off))
+			if off >= -128 && off <= 127 {
+				g.emit(0x45) // ModRM 01 = disp8
+				g.emit(u8(off))
+			} else {
+				g.emit(0x85) // ModRM 10 = disp32
+				g.emit_u32(u32(off))
+			}
 			g.store_reg_to_val(0, val_id)
 		}
 		.get_element_ptr {
@@ -251,6 +274,26 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 		}
 		.call {
 			abi_regs := [7, 6, 2, 1, 8, 9]
+			num_args := instr.operands.len - 1
+
+			// Push stack arguments in reverse order (args 7+)
+			mut stack_args := 0
+			if num_args > 6 {
+				stack_args = num_args - 6
+				// Align stack to 16 bytes if odd number of stack args
+				if stack_args % 2 == 1 {
+					// push rax (shorter than sub rsp, 8)
+					g.emit(0x50)
+				}
+				// Push in reverse order
+				for i := num_args; i > 6; i-- {
+					g.load_val_to_reg(0, instr.operands[i]) // RAX
+					// push rax
+					g.emit(0x50)
+				}
+			}
+
+			// Load register arguments
 			for i in 1 .. instr.operands.len {
 				if i - 1 < 6 {
 					g.load_val_to_reg(abi_regs[i - 1], instr.operands[i])
@@ -269,6 +312,22 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 			g.elf.add_text_reloc(u64(g.elf.text_data.len), sym_idx, 4, -4)
 			g.emit_u32(0)
 
+			// Clean up stack arguments
+			if stack_args > 0 {
+				cleanup := (stack_args + (stack_args % 2)) * 8
+				// add rsp, cleanup
+				g.emit(0x48)
+				if cleanup <= 127 {
+					g.emit(0x83)
+					g.emit(0xC4)
+					g.emit(u8(cleanup))
+				} else {
+					g.emit(0x81)
+					g.emit(0xC4)
+					g.emit_u32(u32(cleanup))
+				}
+			}
+
 			if g.mod.type_store.types[g.mod.values[val_id].typ].kind != .void_t {
 				g.store_reg_to_val(0, val_id)
 			}
@@ -280,9 +339,15 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 			// Cleanup Stack
 			if g.stack_size > 0 {
 				g.emit(0x48)
-				g.emit(0x81)
-				g.emit(0xC4)
-				g.emit_u32(u32(g.stack_size))
+				if g.stack_size <= 127 {
+					g.emit(0x83) // add r/m64, imm8
+					g.emit(0xC4)
+					g.emit(u8(g.stack_size))
+				} else {
+					g.emit(0x81) // add r/m64, imm32
+					g.emit(0xC4)
+					g.emit_u32(u32(g.stack_size))
+				}
 			}
 			// Pop callee-saved regs (reverse order)
 			for i := g.used_regs.len - 1; i >= 0; i-- {
@@ -297,21 +362,34 @@ fn (mut g X64Gen) gen_instr(val_id int) {
 			g.emit_jmp(target_idx)
 		}
 		.br {
-			g.load_val_to_reg(0, instr.operands[0])
-			g.emit(0x48)
-			g.emit(0x85)
-			g.emit(0xC0) // test rax, rax
+			cond_id := instr.operands[0]
 			true_blk := g.mod.values[instr.operands[1]].index
 			false_blk := g.mod.values[instr.operands[2]].index
 
-			g.emit(0x0F)
-			g.emit(0x85) // jne
-			g.record_pending_label(true_blk)
-			g.emit_u32(0)
+			// Test condition register directly if register-allocated
+			if reg := g.reg_map[cond_id] {
+				hw_reg := g.map_reg(reg)
+				mut rex := u8(0x48)
+				if hw_reg >= 8 {
+					rex |= 5 // REX.RB
+				}
+				g.emit(rex)
+				g.emit(0x85)
+				g.emit(0xC0 | ((hw_reg & 7) << 3) | (hw_reg & 7))
+			} else {
+				g.load_val_to_reg(0, cond_id)
+				g.emit(0x48)
+				g.emit(0x85)
+				g.emit(0xC0) // test rax, rax
+			}
 
-			g.emit(0xE9) // jmp
+			// Emit je false_blk (jump if zero/false)
+			g.emit(0x0F)
+			g.emit(0x84) // je rel32
 			g.record_pending_label(false_blk)
 			g.emit_u32(0)
+			// Jump to true block (can't assume it's the next block)
+			g.emit_jmp(true_blk)
 		}
 		.switch_ {
 			g.load_val_to_reg(0, instr.operands[0]) // RAX
@@ -413,13 +491,33 @@ fn (mut g X64Gen) load_val_to_reg(reg int, val_id int) {
 		} else {
 			int_val := val.name.i64()
 			hw_reg := g.map_reg(reg)
-			mut rex := u8(0x48)
-			if hw_reg >= 8 {
-				rex |= 1
+			if int_val == 0 {
+				// xor reg, reg (2-3 bytes)
+				if hw_reg >= 8 {
+					g.emit(0x45) // REX.RB
+					g.emit(0x31)
+					g.emit(0xC0 | ((hw_reg & 7) << 3) | (hw_reg & 7))
+				} else {
+					g.emit(0x31)
+					g.emit(0xC0 | (hw_reg << 3) | hw_reg)
+				}
+			} else if int_val > 0 && int_val <= 0x7FFFFFFF {
+				// mov $imm32, %reg (5-6 bytes, zero-extends to 64-bit)
+				if hw_reg >= 8 {
+					g.emit(0x41) // REX.B
+				}
+				g.emit(0xB8 | (hw_reg & 7))
+				g.emit_u32(u32(int_val))
+			} else {
+				// movabs $imm64, %reg (10 bytes)
+				mut rex := u8(0x48)
+				if hw_reg >= 8 {
+					rex |= 1
+				}
+				g.emit(rex)
+				g.emit(0xB8 | (hw_reg & 7))
+				g.emit_u64(u64(int_val))
 			}
-			g.emit(rex)
-			g.emit(0xB8 | (hw_reg & 7))
-			g.emit_u64(u64(int_val))
 		}
 	} else if val.kind == .global {
 		hw_reg := g.map_reg(reg)
@@ -499,8 +597,13 @@ fn (mut g X64Gen) emit_load_reg_mem(reg int, disp int) {
 	}
 	g.emit(rex)
 	g.emit(0x8B)
-	g.emit(0x85 | ((hw_reg & 7) << 3))
-	g.emit_u32(u32(disp))
+	if disp >= -128 && disp <= 127 {
+		g.emit(0x45 | ((hw_reg & 7) << 3)) // ModRM 01 = disp8
+		g.emit(u8(disp))
+	} else {
+		g.emit(0x85 | ((hw_reg & 7) << 3)) // ModRM 10 = disp32
+		g.emit_u32(u32(disp))
+	}
 }
 
 fn (mut g X64Gen) emit_store_reg_mem(reg int, disp int) {
@@ -511,8 +614,13 @@ fn (mut g X64Gen) emit_store_reg_mem(reg int, disp int) {
 	}
 	g.emit(rex)
 	g.emit(0x89)
-	g.emit(0x85 | ((hw_reg & 7) << 3))
-	g.emit_u32(u32(disp))
+	if disp >= -128 && disp <= 127 {
+		g.emit(0x45 | ((hw_reg & 7) << 3)) // ModRM 01 = disp8
+		g.emit(u8(disp))
+	} else {
+		g.emit(0x85 | ((hw_reg & 7) << 3)) // ModRM 10 = disp32
+		g.emit_u32(u32(disp))
+	}
 }
 
 fn (g X64Gen) map_reg(r int) u8 {

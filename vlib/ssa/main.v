@@ -50,9 +50,13 @@ fn main() {
 
 	native := true
 
-	mut arch := Arch.arm64
+	// Default architecture based on OS
+	mut arch := if os.user_os() == 'macos' { Arch.arm64 } else { Arch.x64 }
+	// Allow override via command line
 	if os.args.contains('x64') {
 		arch = .x64
+	} else if os.args.contains('arm64') {
+		arch = .arm64
 	}
 
 	if native {
