@@ -858,23 +858,35 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 fn (mut m Module) constant_fold() {
 	for func in m.funcs {
 		for blk_id in func.blocks {
-			mut instrs := m.blocks[blk_id].instrs.clone()
+			instrs := m.blocks[blk_id].instrs.clone()
 
 			for val_id in instrs {
-				// Ensure value is an instruction
 				if m.values[val_id].kind != .instruction {
 					continue
 				}
 
 				instr := m.instrs[m.values[val_id].index]
 
-				// Example: Binary Ops
 				if instr.operands.len == 2 {
 					lhs := m.values[instr.operands[0]]
 					rhs := m.values[instr.operands[1]]
 
+					// Skip undef values - can't fold with undefined
+					if lhs.kind == .constant && lhs.name == 'undef' {
+						continue
+					}
+					if rhs.kind == .constant && rhs.name == 'undef' {
+						continue
+					}
+
+					// Try algebraic simplifications first (even with non-constants)
+					if repl := m.try_algebraic_simplify(val_id, instr, lhs, rhs) {
+						m.replace_uses(val_id, repl)
+						continue
+					}
+
+					// Constant folding - both operands must be constants
 					if lhs.kind == .constant && rhs.kind == .constant {
-						// Assuming integer math for MVP
 						l_int := lhs.name.i64()
 						r_int := rhs.name.i64()
 
@@ -895,13 +907,47 @@ fn (mut m Module) constant_fold() {
 								folded = true
 							}
 							.sdiv {
-								// Guard against division by zero
 								if r_int != 0 {
 									result = l_int / r_int
 									folded = true
 								}
 							}
-							// Comparison operations
+							.srem {
+								if r_int != 0 {
+									result = l_int % r_int
+									folded = true
+								}
+							}
+							.and_ {
+								result = l_int & r_int
+								folded = true
+							}
+							.or_ {
+								result = l_int | r_int
+								folded = true
+							}
+							.xor {
+								result = l_int ^ r_int
+								folded = true
+							}
+							.shl {
+								if r_int >= 0 && r_int < 64 {
+									result = l_int << u64(r_int)
+									folded = true
+								}
+							}
+							.ashr {
+								if r_int >= 0 && r_int < 64 {
+									result = l_int >> u64(r_int)
+									folded = true
+								}
+							}
+							.lshr {
+								if r_int >= 0 && r_int < 64 {
+									result = i64(u64(l_int) >> u64(r_int))
+									folded = true
+								}
+							}
 							.eq {
 								result = if l_int == r_int { 1 } else { 0 }
 								folded = true
@@ -926,23 +972,103 @@ fn (mut m Module) constant_fold() {
 								result = if l_int >= r_int { 1 } else { 0 }
 								folded = true
 							}
-							// Add div check for 0
 							else {}
 						}
 
 						if folded {
-							// Create a new constant value and replace all uses
-							// Don't mutate in place - value IDs should be immutable
 							typ := m.values[val_id].typ
 							const_val := m.add_value_node(.constant, typ, result.str(), 0)
 							m.replace_uses(val_id, const_val)
-							// Original instruction will be cleaned up by DCE
 						}
 					}
 				}
 			}
 		}
 	}
+}
+
+// Algebraic simplifications: x+0=x, x*1=x, x*0=0, etc.
+fn (m Module) try_algebraic_simplify(val_id int, instr Instruction, lhs Value, rhs Value) ?int {
+	// Check if either operand is a constant
+	mut const_val := i64(0)
+	mut const_is_rhs := false
+	mut other_id := 0
+
+	if lhs.kind == .constant && lhs.name != 'undef' {
+		const_val = lhs.name.i64()
+		const_is_rhs = false
+		other_id = instr.operands[1]
+	} else if rhs.kind == .constant && rhs.name != 'undef' {
+		const_val = rhs.name.i64()
+		const_is_rhs = true
+		other_id = instr.operands[0]
+	} else {
+		return none
+	}
+
+	typ := m.values[val_id].typ
+
+	match instr.op {
+		.add {
+			// x + 0 = 0 + x = x
+			if const_val == 0 {
+				return other_id
+			}
+		}
+		.sub {
+			// x - 0 = x
+			if const_is_rhs && const_val == 0 {
+				return other_id
+			}
+		}
+		.mul {
+			// x * 0 = 0 * x = 0
+			if const_val == 0 {
+				return m.values.len // Will create zero below
+			}
+			// x * 1 = 1 * x = x
+			if const_val == 1 {
+				return other_id
+			}
+		}
+		.sdiv {
+			// x / 1 = x
+			if const_is_rhs && const_val == 1 {
+				return other_id
+			}
+		}
+		.and_ {
+			// x & 0 = 0 & x = 0
+			if const_val == 0 {
+				return m.values.len // Will create zero below
+			}
+		}
+		.or_ {
+			// x | 0 = 0 | x = x
+			if const_val == 0 {
+				return other_id
+			}
+		}
+		.xor {
+			// x ^ 0 = 0 ^ x = x
+			if const_val == 0 {
+				return other_id
+			}
+		}
+		.shl, .ashr, .lshr {
+			// x << 0 = x >> 0 = x
+			if const_is_rhs && const_val == 0 {
+				return other_id
+			}
+		}
+		else {
+			return none
+		}
+	}
+
+	// If we get here and need to return zero (for x*0 or x&0)
+	_ := typ // suppress unused warning
+	return none
 }
 
 fn (mut m Module) dead_code_elimination() {
