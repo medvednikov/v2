@@ -17,20 +17,27 @@ pub fn (mut m Module) optimize() {
 	// 4. Scalar Optimizations
 	m.constant_fold()
 	m.dead_code_elimination()
+	
+	// 5. Simplify Phi nodes (remove trivial phis)
+	m.simplify_phi_nodes()
+	
 	m.merge_blocks()
 	m.remove_unreachable_blocks()
 
-	// 5. Eliminate Phi Nodes (Lower to Copies for Backend)
+	// 6. Eliminate Phi Nodes (Lower to Copies for Backend)
+	// This includes Critical Edge Splitting and Briggs Parallel Copy Resolution
 	m.eliminate_phi_nodes()
+	
 	println('SSA optimization took ${time.since(t)}')
 }
 
 // --- 1. CFG Construction ---
 fn (mut m Module) build_cfg() {
 	for func in m.funcs {
-		// Clear existing preds
+		// Clear existing preds/succs
 		for blk_id in func.blocks {
 			m.blocks[blk_id].preds = []
+			m.blocks[blk_id].succs = []
 		}
 
 		for blk_id in func.blocks {
@@ -61,9 +68,19 @@ fn (mut m Module) build_cfg() {
 				else {}
 			}
 
-			m.blocks[blk_id].succs = succs
+			// Deduplicate successors
+			mut unique_succs := []int{}
 			for s in succs {
-				m.blocks[s].preds << blk_id
+				if s !in unique_succs {
+					unique_succs << s
+				}
+			}
+
+			m.blocks[blk_id].succs = unique_succs
+			for s in unique_succs {
+				if blk_id !in m.blocks[s].preds {
+					m.blocks[s].preds << blk_id
+				}
 			}
 		}
 	}
@@ -89,14 +106,12 @@ fn (mut m Module) compute_dominators() {
 			continue
 		}
 
-		// Calculate total block count to size arrays correctly
-		// Note: func.blocks contains IDs, max_id could be larger than len
 		max_id := m.blocks.len
 
 		mut ctx := LTContext{
 			parent:   []int{len: max_id, init: -1}
 			semi:     []int{len: max_id, init: -1}
-			vertex:   []int{len: max_id, init: -1} // we only need size = func.blocks.len + 1 actually
+			vertex:   []int{len: max_id, init: -1}
 			bucket:   [][]int{len: max_id}
 			dfnum:    []int{len: max_id, init: 0}
 			ancestor: []int{len: max_id, init: -1}
@@ -104,24 +119,19 @@ fn (mut m Module) compute_dominators() {
 			n:        0
 		}
 
-		// Initialize DSU labels
 		for blk_id in func.blocks {
 			ctx.label[blk_id] = blk_id
 			ctx.semi[blk_id] = blk_id
-			// Initialize idom to -1
 			m.blocks[blk_id].idom = -1
 		}
 
 		entry := func.blocks[0]
 		m.lt_dfs(entry, mut ctx)
 
-		// Process in reverse DFS order (skip root)
 		for i := ctx.n; i >= 2; i-- {
 			w := ctx.vertex[i]
 
-			// 1. Calculate Semidominator
 			for p in m.blocks[w].preds {
-				// Only process reachable predecessors
 				if ctx.dfnum[p] == 0 {
 					continue
 				}
@@ -132,29 +142,21 @@ fn (mut m Module) compute_dominators() {
 				}
 			}
 
-			// Add w to bucket of its semidominator
 			ctx.bucket[ctx.semi[w]] << w
-
-			// Link to parent in forest
 			ctx.link(ctx.parent[w], w)
 
-			// 2. Implicitly compute IDom
 			parent_w := ctx.parent[w]
-			// Drain bucket of parent
-			// Note: We copy to iterate because we might clear/modify?
-			// Standard algo drains bucket[parent_w] now.
 			for v in ctx.bucket[parent_w] {
 				u := ctx.eval(v)
 				if ctx.semi[u] == ctx.semi[v] {
 					m.blocks[v].idom = parent_w
 				} else {
-					m.blocks[v].idom = u // Deferred: idom[v] = idom[u]
+					m.blocks[v].idom = u
 				}
 			}
 			ctx.bucket[parent_w] = []
 		}
 
-		// 3. Explicitly compute IDom
 		for i := 2; i <= ctx.n; i++ {
 			w := ctx.vertex[i]
 			if m.blocks[w].idom != ctx.vertex[ctx.dfnum[ctx.semi[w]]] {
@@ -164,7 +166,6 @@ fn (mut m Module) compute_dominators() {
 
 		m.blocks[entry].idom = entry
 
-		// Build Dom Tree Children
 		for blk_id in func.blocks {
 			m.blocks[blk_id].dom_tree = []
 		}
@@ -194,7 +195,6 @@ fn (mut ctx LTContext) compress(v int) {
 	if ctx.ancestor[ctx.ancestor[v]] != -1 {
 		ctx.compress(ctx.ancestor[v])
 
-		// Update label based on ancestor
 		if ctx.dfnum[ctx.semi[ctx.label[ctx.ancestor[v]]]] < ctx.dfnum[ctx.semi[ctx.label[v]]] {
 			ctx.label[v] = ctx.label[ctx.ancestor[v]]
 		}
@@ -207,9 +207,6 @@ fn (mut ctx LTContext) eval(v int) int {
 		return ctx.label[v]
 	}
 	ctx.compress(v)
-	// If label[ancestor[v]] is better than label[v], use it?
-	// The path compression updates label[v] to be the best in the path.
-	// However, standard EVAL checks:
 	if ctx.dfnum[ctx.semi[ctx.label[ctx.ancestor[v]]]] >= ctx.dfnum[ctx.semi[ctx.label[v]]] {
 		return ctx.label[v]
 	}
@@ -238,7 +235,6 @@ fn (mut m Module) promote_memory_to_register() {
 			stacks:         map[int][]int{}
 		}
 
-		// 1. Analyze Allocas
 		mut promotable := []int{}
 		for blk_id in func.blocks {
 			blk := m.blocks[blk_id]
@@ -253,15 +249,18 @@ fn (mut m Module) promote_memory_to_register() {
 
 				if instr.op == .store {
 					ptr := instr.operands[1]
-					ctx.defs[ptr] << blk_id
+					if blk_id !in ctx.defs[ptr] {
+						ctx.defs[ptr] << blk_id
+					}
 				} else if instr.op == .load {
 					ptr := instr.operands[0]
-					ctx.uses[ptr] << blk_id
+					if blk_id !in ctx.uses[ptr] {
+						ctx.uses[ptr] << blk_id
+					}
 				}
 			}
 		}
 
-		// 2. Insert Phis (Dominance Frontier)
 		df := m.compute_dominance_frontier(func)
 
 		for alloc_id in promotable {
@@ -284,7 +283,6 @@ fn (mut m Module) promote_memory_to_register() {
 			}
 		}
 
-		// Insert Phis
 		for blk_id, allocs in ctx.phi_placements {
 			for alloc_id in allocs {
 				typ := m.type_store.types[m.values[alloc_id].typ].elem_type
@@ -293,7 +291,6 @@ fn (mut m Module) promote_memory_to_register() {
 			}
 		}
 
-		// 3. Rename Variables
 		if func.blocks.len > 0 {
 			entry := func.blocks[0]
 			m.rename_recursive(entry, mut ctx)
@@ -319,13 +316,11 @@ fn (m Module) is_promotable(alloc_id int) bool {
 				}
 			}
 			.store {
-				// Only safe if used as pointer (index 1)
 				if instr.operands.len < 2 || instr.operands[1] != alloc_id {
 					return false
 				}
 			}
 			else {
-				// Escape (GEP, Call, Phi, etc.)
 				return false
 			}
 		}
@@ -341,9 +336,10 @@ fn (mut m Module) compute_dominance_frontier(func Function) map[int][]int {
 			for p in preds {
 				mut runner := p
 				idom := m.blocks[blk_id].idom
-				// Safety check: idom != -1
 				for runner != -1 && runner != idom {
-					df[runner] << blk_id
+					if blk_id !in df[runner] {
+						df[runner] << blk_id
+					}
 					if runner == m.blocks[runner].idom {
 						break
 					}
@@ -358,7 +354,6 @@ fn (mut m Module) compute_dominance_frontier(func Function) map[int][]int {
 fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 	blk := m.blocks[blk_id]
 
-	// 1. Push Phis to stack
 	if phis := ctx.phi_placements[blk_id] {
 		for alloc_id in phis {
 			name := '${m.values[alloc_id].name}.phi'
@@ -375,7 +370,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 		}
 	}
 
-	// 2. Process Instructions
 	mut stack_counts := map[int]int{}
 	for k, v in ctx.stacks {
 		stack_counts[k] = v.len
@@ -401,7 +395,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 					if stack.len > 0 {
 						repl = stack.last()
 					} else {
-						// Undef / Zero
 						res_type := m.values[val_id].typ
 						repl = m.add_value_node(.constant, res_type, '0', 0)
 					}
@@ -423,7 +416,6 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 		m.instrs[m.values[vid].index].operands = []
 	}
 
-	// 3. Update Successor Phi Operands
 	for succ_id in blk.succs {
 		if phis := ctx.phi_placements[succ_id] {
 			for alloc_id in phis {
@@ -449,12 +441,10 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 		}
 	}
 
-	// 4. Recurse Dom Children
 	for child in blk.dom_tree {
 		m.rename_recursive(child, mut ctx)
 	}
 
-	// 5. Pop Stacks
 	for k, count in stack_counts {
 		for ctx.stacks[k].len > count {
 			ctx.stacks[k].pop()
@@ -462,35 +452,297 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 	}
 }
 
-// --- 4. Phi Elimination (Lower to Copies) ---
-fn (mut m Module) eliminate_phi_nodes() {
-	for func in m.funcs {
-		for blk_id in func.blocks {
-			mut phis := []int{}
-			for val_id in m.blocks[blk_id].instrs {
-				instr := m.instrs[m.values[val_id].index]
-				if instr.op == .phi {
-					phis << val_id
-				}
-			}
-
-			for phi_id in phis {
-				instr := m.instrs[m.values[phi_id].index]
-				for i := 0; i < instr.operands.len; i += 2 {
-					val_in := instr.operands[i]
-					blk_val := instr.operands[i + 1]
-					pred_blk_idx := m.values[blk_val].index
-
-					m.insert_copy_in_block(pred_blk_idx, phi_id, val_in)
+// --- 4. Simplify Phi Nodes ---
+// Remove trivial phi nodes where all operands are the same or self-referential
+fn (mut m Module) simplify_phi_nodes() {
+	mut changed := true
+	for changed {
+		changed = false
+		for func in m.funcs {
+			for blk_id in func.blocks {
+				for val_id in m.blocks[blk_id].instrs {
+					if m.values[val_id].kind != .instruction {
+						continue
+					}
+					instr := m.instrs[m.values[val_id].index]
+					if instr.op != .phi {
+						continue
+					}
+					
+					// Check if phi is trivial (all non-self operands are the same)
+					mut unique_val := -1
+					mut is_trivial := true
+					
+					for i := 0; i < instr.operands.len; i += 2 {
+						op_val := instr.operands[i]
+						// Skip self-references
+						if op_val == val_id {
+							continue
+						}
+						if unique_val == -1 {
+							unique_val = op_val
+						} else if unique_val != op_val {
+							is_trivial = false
+							break
+						}
+					}
+					
+					if is_trivial && unique_val != -1 {
+						// Replace all uses of this phi with the unique value
+						m.replace_uses(val_id, unique_val)
+						// Mark phi as dead
+						m.instrs[m.values[val_id].index].op = .bitcast
+						m.instrs[m.values[val_id].index].operands = []
+						changed = true
+					}
 				}
 			}
 		}
 	}
 }
 
-fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
-	blk := m.blocks[blk_id]
+// --- 5. Critical Edge Splitting ---
+// A critical edge is an edge from a block with multiple successors to a block with multiple predecessors.
+// We must split these edges to correctly place phi copies.
+fn (mut m Module) split_critical_edges() {
+	m.build_cfg()
 
+	for mut func in m.funcs {
+		mut new_blocks := []ssa.BlockID{}
+		
+		// Collect edges to split (can't modify while iterating)
+		mut edges_to_split := [][]ssa.BlockID{} // [pred_id, succ_id]
+
+		for blk_id in func.blocks {
+			blk := m.blocks[blk_id]
+			if blk.succs.len > 1 {
+				for succ_id in blk.succs {
+					if m.blocks[succ_id].preds.len > 1 {
+						edges_to_split << [blk_id, succ_id]
+					}
+				}
+			}
+		}
+
+		// Split each critical edge
+		for edge in edges_to_split {
+			pred_id := edge[0]
+			succ_id := edge[1]
+			
+			// Create new block
+			split_blk := m.add_block(func.id, 'split_${pred_id}_${succ_id}')
+			new_blocks << split_blk
+
+			// Add jump from split block to successor
+			succ_val := m.blocks[succ_id].val_id
+			m.add_instr(.jmp, split_blk, 0, [succ_val])
+
+			// Update predecessor's terminator to jump to split block instead
+			pred_blk := m.blocks[pred_id]
+			if pred_blk.instrs.len > 0 {
+				term_val_id := pred_blk.instrs.last()
+				mut term := &m.instrs[m.values[term_val_id].index]
+
+				old_succ_val := m.blocks[succ_id].val_id
+				new_succ_val := m.blocks[split_blk].val_id
+
+				// Replace only ONE occurrence (for switch with duplicate targets)
+				mut replaced := false
+				for i in 0 .. term.operands.len {
+					if !replaced && term.operands[i] == old_succ_val {
+						term.operands[i] = new_succ_val
+						replaced = true
+					}
+				}
+			}
+
+			// Update phi nodes in successor to reference split block instead of pred
+			for val_id in m.blocks[succ_id].instrs {
+				if m.values[val_id].kind != .instruction {
+					continue
+				}
+				mut instr := &m.instrs[m.values[val_id].index]
+				if instr.op == .phi {
+					old_pred_val := m.blocks[pred_id].val_id
+					new_pred_val := m.blocks[split_blk].val_id
+					for i := 1; i < instr.operands.len; i += 2 {
+						if instr.operands[i] == old_pred_val {
+							instr.operands[i] = new_pred_val
+							break // Only replace first occurrence
+						}
+					}
+				}
+			}
+		}
+
+		func.blocks << new_blocks
+	}
+
+	m.build_cfg()
+}
+
+// --- 6. Phi Elimination with Briggs Parallel Copy Resolution ---
+struct ParallelCopy {
+	dest int
+	src  int
+}
+
+fn (mut m Module) eliminate_phi_nodes() {
+	// First split critical edges
+	m.split_critical_edges()
+
+	for func in m.funcs {
+		// Map: pred_block -> list of (dest, src) pairs
+		mut pred_copies := map[int][]ParallelCopy{}
+
+		// Collect all phi copies grouped by predecessor
+		for blk_id in func.blocks {
+			for val_id in m.blocks[blk_id].instrs {
+				if m.values[val_id].kind != .instruction {
+					continue
+				}
+				instr := m.instrs[m.values[val_id].index]
+				if instr.op == .phi {
+					for i := 0; i < instr.operands.len; i += 2 {
+						val_in := instr.operands[i]
+						blk_val := instr.operands[i + 1]
+						pred_blk_idx := m.values[blk_val].index
+
+						pred_copies[pred_blk_idx] << ParallelCopy{
+							dest: val_id
+							src:  val_in
+						}
+					}
+				}
+			}
+		}
+
+		// For each predecessor, resolve parallel copies using Briggs algorithm
+		for pred_blk, copies in pred_copies {
+			m.resolve_parallel_copies_briggs(pred_blk, copies)
+		}
+
+		// Remove phi instructions
+		for blk_id in func.blocks {
+			for val_id in m.blocks[blk_id].instrs {
+				if m.values[val_id].kind != .instruction {
+					continue
+				}
+				if m.instrs[m.values[val_id].index].op == .phi {
+					m.instrs[m.values[val_id].index].op = .bitcast
+					m.instrs[m.values[val_id].index].operands = []
+				}
+			}
+		}
+	}
+}
+
+// Briggs Parallel Copy Resolution Algorithm
+// Sequences parallel copies to handle dependencies and cycles correctly.
+// Reference: Briggs et al., "Practical Improvements to the Construction and 
+// Destruction of Static Single Assignment Form"
+fn (mut m Module) resolve_parallel_copies_briggs(blk_id int, copies []ParallelCopy) {
+	if copies.len == 0 {
+		return
+	}
+
+	// Filter out self-copies and build working set
+	mut worklist := []ParallelCopy{}
+	for copy in copies {
+		if copy.dest != copy.src {
+			worklist << copy
+		}
+	}
+	
+	if worklist.len == 0 {
+		return
+	}
+
+	// Build maps for the algorithm
+	// loc[b] = current location of value originally in b
+	// pred[a] = the source for destination a
+	mut loc := map[int]int{}
+	mut pred := map[int]int{}
+	
+	// Set of destinations that still need to be written
+	mut to_do := map[int]bool{}
+	
+	// Initialize
+	for copy in worklist {
+		loc[copy.src] = copy.src
+		pred[copy.dest] = copy.src
+		to_do[copy.dest] = true
+	}
+	
+	// Ready set: destinations whose sources are not themselves destinations
+	mut ready := []int{}
+	
+	for copy in worklist {
+		// A copy is ready if its source is not a destination
+		if !to_do[copy.src] {
+			ready << copy.dest
+		}
+	}
+	
+	// Sequenced copies to emit
+	mut sequenced := []ParallelCopy{}
+	
+	for to_do.len > 0 {
+		if ready.len > 0 {
+			// Process a ready copy
+			b := ready.pop()
+			a := pred[b]
+			c := loc[a]
+			
+			// Emit: b <- c
+			sequenced << ParallelCopy{ dest: b, src: c }
+			
+			// Update location: value originally at a is now at b
+			loc[a] = b
+			to_do.delete(b)
+			
+			// Check if this makes another copy ready
+			// If a was a destination that was blocked, it might now be ready
+			if to_do[a] {
+				// a is ready if its source's current location is not a destination
+				src_of_a := pred[a]
+				loc_of_src := if l := loc[src_of_a] { l } else { src_of_a }
+				if !to_do[loc_of_src] {
+					ready << a
+				}
+			}
+		} else {
+			// We have a cycle - need to break it with a temporary
+			// Pick any remaining destination
+			mut b := 0
+			for dest, _ in to_do {
+				b = dest
+				break
+			}
+			
+			// Create a temporary
+			typ := m.values[b].typ
+			temp := m.add_value_node(.instruction, typ, 'phi_tmp_${m.values.len}', 0)
+			
+			// Save the current location of b to temp
+			c := loc[b]
+			sequenced << ParallelCopy{ dest: temp, src: c }
+			
+			// Update: value originally at b is now at temp
+			loc[b] = temp
+			
+			// Now b should be ready (its source is no longer blocking)
+			ready << b
+		}
+	}
+	
+	// Emit the sequenced copies as assign instructions
+	for copy in sequenced {
+		m.insert_copy_in_block(blk_id, copy.dest, copy.src)
+	}
+}
+
+fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	typ := m.values[dest].typ
 	m.instrs << Instruction{
 		op:       .assign
@@ -500,7 +752,7 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	}
 	val_id := m.add_value_node(.instruction, typ, 'copy', m.instrs.len - 1)
 
-	// Safe insertion: find terminator
+	// Insert before terminator
 	mut insert_idx := m.blocks[blk_id].instrs.len
 	if insert_idx > 0 {
 		last_val := m.blocks[blk_id].instrs.last()
@@ -514,26 +766,25 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	m.blocks[blk_id].instrs.insert(insert_idx, val_id)
 }
 
+// --- Other Optimizations ---
+
 fn (mut m Module) constant_fold() {
 	for func in m.funcs {
 		for blk_id in func.blocks {
 			mut instrs := m.blocks[blk_id].instrs.clone()
 
 			for val_id in instrs {
-				// Ensure value is an instruction
 				if m.values[val_id].kind != .instruction {
 					continue
 				}
 
 				instr := m.instrs[m.values[val_id].index]
 
-				// Example: Binary Ops
 				if instr.operands.len == 2 {
 					lhs := m.values[instr.operands[0]]
 					rhs := m.values[instr.operands[1]]
 
 					if lhs.kind == .constant && rhs.kind == .constant {
-						// Assuming integer math for MVP
 						l_int := lhs.name.i64()
 						r_int := rhs.name.i64()
 
@@ -553,16 +804,42 @@ fn (mut m Module) constant_fold() {
 								result = l_int * r_int
 								folded = true
 							}
-							// Add div check for 0
+							.sdiv {
+								if r_int != 0 {
+									result = l_int / r_int
+									folded = true
+								}
+							}
+							.eq {
+								result = if l_int == r_int { 1 } else { 0 }
+								folded = true
+							}
+							.ne {
+								result = if l_int != r_int { 1 } else { 0 }
+								folded = true
+							}
+							.lt {
+								result = if l_int < r_int { 1 } else { 0 }
+								folded = true
+							}
+							.gt {
+								result = if l_int > r_int { 1 } else { 0 }
+								folded = true
+							}
+							.le {
+								result = if l_int <= r_int { 1 } else { 0 }
+								folded = true
+							}
+							.ge {
+								result = if l_int >= r_int { 1 } else { 0 }
+								folded = true
+							}
 							else {}
 						}
 
 						if folded {
-							// Turn the instruction value into a constant
 							m.values[val_id].kind = .constant
 							m.values[val_id].name = result.str()
-							// Clear operands/instr data (optional cleanup)
-							// Now users of val_id will see a Constant, not an Instruction
 						}
 					}
 				}
@@ -581,14 +858,11 @@ fn (mut m Module) dead_code_elimination() {
 				mut new_instrs := []int{}
 				for val_id in blk.instrs {
 					val := m.values[val_id]
-					// If converted to constant, it stays (backend handles it)
-					// If instruction, check uses and side effects
 					if val.kind == .instruction {
 						instr := m.instrs[val.index]
 						side_effects := instr.op in [.store, .call, .ret, .br, .jmp, .switch_,
-							.unreachable]
+							.unreachable, .assign]
 						if !side_effects && val.uses.len == 0 {
-							// Kill
 							for op_id in instr.operands {
 								m.remove_use(op_id, val_id)
 							}
@@ -618,13 +892,11 @@ fn (mut m Module) remove_use(val_id int, user_id int) {
 }
 
 fn (mut m Module) remove_unreachable_blocks() {
-	// Re-build CFG first
 	m.build_cfg()
 	for mut func in m.funcs {
 		if func.blocks.len == 0 {
 			continue
 		}
-		// BFS/DFS from entry
 		mut reachable := map[int]bool{}
 		mut q := [func.blocks[0]]
 		reachable[func.blocks[0]] = true
@@ -639,7 +911,7 @@ fn (mut m Module) remove_unreachable_blocks() {
 			}
 		}
 
-		mut new_blocks := []int{}
+		mut new_blocks := []ssa.BlockID{}
 		for blk in func.blocks {
 			if reachable[blk] {
 				new_blocks << blk
@@ -650,21 +922,12 @@ fn (mut m Module) remove_unreachable_blocks() {
 }
 
 fn (mut m Module) merge_blocks() {
-	// If Block A jumps unconditionally to B, and B has only A as predecessor:
-	// 1. Move instructions from B to A
-	// 2. Update A's successors to B's successors
-	// 3. Remove B
-
-	// We need to be careful about iteration while modifying.
-	// Loop until no changes.
 	mut changed := true
 	for changed {
 		changed = false
-		m.build_cfg() // Refresh preds
+		m.build_cfg()
 
 		for mut func in m.funcs {
-			// We iterate through blocks.
-			// If we merge A->B, we can't merge B->C in same pass easily.
 			mut merged := map[int]bool{}
 
 			for blk_id in func.blocks {
@@ -673,7 +936,6 @@ fn (mut m Module) merge_blocks() {
 				}
 				blk := m.blocks[blk_id]
 
-				// Check if unconditional jump
 				if blk.instrs.len > 0 {
 					last_val := blk.instrs.last()
 					last_instr := m.instrs[m.values[last_val].index]
@@ -682,21 +944,12 @@ fn (mut m Module) merge_blocks() {
 						target_val := last_instr.operands[0]
 						target_id := m.get_block_from_val(target_val)
 
-						// Candidate: target_id
 						if target_id != blk_id && m.blocks[target_id].preds.len == 1
 							&& m.blocks[target_id].preds[0] == blk_id {
 							// MERGE
-							// Remove JMP from A
 							m.blocks[blk_id].instrs.delete_last()
-
-							// Append B's instrs to A
 							m.blocks[blk_id].instrs << m.blocks[target_id].instrs
 
-							// Update instructions in B to point to A (for their 'block' field)?
-							// Not strictly needed if we just use the list.
-							// But we need to update Phis in successors of B?
-							// If B has successors, their Phis might refer to B.
-							// Since B is gone, they now refer to A.
 							for succ_id in m.blocks[target_id].succs {
 								succ := m.blocks[succ_id]
 								for iv in succ.instrs {
@@ -715,7 +968,6 @@ fn (mut m Module) merge_blocks() {
 								}
 							}
 
-							// Remove B from func
 							merged[target_id] = true
 							changed = true
 						}
@@ -723,7 +975,6 @@ fn (mut m Module) merge_blocks() {
 				}
 			}
 
-			// Filter out merged blocks
 			if changed {
 				mut new_blks := []int{}
 				for b in func.blocks {
