@@ -424,12 +424,6 @@ pub fn (db &DB) exec_no_null(query string) ![]RowNoNull {
 	return db.handle_error_or_rows_no_null(conn, res, 'exec')
 }
 
-// exec_no_null works like exec, but the fields can't be NULL, no optionals
-pub fn (db &DB) exec_no_null(query string) ![]RowNoNull {
-	res := C.PQexec(db.conn, &char(query.str))
-	return db.handle_error_or_rows_no_null(res, 'exec')
-}
-
 // exec_result submits a command to the database server and wait for the result, returning an error on failure and a `Result` set on success
 pub fn (db &DB) exec_result(query string) !Result {
 	conn, should_ret := db.get_conn()
