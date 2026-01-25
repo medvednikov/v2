@@ -429,9 +429,9 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 					if stack.len > 0 {
 						repl = stack.last()
 					} else {
-						// Undef / Zero
+						// Undef - reading uninitialized memory
 						res_type := m.values[val_id].typ
-						repl = m.add_value_node(.constant, res_type, '0', 0)
+						repl = m.add_value_node(.constant, res_type, 'undef', 0)
 					}
 					m.replace_uses(val_id, repl)
 					instrs_to_nop << val_id
@@ -467,7 +467,9 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 						if ctx.stacks[alloc_id].len > 0 {
 							val = ctx.stacks[alloc_id].last()
 						} else {
-							val = m.add_value_node(.constant, 0, '0', 0)
+							// Undef - reading uninitialized memory
+							typ := m.type_store.types[m.values[alloc_id].typ].elem_type
+							val = m.add_value_node(.constant, typ, 'undef', 0)
 						}
 						m.instrs[v.index].operands << val
 						m.instrs[v.index].operands << m.blocks[blk_id].val_id
@@ -599,12 +601,10 @@ fn (mut m Module) split_critical_edges() {
 				old_succ_val := m.blocks[succ_id].val_id
 				new_succ_val := m.blocks[split_blk].val_id
 
-				// Replace only ONE occurrence (important for switch with duplicate targets)
-				mut replaced := false
+				// Replace ALL occurrences (handles switch with duplicate targets)
 				for i in 0 .. term.operands.len {
-					if !replaced && term.operands[i] == old_succ_val {
+					if term.operands[i] == old_succ_val {
 						term.operands[i] = new_succ_val
-						replaced = true
 					}
 				}
 			}
@@ -618,11 +618,10 @@ fn (mut m Module) split_critical_edges() {
 				if instr.op == .phi {
 					old_pred_val := m.blocks[pred_id].val_id
 					new_pred_val := m.blocks[split_blk].val_id
-					// Replace first occurrence only
+					// Replace all occurrences (defensive - handles edge cases)
 					for i := 1; i < instr.operands.len; i += 2 {
 						if instr.operands[i] == old_pred_val {
 							instr.operands[i] = new_pred_val
-							break
 						}
 					}
 				}
@@ -932,11 +931,12 @@ fn (mut m Module) constant_fold() {
 						}
 
 						if folded {
-							// Turn the instruction value into a constant
-							m.values[val_id].kind = .constant
-							m.values[val_id].name = result.str()
-							// Clear operands/instr data (optional cleanup)
-							// Now users of val_id will see a Constant, not an Instruction
+							// Create a new constant value and replace all uses
+							// Don't mutate in place - value IDs should be immutable
+							typ := m.values[val_id].typ
+							const_val := m.add_value_node(.constant, typ, result.str(), 0)
+							m.replace_uses(val_id, const_val)
+							// Original instruction will be cleaned up by DCE
 						}
 					}
 				}
@@ -960,7 +960,7 @@ fn (mut m Module) dead_code_elimination() {
 					if val.kind == .instruction {
 						instr := m.instrs[val.index]
 						side_effects := instr.op in [.store, .call, .ret, .br, .jmp, .switch_,
-							.unreachable, .assign]
+							.unreachable, .assign, .fence, .atomicrmw]
 						if !side_effects && val.uses.len == 0 {
 							// Kill
 							for op_id in instr.operands {
@@ -983,10 +983,11 @@ fn (mut m Module) remove_use(val_id int, user_id int) {
 		return
 	}
 	mut val := &m.values[val_id]
-	for i := 0; i < val.uses.len; i++ {
+	// Remove all occurrences (handles instructions that use same value multiple times)
+	// Iterate in reverse to safely delete while iterating
+	for i := val.uses.len - 1; i >= 0; i-- {
 		if val.uses[i] == user_id {
 			val.uses.delete(i)
-			break
 		}
 	}
 }
@@ -1078,8 +1079,10 @@ fn (mut m Module) merge_blocks() {
 									if v.kind != .instruction {
 										continue
 									}
-									mut ins := m.instrs[v.index]
+									ins := m.instrs[v.index]
 									if ins.op == .phi {
+										// Replace all occurrences (defensive - handles edge cases)
+										// i=1,3,5... are block references in phi [val0, blk0, val1, blk1, ...]
 										for i := 1; i < ins.operands.len; i += 2 {
 											if ins.operands[i] == m.blocks[target_id].val_id {
 												m.instrs[v.index].operands[i] = m.blocks[blk_id].val_id
