@@ -637,8 +637,18 @@ fn (mut b Builder) expr_call_or_cast(node ast.CallOrCastExpr) ValueID {
 }
 
 fn (mut b Builder) expr_prefix(node ast.PrefixExpr) ValueID {
-	right := b.expr(node.expr)
 	i32_t := b.mod.type_store.get_int(64)
+
+	// Handle address-of operator with struct init: &Point{} -> heap allocation
+	if node.op == .amp {
+		if node.expr is ast.InitExpr {
+			return b.expr_heap_alloc(node.expr)
+		}
+		// For other &expr cases, just return the address
+		return b.addr(node.expr)
+	}
+
+	right := b.expr(node.expr)
 	match node.op {
 		.minus {
 			zero := b.mod.add_value_node(.constant, i32_t, '0', 0)
@@ -652,6 +662,55 @@ fn (mut b Builder) expr_prefix(node ast.PrefixExpr) ValueID {
 			return 0
 		}
 	}
+}
+
+fn (mut b Builder) expr_heap_alloc(node ast.InitExpr) ValueID {
+	// Heap allocation: &StructInit{}
+	// 1. Find struct type
+	mut struct_t := 0
+
+	if node.typ is ast.Ident {
+		if st := b.struct_types[node.typ.name] {
+			struct_t = st
+		}
+	}
+
+	if struct_t == 0 {
+		for i, t in b.mod.type_store.types {
+			if t.kind == .struct_t {
+				struct_t = i
+				break
+			}
+		}
+	}
+
+	// 2. Calculate size (fields.len * 8 for 64-bit)
+	struct_type := b.mod.type_store.types[struct_t]
+	mut size := struct_type.fields.len * 8
+	if size == 0 {
+		size = 16 // Default size for empty struct
+	}
+
+	i64_t := b.mod.type_store.get_int(64)
+	ptr_t := b.mod.type_store.get_ptr(struct_t)
+
+	// 3. Call malloc
+	malloc_fn := b.mod.add_value_node(.unknown, 0, 'malloc', 0)
+	size_val := b.mod.add_value_node(.constant, i64_t, size.str(), 0)
+	heap_ptr := b.mod.add_instr(.call, b.cur_block, ptr_t, [malloc_fn, size_val])
+
+	// 4. Initialize fields
+	for i, field in node.fields {
+		val := b.expr(field.value)
+		idx_val := b.mod.add_value_node(.constant, i64_t, i.str(), 0)
+
+		// GEP to field
+		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block,
+			b.mod.type_store.get_ptr(i64_t), [heap_ptr, idx_val])
+		b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
+	}
+
+	return heap_ptr
 }
 
 fn (mut b Builder) expr_postfix(node ast.PostfixExpr) ValueID {

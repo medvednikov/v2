@@ -178,7 +178,6 @@ fn main() {
 	assert 1 == 1
 	print_str('Assert passed')
 
-	/*
 	// 14. Heap allocation
 	p2 := &Point{
 		x: 10
@@ -186,5 +185,5 @@ fn main() {
 	}
 	print_str('allocated &Point{}:')
 	print_int(p2.x)
-	*/
+	print_int(p2.y)
 }
