@@ -146,20 +146,22 @@ pub fn (mut m Module) add_instr_front(op OpCode, block BlockID, typ TypeID, oper
 }
 
 pub fn (mut m Module) replace_uses(old_val int, new_val int) {
-	// Copy uses, because we modify instr operands which might change things?
-	// Actually uses list tracks who uses `old_val`.
-	// We need to update those instructions to use `new_val` instead.
+	// Copy uses, because we modify instr operands which might change things
 	uses := m.values[old_val].uses.clone()
 	for use_id in uses {
 		use_val := m.values[use_id]
 		if use_val.kind == .instruction {
-			mut instr := m.instrs[use_val.index]
-			for i in 0 .. instr.operands.len {
-				if instr.operands[i] == old_val {
+			mut replaced := false
+			for i in 0 .. m.instrs[use_val.index].operands.len {
+				if m.instrs[use_val.index].operands[i] == old_val {
 					m.instrs[use_val.index].operands[i] = new_val
+					replaced = true
 				}
 			}
-			m.values[new_val].uses << use_id
+			// Only add to uses list once per user, even if used multiple times
+			if replaced && use_id !in m.values[new_val].uses {
+				m.values[new_val].uses << use_id
+			}
 		}
 	}
 	m.values[old_val].uses = []

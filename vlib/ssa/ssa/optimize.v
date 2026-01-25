@@ -14,14 +14,16 @@ pub fn (mut m Module) optimize() {
 	// 3. Promote Memory to Register (Construct SSA / Phi Nodes)
 	m.promote_memory_to_register()
 
-	// 4. Scalar Optimizations
-	m.constant_fold()
-	m.dead_code_elimination()
-	
-	// 5. Simplify Phi nodes (remove trivial phis)
-	// A trivial phi is one where all operands (excluding self-references) are the same value
-	m.simplify_phi_nodes()
-	
+	// 4. Scalar Optimizations (run until fixed point)
+	mut opt_changed := true
+	for opt_changed {
+		opt_changed = false
+		opt_changed = m.constant_fold() || opt_changed
+		opt_changed = m.branch_fold() || opt_changed
+		opt_changed = m.dead_code_elimination() || opt_changed
+		opt_changed = m.simplify_phi_nodes() || opt_changed
+	}
+
 	m.merge_blocks()
 	m.remove_unreachable_blocks()
 
@@ -496,7 +498,8 @@ fn (mut m Module) rename_recursive(blk_id int, mut ctx Mem2RegCtx) {
 // Remove trivial phi nodes where all operands are the same or self-referential.
 // A phi is trivial if all its non-self operands resolve to the same value.
 // This reduces unnecessary instructions before phi elimination.
-fn (mut m Module) simplify_phi_nodes() {
+fn (mut m Module) simplify_phi_nodes() bool {
+	mut any_changed := false
 	mut changed := true
 	for changed {
 		changed = false
@@ -510,11 +513,11 @@ fn (mut m Module) simplify_phi_nodes() {
 					if instr.op != .phi {
 						continue
 					}
-					
+
 					// Check if phi is trivial (all non-self operands are the same)
 					mut unique_val := -1
 					mut is_trivial := true
-					
+
 					for i := 0; i < instr.operands.len; i += 2 {
 						op_val := instr.operands[i]
 						// Skip self-references (phi refers to itself)
@@ -528,7 +531,7 @@ fn (mut m Module) simplify_phi_nodes() {
 							break
 						}
 					}
-					
+
 					// If trivial and we found a unique value, replace all uses
 					if is_trivial && unique_val != -1 {
 						// Replace all uses of this phi with the unique value
@@ -537,11 +540,13 @@ fn (mut m Module) simplify_phi_nodes() {
 						m.instrs[m.values[val_id].index].op = .bitcast
 						m.instrs[m.values[val_id].index].operands = []
 						changed = true
+						any_changed = true
 					}
 				}
 			}
 		}
 	}
+	return any_changed
 }
 
 // --- 5. Critical Edge Splitting ---
@@ -562,10 +567,10 @@ fn (mut m Module) split_critical_edges() {
 	m.build_cfg()
 
 	for mut func in m.funcs {
-		mut new_blocks := []ssa.BlockID{}
-		
+		mut new_blocks := []BlockID{}
+
 		// Collect edges to split (can't modify while iterating)
-		mut edges_to_split := [][]ssa.BlockID{} // [pred_id, succ_id]
+		mut edges_to_split := [][]BlockID{} // [pred_id, succ_id]
 
 		// Find all critical edges
 		for blk_id in func.blocks {
@@ -855,7 +860,8 @@ fn (mut m Module) insert_copy_in_block(blk_id int, dest int, src int) {
 	m.blocks[blk_id].instrs.insert(insert_idx, val_id)
 }
 
-fn (mut m Module) constant_fold() {
+fn (mut m Module) constant_fold() bool {
+	mut changed := false
 	for func in m.funcs {
 		for blk_id in func.blocks {
 			instrs := m.blocks[blk_id].instrs.clone()
@@ -880,8 +886,17 @@ fn (mut m Module) constant_fold() {
 					}
 
 					// Try algebraic simplifications first (even with non-constants)
-					if repl := m.try_algebraic_simplify(val_id, instr, lhs, rhs) {
-						m.replace_uses(val_id, repl)
+					repl, needs_zero := m.try_algebraic_simplify(val_id, instr, lhs, rhs)
+					if repl >= 0 {
+						if needs_zero {
+							// x * 0 or x & 0 - create zero constant
+							typ := m.values[val_id].typ
+							zero_val := m.add_value_node(.constant, typ, '0', 0)
+							m.replace_uses(val_id, zero_val)
+						} else {
+							m.replace_uses(val_id, repl)
+						}
+						changed = true
 						continue
 					}
 
@@ -932,18 +947,20 @@ fn (mut m Module) constant_fold() {
 							}
 							.shl {
 								if r_int >= 0 && r_int < 64 {
-									result = l_int << u64(r_int)
+									result = i64(u64(l_int) << u64(r_int))
 									folded = true
 								}
 							}
 							.ashr {
 								if r_int >= 0 && r_int < 64 {
+									// Arithmetic shift right preserves sign
 									result = l_int >> u64(r_int)
 									folded = true
 								}
 							}
 							.lshr {
 								if r_int >= 0 && r_int < 64 {
+									// Logical shift right treats as unsigned
 									result = i64(u64(l_int) >> u64(r_int))
 									folded = true
 								}
@@ -979,16 +996,49 @@ fn (mut m Module) constant_fold() {
 							typ := m.values[val_id].typ
 							const_val := m.add_value_node(.constant, typ, result.str(), 0)
 							m.replace_uses(val_id, const_val)
+							changed = true
 						}
 					}
 				}
 			}
 		}
 	}
+	return changed
+}
+
+// Branch folding: simplify conditional branches with constant conditions
+fn (mut m Module) branch_fold() bool {
+	mut changed := false
+	for func in m.funcs {
+		for blk_id in func.blocks {
+			blk := m.blocks[blk_id]
+			if blk.instrs.len == 0 {
+				continue
+			}
+
+			term_val_id := blk.instrs.last()
+			term := m.instrs[m.values[term_val_id].index]
+
+			if term.op == .br {
+				// br cond, true_blk, false_blk
+				cond_val := m.values[term.operands[0]]
+				if cond_val.kind == .constant && cond_val.name != 'undef' {
+					cond_int := cond_val.name.i64()
+					// Replace with unconditional jump to the taken branch
+					target := if cond_int != 0 { term.operands[1] } else { term.operands[2] }
+					m.instrs[m.values[term_val_id].index].op = .jmp
+					m.instrs[m.values[term_val_id].index].operands = [target]
+					changed = true
+				}
+			}
+		}
+	}
+	return changed
 }
 
 // Algebraic simplifications: x+0=x, x*1=x, x*0=0, etc.
-fn (m Module) try_algebraic_simplify(val_id int, instr Instruction, lhs Value, rhs Value) ?int {
+// Returns (replacement_id, needs_zero) - if needs_zero is true, caller should create zero constant
+fn (m Module) try_algebraic_simplify(val_id int, instr Instruction, lhs Value, rhs Value) (int, bool) {
 	// Check if either operand is a constant
 	mut const_val := i64(0)
 	mut const_is_rhs := false
@@ -1003,81 +1053,76 @@ fn (m Module) try_algebraic_simplify(val_id int, instr Instruction, lhs Value, r
 		const_is_rhs = true
 		other_id = instr.operands[0]
 	} else {
-		return none
+		return -1, false
 	}
-
-	typ := m.values[val_id].typ
 
 	match instr.op {
 		.add {
 			// x + 0 = 0 + x = x
 			if const_val == 0 {
-				return other_id
+				return other_id, false
 			}
 		}
 		.sub {
 			// x - 0 = x
 			if const_is_rhs && const_val == 0 {
-				return other_id
+				return other_id, false
 			}
 		}
 		.mul {
 			// x * 0 = 0 * x = 0
 			if const_val == 0 {
-				return m.values.len // Will create zero below
+				return val_id, true // Signal caller to create zero
 			}
 			// x * 1 = 1 * x = x
 			if const_val == 1 {
-				return other_id
+				return other_id, false
 			}
 		}
 		.sdiv {
 			// x / 1 = x
 			if const_is_rhs && const_val == 1 {
-				return other_id
+				return other_id, false
 			}
 		}
 		.and_ {
 			// x & 0 = 0 & x = 0
 			if const_val == 0 {
-				return m.values.len // Will create zero below
+				return val_id, true // Signal caller to create zero
 			}
 		}
 		.or_ {
 			// x | 0 = 0 | x = x
 			if const_val == 0 {
-				return other_id
+				return other_id, false
 			}
 		}
 		.xor {
 			// x ^ 0 = 0 ^ x = x
 			if const_val == 0 {
-				return other_id
+				return other_id, false
 			}
 		}
 		.shl, .ashr, .lshr {
 			// x << 0 = x >> 0 = x
 			if const_is_rhs && const_val == 0 {
-				return other_id
+				return other_id, false
 			}
 		}
-		else {
-			return none
-		}
+		else {}
 	}
 
-	// If we get here and need to return zero (for x*0 or x&0)
-	_ := typ // suppress unused warning
-	return none
+	return -1, false
 }
 
-fn (mut m Module) dead_code_elimination() {
+fn (mut m Module) dead_code_elimination() bool {
+	mut any_changed := false
 	mut changed := true
 	for changed {
 		changed = false
 		for func in m.funcs {
 			for blk_id in func.blocks {
-				mut blk := m.blocks[blk_id]
+				blk := m.blocks[blk_id]
 				mut new_instrs := []int{}
 				for val_id in blk.instrs {
 					val := m.values[val_id]
@@ -1093,6 +1138,7 @@ fn (mut m Module) dead_code_elimination() {
 								m.remove_use(op_id, val_id)
 							}
 							changed = true
+							any_changed = true
 							continue
 						}
 					}
@@ -1102,6 +1148,7 @@ fn (mut m Module) dead_code_elimination() {
 			}
 		}
 	}
+	return any_changed
 }
 
 fn (mut m Module) remove_use(val_id int, user_id int) {

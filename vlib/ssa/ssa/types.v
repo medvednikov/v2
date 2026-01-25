@@ -43,7 +43,9 @@ pub fn (mut ts TypeStore) get_int(width int) TypeID {
 	if id := ts.cache[key] {
 		return id
 	}
-	return ts.register(Type{ kind: .int_t, width: width })
+	id := ts.register(Type{ kind: .int_t, width: width })
+	ts.cache[key] = id
+	return id
 }
 
 pub fn (mut ts TypeStore) get_float(width int) TypeID {
@@ -51,7 +53,9 @@ pub fn (mut ts TypeStore) get_float(width int) TypeID {
 	if id := ts.cache[key] {
 		return id
 	}
-	return ts.register(Type{ kind: .float_t, width: width })
+	id := ts.register(Type{ kind: .float_t, width: width })
+	ts.cache[key] = id
+	return id
 }
 
 pub fn (mut ts TypeStore) get_ptr(elem TypeID) TypeID {
@@ -59,7 +63,9 @@ pub fn (mut ts TypeStore) get_ptr(elem TypeID) TypeID {
 	if id := ts.cache[key] {
 		return id
 	}
-	return ts.register(Type{ kind: .ptr_t, elem_type: elem })
+	id := ts.register(Type{ kind: .ptr_t, elem_type: elem })
+	ts.cache[key] = id
+	return id
 }
 
 fn (mut ts TypeStore) register(t Type) TypeID {
