@@ -189,7 +189,7 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 	instr := g.mod.instrs[g.mod.values[val_id].index]
 
 	match instr.op {
-		.add, .sub, .mul, .sdiv, .eq, .ne, .lt, .gt, .le, .ge {
+		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt, .le, .ge {
 			// Optimization: Use actual registers if allocated, avoid shuffling to x8/x9
 			// Dest register
 			dest_reg := if r := g.reg_map[val_id] { r } else { 8 }
@@ -243,6 +243,38 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				.sdiv {
 					// SDIV Rd, Rn, Rm -> 0x9AC00C00
 					g.emit(0x9AC00C00 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
+				}
+				.srem {
+					// Signed modulo: a % b = a - (a / b) * b
+					// Use x10 as temp for quotient
+					// SDIV x10, lhs, rhs
+					g.emit(0x9AC00C00 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | 10)
+					// MSUB dest, x10, rhs, lhs  (dest = lhs - x10 * rhs)
+					g.emit(0x9B008000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 10) | (10 << 5) | u32(dest_reg))
+				}
+				.and_ {
+					// AND Rd, Rn, Rm -> 0x8A000000
+					g.emit(0x8A000000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
+				}
+				.or_ {
+					// ORR Rd, Rn, Rm -> 0xAA000000
+					g.emit(0xAA000000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
+				}
+				.xor {
+					// EOR Rd, Rn, Rm -> 0xCA000000
+					g.emit(0xCA000000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
+				}
+				.shl {
+					// LSLV Rd, Rn, Rm -> 0x9AC02000
+					g.emit(0x9AC02000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
+				}
+				.ashr {
+					// ASRV Rd, Rn, Rm -> 0x9AC02800
+					g.emit(0x9AC02800 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
+				}
+				.lshr {
+					// LSRV Rd, Rn, Rm -> 0x9AC02400
+					g.emit(0x9AC02400 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(dest_reg))
 				}
 				.eq, .ne, .lt, .gt, .le, .ge {
 					// CMP Rn, Rm (SUBS xzr, Rn, Rm) -> 0xEB00001F
