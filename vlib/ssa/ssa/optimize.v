@@ -560,10 +560,10 @@ fn (mut m Module) split_critical_edges() {
 	m.build_cfg()
 
 	for mut func in m.funcs {
-		mut new_blocks := []int{}
+		mut new_blocks := []ssa.BlockID{}
 		
 		// Collect edges to split (can't modify while iterating)
-		mut edges_to_split := [][]int{} // [pred_id, succ_id]
+		mut edges_to_split := [][]ssa.BlockID{} // [pred_id, succ_id]
 
 		// Find all critical edges
 		for blk_id in func.blocks {
