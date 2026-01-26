@@ -554,42 +554,7 @@ fn (mut g Arm64Gen) load_val_to_reg(reg int, val_id int) {
 			g.emit(0x91000000 | u32(reg) | (u32(reg) << 5))
 		} else {
 			int_val := val.name.i64()
-
-			// Handle 0 specifically (XZR is register 31, but we want to move 0 into a register)
-			if int_val == 0 {
-				g.emit_mov_reg(reg, 31) // mov reg, xzr
-			} else if int_val > 0 && int_val <= 0xFFFF {
-				// MOVZ xd, #imm16
-				g.emit(0xD2800000 | (u32(int_val) << 5) | u32(reg))
-			} else {
-				// For large integers, use the literal pool (same as strings/globals)
-				// This is easier than generating multiple MOVK instructions for this architecture setup
-
-				// 1. Add to literal pool (reusing .rodata/str_data logic or creating a new int pool)
-				// For simplicity here, we append raw bytes to the Mach-O text/data and use a relocation
-				// But since we have a MachOObject wrapper, let's use the literal pool approach:
-
-				// Write 8 bytes (64-bit int)
-				lit_off := g.macho.data_data.len
-				write_u64_le(mut g.macho.data_data, u64(int_val))
-
-				// Create a symbol for this literal
-				sym_name := 'L_int_${lit_off}'
-
-				// Add symbol to section 3 (__data)
-				// Note: In real Mach-O, literals usually go to __text or __const, but __data works for this toy
-				sym_idx := g.macho.add_symbol(sym_name, u64(lit_off), false, 3)
-
-				// ADRP (Page)
-				g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_got_load_page21,
-					true)
-				g.emit(0x90000000 | u32(reg))
-
-				// LDR (Offset)
-				g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_got_load_pageoff12,
-					false)
-				g.emit(0xF9400000 | u32(reg) | (u32(reg) << 5))
-			}
+			g.emit_mov_imm64(reg, int_val)
 		}
 	} else if val.kind == .global {
 		sym_idx := g.macho.add_undefined('_' + val.name)
@@ -719,6 +684,48 @@ fn (mut g Arm64Gen) emit_mov_imm(rd int, imm u64) {
 	// Assume imm < 65536; use MOVZ xd, #imm
 	g.emit(0xD2800000 | (u32(imm & 0xFFFF) << 5) | u32(rd))
 	// For larger imm, add MOVK(s), but not needed for stack sizes.
+}
+
+fn (mut g Arm64Gen) emit_mov_imm64(rd int, val i64) {
+	// Handle 0 specifically
+	if val == 0 {
+		g.emit_mov_reg(rd, 31) // mov reg, xzr
+		return
+	}
+
+	// For small positive values (0 to 65535), use MOVZ
+	if val > 0 && val <= 0xFFFF {
+		// MOVZ xd, #imm16
+		g.emit(0xD2800000 | (u32(val) << 5) | u32(rd))
+		return
+	}
+
+	// For small negative values (-1 to -65536), use MOVN
+	// MOVN xd, #imm16 sets xd to NOT(imm16 << shift)
+	// For -1: MOVN xd, #0 -> ~0 = -1
+	// For -42: MOVN xd, #41 -> ~41 = -42
+	if val >= -65536 && val < 0 {
+		not_val := u32(~val) // ~(-42) = 41
+		// MOVN xd, #imm16 (64-bit): 0x92800000
+		g.emit(0x92800000 | (not_val << 5) | u32(rd))
+		return
+	}
+
+	// For larger values, use MOVZ followed by MOVK instructions
+	uval := u64(val)
+
+	// Emit MOVZ for first chunk (always at shift 0)
+	chunk0 := u32(uval & 0xFFFF)
+	g.emit(0xD2800000 | (chunk0 << 5) | u32(rd))
+
+	// Emit MOVK for remaining non-zero chunks
+	for shift := 16; shift < 64; shift += 16 {
+		chunk := u32((uval >> shift) & 0xFFFF)
+		if chunk != 0 {
+			hw := u32(shift / 16)
+			g.emit(0xF2800000 | (hw << 21) | (chunk << 5) | u32(rd))
+		}
+	}
 }
 
 fn (mut g Arm64Gen) emit_mov_reg(rd int, rm int) {
