@@ -177,10 +177,21 @@ fn main() {
 		println('\n[SUCCESS] Outputs match!')
 	} else {
 		println('\n[FAILURE] Outputs differ')
-		println('--- Expected ---')
-		println(expected_out)
-		println('--- Actual ---')
-		println(actual_out)
-		println('----------------')
+		expected_lines := expected_out.split('\n')
+		actual_lines := actual_out.split('\n')
+		max_lines := if expected_lines.len > actual_lines.len {
+			expected_lines.len
+		} else {
+			actual_lines.len
+		}
+		for i in 0 .. max_lines {
+			exp := if i < expected_lines.len { expected_lines[i] } else { '<missing>' }
+			act := if i < actual_lines.len { actual_lines[i] } else { '<missing>' }
+			if exp != act {
+				println('line ${i + 1}:')
+				println('  expected: ${exp}')
+				println('       got: ${act}')
+			}
+		}
 	}
 }
