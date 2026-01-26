@@ -347,7 +347,10 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 			g.store_reg_to_val(8, val_id)
 		}
 		.call {
-			for i in 1 .. instr.operands.len {
+			// Load arguments in reverse order to avoid clobbering
+			// If arg2 is in x0, loading arg1 to x0 first would clobber it
+			num_args := instr.operands.len - 1
+			for i := num_args; i >= 1; i-- {
 				if i - 1 < 8 {
 					g.load_val_to_reg(i - 1, instr.operands[i])
 				}
@@ -839,7 +842,8 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 	// Caller-saved (Temporaries): x9..x15
 	// Callee-saved (Preserved): x19..x28
 	// Reserve x8 and x9 as backend scratch registers
-	short_regs := [10, 11, 12, 13, 14, 15]
+	// x10 is reserved as scratch for large offset operations
+	short_regs := [11, 12, 13, 14, 15]
 	long_regs := [19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
 
 	for i in sorted {
