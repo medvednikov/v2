@@ -1203,7 +1203,6 @@ fn (mut p Parser) peek() token.Token {
 	return p.tok_next_
 }
 
-
 @[inline]
 fn (mut p Parser) next() {
 	if p.tok_next_ != .unknown {

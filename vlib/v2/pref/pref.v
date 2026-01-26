@@ -6,15 +6,15 @@ module pref
 import os
 
 pub enum Backend {
-	v        // V source output (default)
-	cleanc   // Clean C backend (AST -> C)
-	c        // SSA -> C backend
-	x64      // Native x64/AMD64 backend
-	arm64    // Native ARM64 backend
+	v      // V source output (default)
+	cleanc // Clean C backend (AST -> C)
+	c      // SSA -> C backend
+	x64    // Native x64/AMD64 backend
+	arm64  // Native ARM64 backend
 }
 
 pub enum Arch {
-	auto     // Auto-detect based on OS
+	auto // Auto-detect based on OS
 	x64
 	arm64
 }
