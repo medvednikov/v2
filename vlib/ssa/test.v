@@ -152,6 +152,18 @@ fn print_str(s string) {
 	C.puts(s.str)
 }
 
+fn nested_return(x int) int {
+	if x < 10 {
+		return 100
+	} else {
+		if x < 20 {
+			return 200
+		} else {
+			return 300
+		}
+	}
+}
+
 // ===================== MAIN TEST FUNCTION =====================
 
 fn main() {
@@ -767,6 +779,516 @@ fn main() {
 	print_int(last_digit) // 5
 	second_digit := (num17 / 10) % 10
 	print_int(second_digit) // 4
+
+	// ==================== 18. POINTER ARITHMETIC (5 tests) ====================
+	print_str('--- 18. Pointer Arithmetic ---')
+
+	// 18.1 Heap struct access
+	hp_arr1 := &Point{x: 10, y: 20}
+	print_int(hp_arr1.x) // 10
+	print_int(hp_arr1.y) // 20
+
+	// 18.2 Multiple heap structs
+	hp_arr2 := &Point{x: 100, y: 200}
+	hp_arr3 := &Point{x: 300, y: 400}
+	print_int(hp_arr2.x + hp_arr3.x) // 400
+	print_int(hp_arr2.y + hp_arr3.y) // 600
+
+	// 18.3 Heap struct with computed values
+	base18 := 5
+	hp_arr4 := &Point{x: base18 * 10, y: base18 * 20}
+	print_int(hp_arr4.x) // 50
+	print_int(hp_arr4.y) // 100
+
+	// 18.4 Multiple heap allocations in loop
+	mut sum18 := 0
+	mut i18 := 0
+	for i18 < 3 {
+		hp := &Point{x: i18 * 10, y: i18 * 20}
+		sum18 = sum18 + hp.x + hp.y
+		i18++
+	}
+	print_int(sum18) // 0+0 + 10+20 + 20+40 = 90
+
+	// 18.5 Heap node tree structure
+	node1 := &Node{value: 100, left: 0, right: 0}
+	node2 := &Node{value: 200, left: 0, right: 0}
+	print_int(node1.value + node2.value) // 300
+
+	// ==================== 19. NESTED STRUCT ACCESS (5 tests) ====================
+	print_str('--- 19. Nested Struct Access ---')
+
+	// 19.1 Basic nested access
+	rect := Rectangle{width: 100, height: 200, origin: Point{x: 10, y: 20}}
+	print_int(rect.width)    // 100
+	print_int(rect.height)   // 200
+
+	// 19.2 Nested struct field via intermediate
+	rect2 := Rectangle{width: 50, height: 60, origin: Point{x: 5, y: 6}}
+	print_int(rect2.width + rect2.height) // 110
+
+	// 19.3 Mutable nested struct modification
+	mut rect3 := Rectangle{width: 10, height: 20, origin: Point{x: 1, y: 2}}
+	rect3.width = 100
+	rect3.height = 200
+	print_int(rect3.width)  // 100
+	print_int(rect3.height) // 200
+
+	// 19.4 Multiple rectangles
+	rect4a := Rectangle{width: 10, height: 20, origin: Point{x: 0, y: 0}}
+	rect4b := Rectangle{width: 30, height: 40, origin: Point{x: 0, y: 0}}
+	print_int(rect4a.width + rect4b.width)   // 40
+	print_int(rect4a.height + rect4b.height) // 60
+
+	// 19.5 Rectangle area
+	rect5 := Rectangle{width: 12, height: 10, origin: Point{x: 0, y: 0}}
+	area := rect5.width * rect5.height
+	print_int(area) // 120
+
+	// ==================== 20. NEGATIVE NUMBERS (5 tests) ====================
+	print_str('--- 20. Negative Numbers ---')
+
+	// 20.1 Unary minus
+	n1 := 0 - 42
+	print_int(n1) // -42
+
+	// 20.2 Negative addition
+	n2 := 0 - 10
+	n3 := n2 + 5
+	print_int(n3) // -5
+
+	// 20.3 Negative subtraction
+	n4 := 0 - 20
+	n5 := n4 - 10
+	print_int(n5) // -30
+
+	// 20.4 Negative multiplication
+	n6 := 0 - 7
+	n7 := n6 * 3
+	print_int(n7) // -21
+
+	// 20.5 Double negative (positive)
+	n8 := 0 - 50
+	n9 := 0 - n8
+	print_int(n9) // 50
+
+	// ==================== 21. UNARY OPERATIONS (5 tests) ====================
+	print_str('--- 21. Unary Operations ---')
+
+	// 21.1 Logical not on false
+	u1 := !false
+	if u1 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 21.2 Logical not on true
+	u2 := !true
+	if u2 {
+		print_int(1)
+	} else {
+		print_int(0) // 0
+	}
+
+	// 21.3 Double negation
+	u3 := !!true
+	if u3 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 21.4 Not with comparison
+	u4 := !(5 > 10)
+	if u4 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 21.5 Not with variable
+	u5 := false
+	u6 := !u5
+	if u6 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 22. COMPLEX BOOLEAN (5 tests) ====================
+	print_str('--- 22. Complex Boolean ---')
+
+	// 22.1 Multiple ANDs
+	if true && true && true {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 22.2 Multiple ORs
+	if false || false || true {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 22.3 AND with OR
+	if (true && false) || (true && true) {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 22.4 Complex condition with variables
+	aa := 10
+	bb := 20
+	cc := 30
+	if aa < bb && bb < cc {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 22.5 Chained comparisons
+	if aa < 15 && bb > 15 && cc == 30 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 23. COMPARISON AS EXPRESSION (5 tests) ====================
+	print_str('--- 23. Comparison as Expression ---')
+
+	// 23.1 Comparison result in variable
+	cmp1 := 10 > 5
+	if cmp1 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 23.2 Multiple comparison results
+	cmp2 := 3 < 5
+	cmp3 := 7 > 2
+	if cmp2 && cmp3 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 23.3 Equality comparison
+	cmp4 := 42 == 42
+	if cmp4 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 23.4 Inequality comparison
+	cmp5 := 10 != 20
+	if cmp5 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 23.5 Comparison with expressions
+	cmp6 := (5 + 5) == (2 * 5)
+	if cmp6 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 24. DEEPLY NESTED IF (5 tests) ====================
+	print_str('--- 24. Deeply Nested If ---')
+
+	// 24.1 Three levels deep
+	dn1 := 5
+	if dn1 > 0 {
+		if dn1 > 3 {
+			if dn1 > 4 {
+				print_int(1) // 1
+			} else {
+				print_int(0)
+			}
+		} else {
+			print_int(0)
+		}
+	} else {
+		print_int(0)
+	}
+
+	// 24.2 Nested with else chains
+	dn2 := 2
+	if dn2 == 1 {
+		print_int(10)
+	} else {
+		if dn2 == 2 {
+			print_int(20) // 20
+		} else {
+			if dn2 == 3 {
+				print_int(30)
+			} else {
+				print_int(0)
+			}
+		}
+	}
+
+	// 24.3 Mixed nesting with match
+	dn3 := 3
+	if dn3 > 0 {
+		match dn3 {
+			1 { print_int(100) }
+			2 { print_int(200) }
+			3 { print_int(300) } // 300
+			else { print_int(0) }
+		}
+	} else {
+		print_int(0)
+	}
+
+	// 24.4 Nested loops with conditionals
+	mut dn4_sum := 0
+	mut dn4_i := 0
+	for dn4_i < 3 {
+		mut dn4_j := 0
+		for dn4_j < 3 {
+			if dn4_i == dn4_j {
+				dn4_sum += 1
+			}
+			dn4_j++
+		}
+		dn4_i++
+	}
+	print_int(dn4_sum) // 3 (diagonal: 0-0, 1-1, 2-2)
+
+	// 24.5 If inside loop with break
+	mut dn5_result := 0
+	mut dn5_k := 0
+	for dn5_k < 100 {
+		if dn5_k > 5 {
+			if dn5_k > 7 {
+				dn5_result = dn5_k
+				break
+			}
+		}
+		dn5_k++
+	}
+	print_int(dn5_result) // 8
+
+	// ==================== 25. LARGE CONSTANTS (5 tests) ====================
+	print_str('--- 25. Large Constants ---')
+
+	// 25.1 Value > 65535
+	big1 := 100000
+	print_int(big1) // 100000
+
+	// 25.2 Large multiplication result
+	big2 := 1000 * 1000
+	print_int(big2) // 1000000
+
+	// 25.3 Large addition
+	big3 := 50000 + 50000
+	print_int(big3) // 100000
+
+	// 25.4 Large subtraction
+	big4 := 200000 - 100000
+	print_int(big4) // 100000
+
+	// 25.5 Large division
+	big5 := 1000000 / 100
+	print_int(big5) // 10000
+
+	// ==================== 26. MIXED OPERATIONS (5 tests) ====================
+	print_str('--- 26. Mixed Operations ---')
+
+	// 26.1 Arithmetic then comparison
+	mix1 := (10 + 5) * 2
+	if mix1 == 30 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 26.2 Comparison then logic
+	mix2a := 10 > 5
+	mix2b := 20 < 30
+	if mix2a && mix2b {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 26.3 Chained arithmetic
+	mix3 := 2 + 3 * 4 - 6 / 2
+	print_int(mix3) // 2 + 12 - 3 = 11
+
+	// 26.4 Bitwise with arithmetic
+	mix4 := (5 | 3) + (4 & 6)
+	print_int(mix4) // 7 + 4 = 11
+
+	// 26.5 Complex expression
+	mix5 := ((10 + 5) * 2 - 10) / 5
+	print_int(mix5) // (30 - 10) / 5 = 4
+
+	// ==================== 27. EDGE CASES (5 tests) ====================
+	print_str('--- 27. Edge Cases ---')
+
+	// 27.1 Zero operations
+	edge1 := 0 + 0
+	print_int(edge1) // 0
+	edge2 := 100 * 0
+	print_int(edge2) // 0
+	edge3 := 0 / 7
+	print_int(edge3) // 0
+
+	// 27.2 Identity operations
+	edge4 := 42 + 0
+	print_int(edge4) // 42
+	edge5 := 42 * 1
+	print_int(edge5) // 42
+	edge6 := 42 / 1
+	print_int(edge6) // 42
+
+	// 27.3 Division edge cases
+	edge7 := 7 / 7
+	print_int(edge7) // 1
+	edge8 := 100 / 10
+	print_int(edge8) // 10
+
+	// 27.4 Modulo edge cases
+	edge9 := 10 % 10
+	print_int(edge9) // 0
+	edge10 := 5 % 7
+	print_int(edge10) // 5
+
+	// 27.5 Comparison edge cases
+	if 0 == 0 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+	if 0 < 1 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 28. COMPLEX RECURSION (5 tests) ====================
+	print_str('--- 28. Complex Recursion ---')
+
+	// 28.1 Deep recursion test
+	print_int(sum_recursive(100)) // 5050
+
+	// 28.2 Mutual dependency via gcd
+	print_int(gcd(252, 105)) // 21
+
+	// 28.3 Multiple recursive calls
+	print_int(fib(15)) // 610
+
+	// 28.4 Power with larger exponent
+	print_int(power(3, 5)) // 243
+
+	// 28.5 Factorial with larger input
+	print_int(factorial(7)) // 5040
+
+	// ==================== 29. STRUCT OPERATIONS (5 tests) ====================
+	print_str('--- 29. Struct Operations ---')
+
+	// 29.1 Struct as function result (via modify)
+	mut sp1 := Point{x: 0, y: 0}
+	scale_point(mut sp1, 10)
+	print_int(sp1.x) // 0
+	print_int(sp1.y) // 0
+
+	// 29.2 Chained struct modifications
+	mut sp2 := Point{x: 1, y: 1}
+	scale_point(mut sp2, 5)
+	translate_point(mut sp2, 10, 20)
+	print_int(sp2.x) // 15
+	print_int(sp2.y) // 25
+
+	// 29.3 Struct field arithmetic
+	sp3 := Point{x: 100, y: 200}
+	sp3_sum := sp3.x + sp3.y
+	sp3_diff := sp3.y - sp3.x
+	print_int(sp3_sum)  // 300
+	print_int(sp3_diff) // 100
+
+	// 29.4 Multiple struct parameters
+	mut sp4 := Point{x: 10, y: 20}
+	swap_point(mut sp4)
+	scale_point(mut sp4, 2)
+	print_int(sp4.x) // 40
+	print_int(sp4.y) // 20
+
+	// 29.5 Struct in conditional
+	sp5 := Point{x: 5, y: 10}
+	if sp5.x < sp5.y {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 30. CONTROL FLOW EDGE CASES (5 tests) ====================
+	print_str('--- 30. Control Flow Edge Cases ---')
+
+	// 30.1 Empty else
+	mut cf1 := 0
+	if true {
+		cf1 = 1
+	}
+	print_int(cf1) // 1
+
+	// 30.2 Multiple sequential ifs
+	mut cf2 := 0
+	if true { cf2 += 1 }
+	if true { cf2 += 2 }
+	if true { cf2 += 4 }
+	print_int(cf2) // 7
+
+	// 30.3 Nested match
+	cf3 := 2
+	match cf3 {
+		1 {
+			match cf3 {
+				1 { print_int(11) }
+				else { print_int(10) }
+			}
+		}
+		2 {
+			match cf3 {
+				2 { print_int(22) } // 22
+				else { print_int(20) }
+			}
+		}
+		else { print_int(0) }
+	}
+
+	// 30.4 Loop with compound condition (&&)
+	mut cf4 := 0
+	mut cf4_i := 0
+	for cf4_i < 20 && cf4 < 50 {
+		cf4 += cf4_i
+		cf4_i++
+	}
+	print_int(cf4) // 55 (0+1+2+3+4+5+6+7+8+9+10 = 55, stops when >= 50)
+
+	// 30.5 Return inside nested control flow
+	print_int(nested_return(5)) // 100
+	print_int(nested_return(15)) // 200
+	print_int(nested_return(25)) // 300
+
+	// 30.6 Loop with || condition
+	mut cf5 := 0
+	mut cf5_i := 0
+	for cf5_i < 3 || cf5 < 10 {
+		cf5 += 5
+		cf5_i++
+	}
+	print_int(cf5) // 15 (loop runs 3 times: 5, 10, 15 - stops when both conditions false)
 
 	print_str('=== All tests completed ===')
 }

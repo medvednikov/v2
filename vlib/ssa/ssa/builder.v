@@ -488,6 +488,24 @@ fn (mut b Builder) expr_index(node ast.IndexExpr) ValueID {
 }
 
 fn (mut b Builder) expr_infix(node ast.InfixExpr) ValueID {
+	i32_t := b.mod.type_store.get_int(64)
+
+	// Handle logical operators: && and ||
+	// For simplicity, we use bitwise AND/OR on boolean (0/1) values.
+	// This gives correct results when operands are already 0 or 1.
+	// True short-circuit evaluation would require control flow.
+	if node.op == .and {
+		left := b.expr(node.lhs)
+		right := b.expr(node.rhs)
+		return b.mod.add_instr(.and_, b.cur_block, i32_t, [left, right])
+	}
+
+	if node.op == .logical_or {
+		left := b.expr(node.lhs)
+		right := b.expr(node.rhs)
+		return b.mod.add_instr(.or_, b.cur_block, i32_t, [left, right])
+	}
+
 	left := b.expr(node.lhs)
 	right := b.expr(node.rhs)
 
@@ -512,7 +530,6 @@ fn (mut b Builder) expr_infix(node ast.InfixExpr) ValueID {
 		else { OpCode.add }
 	}
 
-	i32_t := b.mod.type_store.get_int(64)
 	return b.mod.add_instr(op, b.cur_block, i32_t, [left, right])
 }
 
