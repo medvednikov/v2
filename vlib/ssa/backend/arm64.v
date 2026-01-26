@@ -246,11 +246,18 @@ fn (mut g Arm64Gen) gen_instr(val_id int) {
 				}
 				.srem {
 					// Signed modulo: a % b = a - (a / b) * b
-					// Use x10 as temp for quotient
-					// SDIV x10, lhs, rhs
-					g.emit(0x9AC00C00 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | 10)
-					// MSUB dest, x10, rhs, lhs  (dest = lhs - x10 * rhs)
-					g.emit(0x9B008000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 10) | (10 << 5) | u32(dest_reg))
+					// Choose temp register for quotient that doesn't conflict with inputs
+					mut temp_reg := 10
+					if lhs_reg == 10 || rhs_reg == 10 {
+						temp_reg = 11
+						if lhs_reg == 11 || rhs_reg == 11 {
+							temp_reg = 12
+						}
+					}
+					// SDIV temp, lhs, rhs
+					g.emit(0x9AC00C00 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 5) | u32(temp_reg))
+					// MSUB dest, temp, rhs, lhs  (dest = lhs - temp * rhs)
+					g.emit(0x9B008000 | (u32(rhs_reg) << 16) | (u32(lhs_reg) << 10) | (u32(temp_reg) << 5) | u32(dest_reg))
 				}
 				.and_ {
 					// AND Rd, Rn, Rm -> 0x8A000000
@@ -729,6 +736,10 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 	mut call_indices := []int{}
 	mut instr_idx := 0
 
+	// Map block index to instruction range
+	mut block_start := map[int]int{}
+	mut block_end := map[int]int{}
+
 	for pid in func.params {
 		intervals[pid] = &Interval{
 			val_id: pid
@@ -739,6 +750,7 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 
 	for blk_id in func.blocks {
 		blk := g.mod.blocks[blk_id]
+		block_start[blk_id] = instr_idx
 		for val_id in blk.instrs {
 			val := g.mod.values[val_id]
 			if val.kind == .instruction || val.kind == .argument {
@@ -767,7 +779,44 @@ fn (mut g Arm64Gen) allocate_registers(func ssa.Function) {
 			}
 			instr_idx++
 		}
+		block_end[blk_id] = instr_idx
 	}
+
+	// Conservative approach: don't register-allocate values that cross block boundaries
+	// This is slower but correct for loops
+	mut block_of_def := map[int]int{}
+	for blk_id in func.blocks {
+		blk := g.mod.blocks[blk_id]
+		for val_id in blk.instrs {
+			block_of_def[val_id] = blk_id
+		}
+	}
+
+	// Mark values used in different blocks than defined - extend to entire function
+	total_instrs := instr_idx
+	for blk_id in func.blocks {
+		blk := g.mod.blocks[blk_id]
+		for val_id in blk.instrs {
+			val := g.mod.values[val_id]
+			if val.kind != .instruction {
+				continue
+			}
+			instr := g.mod.instrs[val.index]
+			for op in instr.operands {
+				if g.mod.values[op].kind in [.instruction, .argument] {
+					if def_blk := block_of_def[op] {
+						if def_blk != blk_id {
+							// Value crosses block boundary - extend to entire function
+							if mut interval := intervals[op] {
+								interval.end = total_instrs
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Mark intervals that cross a function call
 	for _, mut interval in intervals {
 		for call_idx in call_indices {
