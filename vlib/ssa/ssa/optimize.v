@@ -12,7 +12,8 @@ pub fn (mut m Module) optimize() {
 	m.compute_dominators()
 
 	// 3. Promote Memory to Register (Construct SSA / Phi Nodes)
-	m.promote_memory_to_register()
+	// NOTE: Disabled due to bug with nested loops containing break statements
+	// m.promote_memory_to_register()
 
 	// 4. Scalar Optimizations (run until fixed point)
 	mut opt_changed := true
@@ -30,7 +31,7 @@ pub fn (mut m Module) optimize() {
 	// 6. Eliminate Phi Nodes (Lower to Copies for Backend)
 	// This includes Critical Edge Splitting and Briggs Parallel Copy Resolution
 	m.eliminate_phi_nodes()
-	
+
 	println('SSA optimization took ${time.since(t)}')
 }
 

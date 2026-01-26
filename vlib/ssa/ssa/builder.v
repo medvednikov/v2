@@ -183,13 +183,19 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 				// Store
 				b.mod.add_instr(.store, b.cur_block, 0, [rhs_val, stack_ptr])
 				b.vars[name] = stack_ptr
-			} else if node.op in [.plus_assign, .minus_assign] {
-				// Compound assignment: x += 1
+			} else if node.op in [.plus_assign, .minus_assign, .mul_assign, .div_assign] {
+				// Compound assignment: x += 1, x -= 1, x *= 2, x /= 2
 				ptr := b.addr(node.lhs[0])
 				val_typ := b.mod.type_store.types[b.mod.values[ptr].typ].elem_type
 
 				lhs_val := b.mod.add_instr(.load, b.cur_block, val_typ, [ptr])
-				op := if node.op == .plus_assign { OpCode.add } else { OpCode.sub }
+				op := match node.op {
+					.plus_assign { OpCode.add }
+					.minus_assign { OpCode.sub }
+					.mul_assign { OpCode.mul }
+					.div_assign { OpCode.sdiv }
+					else { OpCode.add }
+				}
 				res := b.mod.add_instr(op, b.cur_block, val_typ, [lhs_val, rhs_val])
 				b.mod.add_instr(.store, b.cur_block, 0, [res, ptr])
 			} else {
@@ -212,7 +218,7 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 		ast.BlockStmt {
 			b.stmts(node.stmts)
 		}
-		ast.ForStmt {
+	ast.ForStmt {
 			// 1. Init
 			if node.init !is ast.EmptyStmt {
 				b.stmt(node.init)
@@ -275,11 +281,19 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 		}
 		ast.StructDecl {
 			// Register Struct Type
-			// Simplification: Assume all fields are i32 for this demo unless specified
 			mut field_types := []TypeID{}
 			mut field_names := []string{}
 			for field in node.fields {
-				field_types << b.mod.type_store.get_int(64)
+				// Check if field type is a known struct type
+				mut field_type := b.mod.type_store.get_int(64) // default to int64
+				if field.typ is ast.Ident {
+					type_name := field.typ.name
+					if st := b.struct_types[type_name] {
+						// Field is a nested struct type
+						field_type = st
+					}
+				}
+				field_types << field_type
 				field_names << field.name
 			}
 
@@ -296,10 +310,18 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 			b.struct_types[node.name] = type_id
 		}
 		ast.GlobalDecl {
-			i32_t := b.mod.type_store.get_int(64)
 			for field in node.fields {
+				// Check if field type is a known struct type
+				mut field_type := b.mod.type_store.get_int(64) // default to int64
+				if field.typ is ast.Ident {
+					type_name := field.typ.name
+					if st := b.struct_types[type_name] {
+						// Field is a struct type
+						field_type = st
+					}
+				}
 				// Register global
-				b.mod.add_global(field.name, i32_t, false)
+				b.mod.add_global(field.name, field_type, false)
 			}
 		}
 		else {
@@ -419,16 +441,32 @@ fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
 	struct_ptr := b.mod.add_instr(.alloca, b.cur_block, ptr_t, [])
 
 	// 2. Initialize Fields
-	// We assume fields in InitExpr are in order for this demo
-	for i, field in node.fields {
-		val := b.expr(field.value)
-		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), i.str(),
-			0)
+	// Build a map of explicitly initialized fields by name
+	mut init_fields := map[string]ast.Expr{}
+	for field in node.fields {
+		init_fields[field.name] = field.value
+	}
+
+	// Get struct type info to iterate all fields
+	struct_type := b.mod.type_store.types[struct_t]
+
+	// Initialize all fields (explicit value or zero)
+	for i, field_name in struct_type.field_names {
+		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), i.str(), 0)
 
 		// GEP to field
 		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(b.mod.type_store.get_int(64)),
 			[struct_ptr, idx_val])
-		b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
+
+		if expr := init_fields[field_name] {
+			// Explicitly initialized
+			val := b.expr(expr)
+			b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
+		} else {
+			// Zero initialize
+			zero_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), '0', 0)
+			b.mod.add_instr(.store, b.cur_block, 0, [zero_val, field_ptr])
+		}
 	}
 
 	// 3. Return Pointer (Structs are value types in V, but usually passed by ref in SSA construction phase or loaded)
