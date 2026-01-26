@@ -8,6 +8,7 @@ import v2.ssa
 import v2.gen.x64
 import v2.gen.arm64
 import v2.gen.cleanc
+import v2.gen.c
 import time
 
 enum Arch {
@@ -50,8 +51,10 @@ fn main() {
 	println('[*] Optimizing SSA...')
 	mod.optimize()
 
-	// Backend selection: default to native, use 'cleanc' arg to switch
-	native := !os.args.contains('cleanc')
+	// Backend selection: default to native, use 'cleanc' or 'c' arg to switch
+	use_cleanc := os.args.contains('cleanc')
+	use_ssa_c := os.args.contains('c') && !use_cleanc
+	native := !use_cleanc && !use_ssa_c
 
 	// Default architecture based on OS
 	mut arch := if os.user_os() == 'macos' { Arch.arm64 } else { Arch.x64 }
@@ -105,12 +108,24 @@ fn main() {
 		}
 
 		println('linking took ${time.since(t)}')
-	} else {
-		// 5. Generate C Code
-		// println('[*] Generating C Backend...')
-		// mut c_gen := backend.CGen.new(mod)
+	} else if use_ssa_c {
+		// SSA -> C Backend
+		println('[*] Generating SSA C Backend...')
+		mut c_gen := c.Gen.new(mod)
+		c_source := c_gen.gen()
 
-		// 5. Generate Clean C Code
+		os.write_file('out.c', c_source) or { panic(err) }
+		println('[*] Done. Wrote out.c')
+
+		// Compile C Code
+		println('[*] Compiling out.c...')
+		cc_res := os.system('cc out.c -o out_bin -w')
+		if cc_res != 0 {
+			eprintln('Error: C compilation failed with code ${cc_res}')
+			return
+		}
+	} else {
+		// Clean C Backend (AST -> C)
 		println('[*] Generating Clean C Backend...')
 		// We use the file AST directly instead of SSA for readable C
 		mut c_gen := cleanc.Gen.new(file)
@@ -120,10 +135,8 @@ fn main() {
 		os.write_file('out.c', c_source) or { panic(err) }
 		println('[*] Done. Wrote out.c')
 
-		// 6. Compile C Code
+		// Compile C Code
 		println('[*] Compiling out.c...')
-		// -w suppresses the return-type warnings if the fix wasn't perfect,
-		// though we fixed the builder to generate return 0.
 		cc_res := os.system('cc out.c -o out_bin -w')
 		if cc_res != 0 {
 			eprintln('Error: C compilation failed with code ${cc_res}')

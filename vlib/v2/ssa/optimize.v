@@ -633,9 +633,7 @@ fn (mut m Module) split_critical_edges() {
 				}
 			}
 		}
-
-		// Add new split blocks to function
-		func.blocks << new_blocks
+		// Note: new blocks are already added to func.blocks by add_block()
 	}
 
 	// Rebuild CFG after splitting

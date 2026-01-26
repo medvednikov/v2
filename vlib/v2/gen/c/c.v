@@ -105,11 +105,41 @@ fn (mut g Gen) gen_instr(val_id int) {
 	res := '_v${val.id}'
 
 	match instr.op {
-		.add, .sub, .mul, .sdiv, .udiv {
+		.add, .sub, .mul, .sdiv, .udiv, .srem, .urem {
 			op := g.op_sym(instr.op)
 			lhs := g.val_str(instr.operands[0])
 			rhs := g.val_str(instr.operands[1])
 			g.sb.writeln('\t${res} = ${lhs} ${op} ${rhs};')
+		}
+		.and_, .or_, .xor {
+			op := match instr.op {
+				.and_ { '&' }
+				.or_ { '|' }
+				.xor { '^' }
+				else { '?' }
+			}
+			lhs := g.val_str(instr.operands[0])
+			rhs := g.val_str(instr.operands[1])
+			g.sb.writeln('\t${res} = ${lhs} ${op} ${rhs};')
+		}
+		.shl, .lshr, .ashr {
+			op := match instr.op {
+				.shl { '<<' }
+				.lshr { '>>' }
+				.ashr { '>>' }
+				else { '?' }
+			}
+			lhs := g.val_str(instr.operands[0])
+			rhs := g.val_str(instr.operands[1])
+			g.sb.writeln('\t${res} = ${lhs} ${op} ${rhs};')
+		}
+		.assign {
+			// Phi elimination copy: dest = src
+			dest_val := instr.operands[0]
+			src_val := instr.operands[1]
+			dest := '_v${dest_val}'
+			src := g.val_str(src_val)
+			g.sb.writeln('\t${dest} = ${src};')
 		}
 		.alloca {
 			elem_type := g.type_name(g.mod.type_store.types[val.typ].elem_type)
@@ -194,12 +224,18 @@ fn (mut g Gen) gen_instr(val_id int) {
 			idx_val := g.mod.values[instr.operands[1]]
 
 			base_val_id := instr.operands[0]
-			base_val_typ := g.mod.values[base_val_id].typ
+			base_val := g.mod.values[base_val_id]
+			base_val_typ := base_val.typ
 			elem_type_id := g.mod.type_store.types[base_val_typ].elem_type
 			elem_type := g.mod.type_store.types[elem_type_id]
 
 			if elem_type.kind == .struct_t {
-				g.sb.writeln('\t${res} = &${base}->field_${idx_val.name};')
+				// For globals, the C declaration is not a pointer, so use '.' instead of '->'
+				if base_val.kind == .global {
+					g.sb.writeln('\t${res} = &${base}.field_${idx_val.name};')
+				} else {
+					g.sb.writeln('\t${res} = &${base}->field_${idx_val.name};')
+				}
 			} else {
 				idx := g.val_str(instr.operands[1])
 				g.sb.writeln('\t${res} = &${base}[${idx}];')
@@ -263,7 +299,8 @@ fn (g Gen) op_sym(op ssa.OpCode) string {
 		.add { '+' }
 		.sub { '-' }
 		.mul { '*' }
-		.sdiv { '/' }
+		.sdiv, .udiv { '/' }
+		.srem, .urem { '%' }
 		else { '?' }
 	}
 }
