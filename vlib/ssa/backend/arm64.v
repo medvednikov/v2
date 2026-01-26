@@ -612,12 +612,50 @@ fn (mut g Arm64Gen) store_reg_to_val(reg int, val_id int) {
 }
 
 fn (mut g Arm64Gen) emit_sub_sp(imm int) {
-	g.emit(0xD1000000 | (u32(imm) << 10) | (31 << 5) | 31)
+	if imm <= 0xFFF {
+		// SUB SP, SP, #imm (unshifted)
+		g.emit(0xD1000000 | (u32(imm) << 10) | (31 << 5) | 31)
+	} else if imm <= 0xFFFFFF {
+		// Split into high (shifted by 12) and low parts
+		high := (imm >> 12) & 0xFFF
+		low := imm & 0xFFF
+		if high > 0 {
+			// SUB SP, SP, #high, LSL #12
+			g.emit(0xD1400000 | (u32(high) << 10) | (31 << 5) | 31)
+		}
+		if low > 0 {
+			// SUB SP, SP, #low
+			g.emit(0xD1000000 | (u32(low) << 10) | (31 << 5) | 31)
+		}
+	} else {
+		// Very large stack: use register
+		g.emit_mov_imm(10, u64(imm))
+		// SUB SP, SP, X10
+		g.emit(0xCB0A03FF)
+	}
 }
 
 fn (mut g Arm64Gen) emit_add_fp_imm(rd int, imm int) {
 	val := -imm
-	g.emit(0xD1000000 | (u32(val) << 10) | (29 << 5) | u32(rd))
+	if val <= 0xFFF {
+		// SUB Rd, FP, #val
+		g.emit(0xD1000000 | (u32(val) << 10) | (29 << 5) | u32(rd))
+	} else if val <= 0xFFFFFF {
+		// Split into high (shifted by 12) and low parts using x10 as temp
+		high := (val >> 12) & 0xFFF
+		low := val & 0xFFF
+		// SUB Rd, FP, #high, LSL #12
+		g.emit(0xD1400000 | (u32(high) << 10) | (29 << 5) | u32(rd))
+		if low > 0 {
+			// SUB Rd, Rd, #low
+			g.emit(0xD1000000 | (u32(low) << 10) | (u32(rd) << 5) | u32(rd))
+		}
+	} else {
+		// Very large offset: use register
+		g.emit_mov_imm(10, u64(val))
+		// SUB Rd, FP, X10
+		g.emit(0xCB0003A0 | (10 << 16) | u32(rd))
+	}
 }
 
 fn (mut g Arm64Gen) emit_str_reg_offset(rt int, rn int, offset int) {
