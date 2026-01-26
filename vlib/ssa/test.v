@@ -25,6 +25,37 @@ __global (
 	g_point  Point
 )
 
+// ===================== METHODS =====================
+
+fn (p Point) sum() int {
+	return p.x + p.y
+}
+
+fn (p Point) product() int {
+	return p.x * p.y
+}
+
+fn (p Point) scaled(factor int) Point {
+	return Point{x: p.x * factor, y: p.y * factor}
+}
+
+fn (mut p Point) double() {
+	p.x = p.x * 2
+	p.y = p.y * 2
+}
+
+fn (r Rectangle) area() int {
+	return r.width * r.height
+}
+
+fn (r Rectangle) perimeter() int {
+	return 2 * (r.width + r.height)
+}
+
+fn (n Node) total() int {
+	return n.value + n.left + n.right
+}
+
 // ===================== HELPER FUNCTIONS =====================
 
 fn fib(n int) int {
@@ -1289,6 +1320,37 @@ fn main() {
 		cf5_i++
 	}
 	print_int(cf5) // 15 (loop runs 3 times: 5, 10, 15 - stops when both conditions false)
+
+	// ==================== 31. METHODS ====================
+	print_str('--- 31. Methods ---')
+
+	// 31.1 Basic method call
+	m1 := Point{x: 10, y: 20}
+	print_int(m1.sum()) // 30
+
+	// 31.2 Method with multiplication
+	m2 := Point{x: 5, y: 6}
+	print_int(m2.product()) // 30
+
+	// 31.3 Mutable receiver method
+	mut m4 := Point{x: 7, y: 8}
+	m4.double()
+	print_int(m4.x) // 14
+	print_int(m4.y) // 16
+
+	// 31.4 Rectangle methods
+	m5 := Rectangle{width: 10, height: 5, origin: Point{x: 0, y: 0}}
+	print_int(m5.area()) // 50
+	print_int(m5.perimeter()) // 30
+
+	// 31.5 Node method
+	m6 := Node{value: 100, left: 10, right: 20}
+	print_int(m6.total()) // 130
+
+	// 31.6 Method on heap-allocated struct
+	m8 := &Point{x: 4, y: 5}
+	print_int(m8.sum()) // 9
+	print_int(m8.product()) // 20
 
 	print_str('=== All tests completed ===')
 }

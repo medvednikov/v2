@@ -12,6 +12,9 @@ mut:
 	// Maps AST variable name to SSA ValueID (pointer to stack slot)
 	vars map[string]ValueID
 
+	// Maps variable name to struct type name (for method resolution)
+	var_struct_types map[string]string
+
 	// Stack for break/continue targets
 	loop_stack []LoopInfo
 
@@ -26,10 +29,11 @@ struct LoopInfo {
 
 pub fn Builder.new(mod &Module) &Builder {
 	return &Builder{
-		mod:          mod
-		vars:         map[string]ValueID{}
-		loop_stack:   []LoopInfo{}
-		struct_types: map[string]TypeID{}
+		mod:              mod
+		vars:             map[string]ValueID{}
+		var_struct_types: map[string]string{}
+		loop_stack:       []LoopInfo{}
+		struct_types:     map[string]TypeID{}
 	}
 }
 
@@ -52,14 +56,35 @@ pub fn (mut b Builder) build(file ast.File) {
 
 			// Map params
 			mut param_types := []TypeID{}
+
+			// For methods, add receiver as first parameter (always as pointer)
+			if stmt.is_method {
+				if stmt.receiver.typ is ast.Ident {
+					if struct_t := b.struct_types[stmt.receiver.typ.name] {
+						param_types << b.mod.type_store.get_ptr(struct_t)
+					} else {
+						param_types << i32_t
+					}
+				} else {
+					param_types << i32_t
+				}
+			}
+
 			// FIX: params are inside the 'typ' (FnType) struct
 			for _ in stmt.typ.params {
 				param_types << i32_t
 			}
 
 			// Create Function Skeleton
+			// For methods, use mangled name: TypeName_methodName
+			mut fn_name := stmt.name
+			if stmt.is_method {
+				if stmt.receiver.typ is ast.Ident {
+					fn_name = '${stmt.receiver.typ.name}_${stmt.name}'
+				}
+			}
 			// We discard the returned ID because we assume linear order in the next pass
-			b.mod.new_function(stmt.name, i32_t, param_types)
+			b.mod.new_function(fn_name, i32_t, param_types)
 		}
 	}
 
@@ -77,6 +102,7 @@ pub fn (mut b Builder) build(file ast.File) {
 fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	b.cur_func = fn_id
 	b.vars.clear()
+	b.var_struct_types.clear()
 
 	// Create Entry Block
 	entry := b.mod.add_block(fn_id, 'entry')
@@ -85,14 +111,51 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 	// Define Arguments
 	i32_t := b.mod.type_store.get_int(64)
 
+	// Handle method receiver as first parameter
+	// Note: receivers are always passed as pointers internally
+	if decl.is_method {
+		receiver := decl.receiver
+		mut receiver_type := i32_t
+		mut struct_type_name := ''
+
+		if receiver.typ is ast.Ident {
+			struct_type_name = receiver.typ.name
+			if struct_t := b.struct_types[receiver.typ.name] {
+				// Always use pointer for receiver (structs are passed by reference)
+				receiver_type = b.mod.type_store.get_ptr(struct_t)
+			}
+		}
+
+		// 1. Create Argument Value for receiver
+		arg_val := b.mod.add_value_node(.argument, receiver_type, receiver.name, 0)
+		b.mod.funcs[fn_id].params << arg_val
+
+		// 2. Allocate Stack Slot
+		stack_ptr := b.mod.add_instr(.alloca, entry, b.mod.type_store.get_ptr(receiver_type),
+			[])
+
+		// 3. Store Argument to Stack
+		b.mod.add_instr(.store, entry, 0, [arg_val, stack_ptr])
+
+		// 4. Register variable
+		b.vars[receiver.name] = stack_ptr
+
+		// 5. Track struct type for method resolution
+		if struct_type_name != '' {
+			b.var_struct_types[receiver.name] = struct_type_name
+		}
+	}
+
 	// FIX: Access params via decl.typ.params
 	for _, param in decl.typ.params {
 		// Determine actual parameter type
 		mut param_type := i32_t
+		mut struct_type_name := ''
 
 		// Check if parameter type is a struct (look up by name)
 		if param.typ is ast.Ident {
 			if struct_t := b.struct_types[param.typ.name] {
+				struct_type_name = param.typ.name
 				// For mut params, it's a pointer to the struct
 				if param.is_mut {
 					param_type = b.mod.type_store.get_ptr(struct_t)
@@ -115,6 +178,11 @@ fn (mut b Builder) build_fn(decl ast.FnDecl, fn_id int) {
 
 		// 4. Register variable
 		b.vars[param.name] = stack_ptr
+
+		// 5. Track struct type for method resolution
+		if struct_type_name != '' {
+			b.var_struct_types[param.name] = struct_type_name
+		}
 	}
 
 	// Process Statements
@@ -183,6 +251,22 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 				// Store
 				b.mod.add_instr(.store, b.cur_block, 0, [rhs_val, stack_ptr])
 				b.vars[name] = stack_ptr
+
+				// Track struct type for method resolution
+				rhs_expr := node.rhs[0]
+				if rhs_expr is ast.InitExpr {
+					if rhs_expr.typ is ast.Ident {
+						b.var_struct_types[name] = rhs_expr.typ.name
+					}
+				} else if rhs_expr is ast.PrefixExpr {
+					// Handle &Point{} heap allocation
+					if rhs_expr.expr is ast.InitExpr {
+						init_expr := rhs_expr.expr as ast.InitExpr
+						if init_expr.typ is ast.Ident {
+							b.var_struct_types[name] = init_expr.typ.name
+						}
+					}
+				}
 			} else if node.op in [.plus_assign, .minus_assign, .mul_assign, .div_assign] {
 				// Compound assignment: x += 1, x -= 1, x *= 2, x /= 2
 				ptr := b.addr(node.lhs[0])
@@ -653,12 +737,43 @@ fn (mut b Builder) expr_call(node ast.CallExpr) ValueID {
 	}
 	// Resolve Function Name
 	mut name := ''
+	mut is_method_call := false
+	mut receiver_val := ValueID(0)
+
 	lhs := node.lhs
 	if lhs is ast.Ident {
 		name = lhs.name
 	} else if lhs is ast.SelectorExpr {
-		// Handle C.printf or struct.method()
-		name = lhs.rhs.name
+		method_name := lhs.rhs.name
+		// Check if this is a method call (receiver.method()) or C.func()
+		if lhs.lhs is ast.Ident {
+			receiver_name := lhs.lhs.name
+			// Check if receiver is 'C' (C interop)
+			if receiver_name == 'C' {
+				name = method_name
+			} else if struct_type_name := b.var_struct_types[receiver_name] {
+				// This is a method call - mangle the name
+				name = '${struct_type_name}_${method_name}'
+				is_method_call = true
+				// Get the receiver - need to load the struct pointer from the variable
+				// b.vars stores Ptr(Ptr(struct)), we need Ptr(struct)
+				var_ptr := b.addr(lhs.lhs)
+				ptr_typ := b.mod.values[var_ptr].typ
+				elem_typ := b.mod.type_store.types[ptr_typ].elem_type
+				receiver_val = b.mod.add_instr(.load, b.cur_block, elem_typ, [var_ptr])
+			} else {
+				// Unknown - just use method name
+				name = method_name
+			}
+		} else {
+			// Complex expression as receiver - try to evaluate
+			name = method_name
+		}
+	}
+
+	// For method calls, prepend receiver as first argument
+	if is_method_call && receiver_val != 0 {
+		args.prepend(receiver_val)
 	}
 
 	// Create a Value representing the function symbol (operand 0)
@@ -686,11 +801,40 @@ fn (mut b Builder) expr_call_or_cast(node ast.CallOrCastExpr) ValueID {
 	args << b.expr(node.expr)
 
 	mut name := ''
+	mut is_method_call := false
+	mut receiver_val := ValueID(0)
+
 	if node.lhs is ast.Ident {
 		name = node.lhs.name
 	} else if node.lhs is ast.SelectorExpr {
-		name = node.lhs.rhs.name
+		method_name := node.lhs.rhs.name
+		// Check if this is a method call (receiver.method()) or C.func()
+		if node.lhs.lhs is ast.Ident {
+			receiver_name := node.lhs.lhs.name
+			if receiver_name == 'C' {
+				name = method_name
+			} else if struct_type_name := b.var_struct_types[receiver_name] {
+				// This is a method call - mangle the name
+				name = '${struct_type_name}_${method_name}'
+				is_method_call = true
+				// Get the receiver - need to load the struct pointer from the variable
+				var_ptr := b.addr(node.lhs.lhs)
+				ptr_typ := b.mod.values[var_ptr].typ
+				elem_typ := b.mod.type_store.types[ptr_typ].elem_type
+				receiver_val = b.mod.add_instr(.load, b.cur_block, elem_typ, [var_ptr])
+			} else {
+				name = method_name
+			}
+		} else {
+			name = method_name
+		}
 	}
+
+	// For method calls, prepend receiver as first argument
+	if is_method_call && receiver_val != 0 {
+		args.prepend(receiver_val)
+	}
+
 	fn_val := b.mod.add_value_node(.unknown, 0, name, 0)
 	args.prepend(fn_val)
 	i32_t := b.mod.type_store.get_int(64)
