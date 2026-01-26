@@ -189,7 +189,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 	instr := g.mod.instrs[g.mod.values[val_id].index]
 
 	match instr.op {
-		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt, .le, .ge {
+		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt,
+		.le, .ge {
 			// Optimization: Use actual registers if allocated, avoid shuffling to x8/x9
 			// Dest register
 			dest_reg := if r := g.reg_map[val_id] { r } else { 8 }

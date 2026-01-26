@@ -302,7 +302,7 @@ fn (mut b Builder) stmt(node ast.Stmt) {
 		ast.BlockStmt {
 			b.stmts(node.stmts)
 		}
-	ast.ForStmt {
+		ast.ForStmt {
 			// 1. Init
 			if node.init !is ast.EmptyStmt {
 				b.stmt(node.init)
@@ -536,7 +536,8 @@ fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
 
 	// Initialize all fields (explicit value or zero)
 	for i, field_name in struct_type.field_names {
-		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), i.str(), 0)
+		idx_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), i.str(),
+			0)
 
 		// GEP to field
 		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(b.mod.type_store.get_int(64)),
@@ -548,7 +549,8 @@ fn (mut b Builder) expr_init(node ast.InitExpr) ValueID {
 			b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
 		} else {
 			// Zero initialize
-			zero_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64), '0', 0)
+			zero_val := b.mod.add_value_node(.constant, b.mod.type_store.get_int(64),
+				'0', 0)
 			b.mod.add_instr(.store, b.cur_block, 0, [zero_val, field_ptr])
 		}
 	}
@@ -910,8 +912,8 @@ fn (mut b Builder) expr_heap_alloc(node ast.InitExpr) ValueID {
 		idx_val := b.mod.add_value_node(.constant, i64_t, i.str(), 0)
 
 		// GEP to field
-		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block,
-			b.mod.type_store.get_ptr(i64_t), [heap_ptr, idx_val])
+		field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(i64_t),
+			[heap_ptr, idx_val])
 		b.mod.add_instr(.store, b.cur_block, 0, [val, field_ptr])
 	}
 

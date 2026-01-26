@@ -180,7 +180,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 	// Temps: 0=RAX, 1=RCX
 
 	match instr.op {
-		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt, .le, .ge {
+		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt,
+		.le, .ge {
 			g.load_val_to_reg(0, instr.operands[0]) // RAX
 			g.load_val_to_reg(1, instr.operands[1]) // RCX
 

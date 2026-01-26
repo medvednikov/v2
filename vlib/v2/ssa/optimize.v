@@ -551,8 +551,8 @@ fn (mut m Module) simplify_phi_nodes() bool {
 }
 
 // --- 5. Critical Edge Splitting ---
-// A critical edge is an edge from a block with multiple successors to a block 
-// with multiple predecessors. We must split these edges to correctly place 
+// A critical edge is an edge from a block with multiple successors to a block
+// with multiple predecessors. We must split these edges to correctly place
 // phi copies during phi elimination.
 //
 // Example:
@@ -589,7 +589,7 @@ fn (mut m Module) split_critical_edges() {
 		for edge in edges_to_split {
 			pred_id := edge[0]
 			succ_id := edge[1]
-			
+
 			// Create new intermediate block
 			split_blk := m.add_block(func.id, 'split_${pred_id}_${succ_id}')
 			new_blocks << split_blk
@@ -641,7 +641,7 @@ fn (mut m Module) split_critical_edges() {
 }
 
 // --- 6. Phi Elimination with Briggs Parallel Copy Resolution ---
-// 
+//
 // When eliminating phi nodes, we need to insert copy instructions in predecessor
 // blocks. However, multiple phis at a join point create "parallel copies" that
 // must all read their sources before any destination is written.
@@ -649,7 +649,7 @@ fn (mut m Module) split_critical_edges() {
 // Example problem:
 //   phi a = [b, pred], ...
 //   phi b = [a, pred], ...
-// 
+//
 // Naive sequential: a <- b; b <- a  // WRONG: second copy reads new 'a'
 // Correct parallel: both read old values, then both write
 //
@@ -715,9 +715,9 @@ fn (mut m Module) eliminate_phi_nodes() {
 }
 
 // Briggs Parallel Copy Resolution Algorithm
-// 
+//
 // Sequences parallel copies to handle dependencies and cycles correctly.
-// Based on: Briggs et al., "Practical Improvements to the Construction and 
+// Based on: Briggs et al., "Practical Improvements to the Construction and
 // Destruction of Static Single Assignment Form", SPE 1998.
 //
 // Algorithm overview:
@@ -743,7 +743,7 @@ fn (mut m Module) resolve_parallel_copies_briggs(blk_id int, copies []ParallelCo
 			worklist << copy
 		}
 	}
-	
+
 	if worklist.len == 0 {
 		return
 	}
@@ -752,46 +752,49 @@ fn (mut m Module) resolve_parallel_copies_briggs(blk_id int, copies []ParallelCo
 	// pred[a] = the source for destination a
 	mut loc := map[int]int{}
 	mut pred := map[int]int{}
-	
+
 	// Set of destinations that still need to be written
 	mut to_do := map[int]bool{}
-	
+
 	// Initialize tracking structures
 	for copy in worklist {
-		loc[copy.src] = copy.src   // Initially, value is at its original location
+		loc[copy.src] = copy.src // Initially, value is at its original location
 		pred[copy.dest] = copy.src // Destination needs this source
-		to_do[copy.dest] = true    // Mark as pending
+		to_do[copy.dest] = true // Mark as pending
 	}
-	
+
 	// Ready set: destinations whose sources are not themselves destinations
 	// These can be safely copied without overwriting needed values
 	mut ready := []int{}
-	
+
 	for copy in worklist {
 		// A copy is ready if its source is not a destination of another copy
 		if !to_do[copy.src] {
 			ready << copy.dest
 		}
 	}
-	
+
 	// Sequenced copies to emit
 	mut sequenced := []ParallelCopy{}
-	
+
 	// Main loop: process until all copies are sequenced
 	for to_do.len > 0 {
 		if ready.len > 0 {
 			// Process a ready copy
-			b := ready.pop()      // Destination
-			a := pred[b]          // Source value needed
-			c := loc[a]           // Current location of that value
-			
+			b := ready.pop() // Destination
+			a := pred[b] // Source value needed
+			c := loc[a] // Current location of that value
+
 			// Emit: b <- c (copy from current location of a to b)
-			sequenced << ParallelCopy{ dest: b, src: c }
-			
+			sequenced << ParallelCopy{
+				dest: b
+				src:  c
+			}
+
 			// Update location: value originally at a is now at b
 			loc[a] = b
 			to_do.delete(b)
-			
+
 			// Check if this makes another copy ready
 			// If 'a' was a destination waiting for its source, check if it's now ready
 			if to_do[a] {
@@ -805,30 +808,33 @@ fn (mut m Module) resolve_parallel_copies_briggs(blk_id int, copies []ParallelCo
 		} else {
 			// No ready copies means we have a cycle
 			// Break the cycle by saving one value to a temporary
-			
+
 			// Pick any remaining destination
 			mut b := 0
 			for dest, _ in to_do {
 				b = dest
 				break
 			}
-			
+
 			// Create a temporary to hold the value at b's current location
 			typ := m.values[b].typ
 			temp := m.add_value_node(.instruction, typ, 'phi_tmp_${m.values.len}', 0)
-			
+
 			// Save the current location of b to temp
 			c := loc[b]
-			sequenced << ParallelCopy{ dest: temp, src: c }
-			
+			sequenced << ParallelCopy{
+				dest: temp
+				src:  c
+			}
+
 			// Update: value originally at b is now at temp
 			loc[b] = temp
-			
+
 			// Now b should be ready (its source location is temp, not a pending dest)
 			ready << b
 		}
 	}
-	
+
 	// Emit the sequenced copies as assign instructions in the predecessor block
 	for copy in sequenced {
 		m.insert_copy_in_block(blk_id, copy.dest, copy.src)
@@ -993,7 +999,8 @@ fn (mut m Module) constant_fold() bool {
 
 						if folded {
 							typ := m.values[val_id].typ
-							const_val := m.add_value_node(.constant, typ, result.str(), 0)
+							const_val := m.add_value_node(.constant, typ, result.str(),
+								0)
 							m.replace_uses(val_id, const_val)
 							changed = true
 						}

@@ -19,10 +19,10 @@ mut:
 }
 
 __global (
-	g_val    int
-	g_count  int
-	g_flag   bool
-	g_point  Point
+	g_val   int
+	g_count int
+	g_flag  bool
+	g_point Point
 )
 
 // ===================== METHODS =====================
@@ -36,7 +36,10 @@ fn (p Point) product() int {
 }
 
 fn (p Point) scaled(factor int) Point {
-	return Point{x: p.x * factor, y: p.y * factor}
+	return Point{
+		x: p.x * factor
+		y: p.y * factor
+	}
 }
 
 fn (mut p Point) double() {
@@ -103,13 +106,27 @@ fn mul_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
 
 fn max_of_eight(a int, b int, c int, d int, e int, f int, g int, h int) int {
 	mut m := a
-	if b > m { m = b }
-	if c > m { m = c }
-	if d > m { m = d }
-	if e > m { m = e }
-	if f > m { m = f }
-	if g > m { m = g }
-	if h > m { m = h }
+	if b > m {
+		m = b
+	}
+	if c > m {
+		m = c
+	}
+	if d > m {
+		m = d
+	}
+	if e > m {
+		m = e
+	}
+	if f > m {
+		m = f
+	}
+	if g > m {
+		m = g
+	}
+	if h > m {
+		m = h
+	}
 	return m
 }
 
@@ -204,7 +221,10 @@ fn main() {
 	print_str('--- 1. Struct Declaration & Initialization ---')
 
 	// 1.1 Basic struct init
-	p1 := Point{x: 10, y: 20}
+	p1 := Point{
+		x: 10
+		y: 20
+	}
 	print_int(p1.x) // 10
 	print_int(p1.y) // 20
 
@@ -214,7 +234,10 @@ fn main() {
 	print_int(p2.y) // 0
 
 	// 1.3 Mutable struct modification
-	mut p3 := Point{x: 1, y: 2}
+	mut p3 := Point{
+		x: 1
+		y: 2
+	}
 	p3.x = 100
 	p3.y = 200
 	print_int(p3.x) // 100
@@ -222,13 +245,22 @@ fn main() {
 
 	// 1.4 Struct with computed values
 	base := 7
-	p4 := Point{x: base * 2, y: base * 3}
+	p4 := Point{
+		x: base * 2
+		y: base * 3
+	}
 	print_int(p4.x) // 14
 	print_int(p4.y) // 21
 
 	// 1.5 Multiple struct instances
-	p5a := Point{x: 1, y: 2}
-	p5b := Point{x: 3, y: 4}
+	p5a := Point{
+		x: 1
+		y: 2
+	}
+	p5b := Point{
+		x: 3
+		y: 4
+	}
 	print_int(p5a.x + p5b.x) // 4
 	print_int(p5a.y + p5b.y) // 6
 
@@ -236,7 +268,10 @@ fn main() {
 	print_str('--- 2. Calls & Selector Assignment ---')
 
 	// 2.1 Basic function call with selector assign
-	mut pt := Point{x: 10, y: 20}
+	mut pt := Point{
+		x: 10
+		y: 20
+	}
 	pt.x = add(pt.x, 5)
 	print_int(pt.x) // 15
 
@@ -249,14 +284,20 @@ fn main() {
 	print_int(pt.x) // 12
 
 	// 2.4 Multiple selectors updated via calls
-	mut pt2 := Point{x: 5, y: 5}
+	mut pt2 := Point{
+		x: 5
+		y: 5
+	}
 	pt2.x = mul(pt2.x, 3)
 	pt2.y = mul(pt2.y, 4)
 	print_int(pt2.x) // 15
 	print_int(pt2.y) // 20
 
 	// 2.5 Nested function calls with selectors
-	mut pt3 := Point{x: 10, y: 20}
+	mut pt3 := Point{
+		x: 10
+		y: 20
+	}
 	pt3.x = add(mul(pt3.x, 2), 5) // 10*2 + 5 = 25
 	pt3.y = sub(mul(pt3.y, 3), 10) // 20*3 - 10 = 50
 	print_int(pt3.x) // 25
@@ -660,31 +701,46 @@ fn main() {
 	print_str('--- 12. Modifying Struct via Function ---')
 
 	// 12.1 Basic modify
-	mut pm1 := Point{x: 10, y: 20}
+	mut pm1 := Point{
+		x: 10
+		y: 20
+	}
 	modify_struct(mut pm1)
 	print_int(pm1.x) // 999
 	print_int(pm1.y) // 888
 
 	// 12.2 Swap
-	mut pm2 := Point{x: 5, y: 15}
+	mut pm2 := Point{
+		x: 5
+		y: 15
+	}
 	swap_point(mut pm2)
 	print_int(pm2.x) // 15
 	print_int(pm2.y) // 5
 
 	// 12.3 Scale
-	mut pm3 := Point{x: 10, y: 20}
+	mut pm3 := Point{
+		x: 10
+		y: 20
+	}
 	scale_point(mut pm3, 3)
 	print_int(pm3.x) // 30
 	print_int(pm3.y) // 60
 
 	// 12.4 Translate
-	mut pm4 := Point{x: 5, y: 10}
+	mut pm4 := Point{
+		x: 5
+		y: 10
+	}
 	translate_point(mut pm4, 100, 200)
 	print_int(pm4.x) // 105
 	print_int(pm4.y) // 210
 
 	// 12.5 Reset
-	mut pm5 := Point{x: 999, y: 888}
+	mut pm5 := Point{
+		x: 999
+		y: 888
+	}
 	reset_point(mut pm5)
 	print_int(pm5.x) // 0
 	print_int(pm5.y) // 0
@@ -716,29 +772,49 @@ fn main() {
 	print_str('--- 14. Heap Allocation ---')
 
 	// 14.1 Basic heap Point
-	hp1 := &Point{x: 10, y: 20}
+	hp1 := &Point{
+		x: 10
+		y: 20
+	}
 	print_int(hp1.x) // 10
 	print_int(hp1.y) // 20
 
 	// 14.2 Heap with zero
-	hp2 := &Point{x: 0, y: 0}
+	hp2 := &Point{
+		x: 0
+		y: 0
+	}
 	print_int(hp2.x) // 0
 	print_int(hp2.y) // 0
 
 	// 14.3 Heap with computed values
-	hp3 := &Point{x: 5 * 5, y: 6 * 6}
+	hp3 := &Point{
+		x: 5 * 5
+		y: 6 * 6
+	}
 	print_int(hp3.x) // 25
 	print_int(hp3.y) // 36
 
 	// 14.4 Heap Rectangle (no nested access)
-	hr := &Rectangle{width: 100, height: 200, origin: Point{x: 10, y: 20}}
-	print_int(hr.width)    // 100
-	print_int(hr.height)   // 200
+	hr := &Rectangle{
+		width:  100
+		height: 200
+		origin: Point{
+			x: 10
+			y: 20
+		}
+	}
+	print_int(hr.width) // 100
+	print_int(hr.height) // 200
 
 	// 14.5 Heap Node
-	hn := &Node{value: 42, left: 1, right: 2}
+	hn := &Node{
+		value: 42
+		left:  1
+		right: 2
+	}
 	print_int(hn.value) // 42
-	print_int(hn.left)  // 1
+	print_int(hn.left) // 1
 	print_int(hn.right) // 2
 
 	// ==================== 15. BITWISE OPERATIONS (5 tests) ====================
@@ -815,19 +891,31 @@ fn main() {
 	print_str('--- 18. Pointer Arithmetic ---')
 
 	// 18.1 Heap struct access
-	hp_arr1 := &Point{x: 10, y: 20}
+	hp_arr1 := &Point{
+		x: 10
+		y: 20
+	}
 	print_int(hp_arr1.x) // 10
 	print_int(hp_arr1.y) // 20
 
 	// 18.2 Multiple heap structs
-	hp_arr2 := &Point{x: 100, y: 200}
-	hp_arr3 := &Point{x: 300, y: 400}
+	hp_arr2 := &Point{
+		x: 100
+		y: 200
+	}
+	hp_arr3 := &Point{
+		x: 300
+		y: 400
+	}
 	print_int(hp_arr2.x + hp_arr3.x) // 400
 	print_int(hp_arr2.y + hp_arr3.y) // 600
 
 	// 18.3 Heap struct with computed values
 	base18 := 5
-	hp_arr4 := &Point{x: base18 * 10, y: base18 * 20}
+	hp_arr4 := &Point{
+		x: base18 * 10
+		y: base18 * 20
+	}
 	print_int(hp_arr4.x) // 50
 	print_int(hp_arr4.y) // 100
 
@@ -835,44 +923,97 @@ fn main() {
 	mut sum18 := 0
 	mut i18 := 0
 	for i18 < 3 {
-		hp := &Point{x: i18 * 10, y: i18 * 20}
+		hp := &Point{
+			x: i18 * 10
+			y: i18 * 20
+		}
 		sum18 = sum18 + hp.x + hp.y
 		i18++
 	}
 	print_int(sum18) // 0+0 + 10+20 + 20+40 = 90
 
 	// 18.5 Heap node tree structure
-	node1 := &Node{value: 100, left: 0, right: 0}
-	node2 := &Node{value: 200, left: 0, right: 0}
+	node1 := &Node{
+		value: 100
+		left:  0
+		right: 0
+	}
+	node2 := &Node{
+		value: 200
+		left:  0
+		right: 0
+	}
 	print_int(node1.value + node2.value) // 300
 
 	// ==================== 19. NESTED STRUCT ACCESS (5 tests) ====================
 	print_str('--- 19. Nested Struct Access ---')
 
 	// 19.1 Basic nested access
-	rect := Rectangle{width: 100, height: 200, origin: Point{x: 10, y: 20}}
-	print_int(rect.width)    // 100
-	print_int(rect.height)   // 200
+	rect := Rectangle{
+		width:  100
+		height: 200
+		origin: Point{
+			x: 10
+			y: 20
+		}
+	}
+	print_int(rect.width) // 100
+	print_int(rect.height) // 200
 
 	// 19.2 Nested struct field via intermediate
-	rect2 := Rectangle{width: 50, height: 60, origin: Point{x: 5, y: 6}}
+	rect2 := Rectangle{
+		width:  50
+		height: 60
+		origin: Point{
+			x: 5
+			y: 6
+		}
+	}
 	print_int(rect2.width + rect2.height) // 110
 
 	// 19.3 Mutable nested struct modification
-	mut rect3 := Rectangle{width: 10, height: 20, origin: Point{x: 1, y: 2}}
+	mut rect3 := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 1
+			y: 2
+		}
+	}
 	rect3.width = 100
 	rect3.height = 200
-	print_int(rect3.width)  // 100
+	print_int(rect3.width) // 100
 	print_int(rect3.height) // 200
 
 	// 19.4 Multiple rectangles
-	rect4a := Rectangle{width: 10, height: 20, origin: Point{x: 0, y: 0}}
-	rect4b := Rectangle{width: 30, height: 40, origin: Point{x: 0, y: 0}}
-	print_int(rect4a.width + rect4b.width)   // 40
+	rect4a := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	rect4b := Rectangle{
+		width:  30
+		height: 40
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	print_int(rect4a.width + rect4b.width) // 40
 	print_int(rect4a.height + rect4b.height) // 60
 
 	// 19.5 Rectangle area
-	rect5 := Rectangle{width: 12, height: 10, origin: Point{x: 0, y: 0}}
+	rect5 := Rectangle{
+		width:  12
+		height: 10
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
 	area := rect5.width * rect5.height
 	print_int(area) // 120
 
@@ -1229,34 +1370,49 @@ fn main() {
 	print_str('--- 29. Struct Operations ---')
 
 	// 29.1 Struct as function result (via modify)
-	mut sp1 := Point{x: 0, y: 0}
+	mut sp1 := Point{
+		x: 0
+		y: 0
+	}
 	scale_point(mut sp1, 10)
 	print_int(sp1.x) // 0
 	print_int(sp1.y) // 0
 
 	// 29.2 Chained struct modifications
-	mut sp2 := Point{x: 1, y: 1}
+	mut sp2 := Point{
+		x: 1
+		y: 1
+	}
 	scale_point(mut sp2, 5)
 	translate_point(mut sp2, 10, 20)
 	print_int(sp2.x) // 15
 	print_int(sp2.y) // 25
 
 	// 29.3 Struct field arithmetic
-	sp3 := Point{x: 100, y: 200}
+	sp3 := Point{
+		x: 100
+		y: 200
+	}
 	sp3_sum := sp3.x + sp3.y
 	sp3_diff := sp3.y - sp3.x
-	print_int(sp3_sum)  // 300
+	print_int(sp3_sum) // 300
 	print_int(sp3_diff) // 100
 
 	// 29.4 Multiple struct parameters
-	mut sp4 := Point{x: 10, y: 20}
+	mut sp4 := Point{
+		x: 10
+		y: 20
+	}
 	swap_point(mut sp4)
 	scale_point(mut sp4, 2)
 	print_int(sp4.x) // 40
 	print_int(sp4.y) // 20
 
 	// 29.5 Struct in conditional
-	sp5 := Point{x: 5, y: 10}
+	sp5 := Point{
+		x: 5
+		y: 10
+	}
 	if sp5.x < sp5.y {
 		print_int(1) // 1
 	} else {
@@ -1275,9 +1431,15 @@ fn main() {
 
 	// 30.2 Multiple sequential ifs
 	mut cf2 := 0
-	if true { cf2 += 1 }
-	if true { cf2 += 2 }
-	if true { cf2 += 4 }
+	if true {
+		cf2 += 1
+	}
+	if true {
+		cf2 += 2
+	}
+	if true {
+		cf2 += 4
+	}
 	print_int(cf2) // 7
 
 	// 30.3 Nested match
@@ -1295,7 +1457,9 @@ fn main() {
 				else { print_int(20) }
 			}
 		}
-		else { print_int(0) }
+		else {
+			print_int(0)
+		}
 	}
 
 	// 30.4 Loop with compound condition (&&)
@@ -1325,30 +1489,53 @@ fn main() {
 	print_str('--- 31. Methods ---')
 
 	// 31.1 Basic method call
-	m1 := Point{x: 10, y: 20}
+	m1 := Point{
+		x: 10
+		y: 20
+	}
 	print_int(m1.sum()) // 30
 
 	// 31.2 Method with multiplication
-	m2 := Point{x: 5, y: 6}
+	m2 := Point{
+		x: 5
+		y: 6
+	}
 	print_int(m2.product()) // 30
 
 	// 31.3 Mutable receiver method
-	mut m4 := Point{x: 7, y: 8}
+	mut m4 := Point{
+		x: 7
+		y: 8
+	}
 	m4.double()
 	print_int(m4.x) // 14
 	print_int(m4.y) // 16
 
 	// 31.4 Rectangle methods
-	m5 := Rectangle{width: 10, height: 5, origin: Point{x: 0, y: 0}}
+	m5 := Rectangle{
+		width:  10
+		height: 5
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
 	print_int(m5.area()) // 50
 	print_int(m5.perimeter()) // 30
 
 	// 31.5 Node method
-	m6 := Node{value: 100, left: 10, right: 20}
+	m6 := Node{
+		value: 100
+		left:  10
+		right: 20
+	}
 	print_int(m6.total()) // 130
 
 	// 31.6 Method on heap-allocated struct
-	m8 := &Point{x: 4, y: 5}
+	m8 := &Point{
+		x: 4
+		y: 5
+	}
 	print_int(m8.sum()) // 9
 	print_int(m8.product()) // 20
 
