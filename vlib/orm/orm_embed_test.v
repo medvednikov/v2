@@ -10,7 +10,7 @@ struct Coordinates {
 // Struct with embedded Coordinates
 struct Location {
 	Coordinates
-	id   int    @[primary; sql: serial]
+	id   int @[primary; sql: serial]
 	name string
 }
 
@@ -24,7 +24,7 @@ struct Metadata {
 // Struct with multiple fields and embedded struct
 struct Document {
 	Metadata
-	id      int    @[primary; sql: serial]
+	id      int @[primary; sql: serial]
 	title   string
 	content string
 }
@@ -38,7 +38,7 @@ struct PersonInfo {
 
 struct Employee {
 	PersonInfo
-	id         int    @[primary; sql: serial]
+	id         int @[primary; sql: serial]
 	department string
 	salary     f64
 }
@@ -52,9 +52,9 @@ fn test_embedded_struct_insert_and_select() {
 	}!
 
 	loc := Location{
-		name:      'Paris',
-		latitude:  48.8566,
-		longitude: 2.3522,
+		name:      'Paris'
+		latitude:  48.8566
+		longitude: 2.3522
 	}
 
 	sql db {
@@ -82,19 +82,19 @@ fn test_embedded_struct_multiple_inserts() {
 
 	locations_to_insert := [
 		Location{
-			name:      'New York',
-			latitude:  40.7128,
-			longitude: -74.0060,
+			name:      'New York'
+			latitude:  40.7128
+			longitude: -74.0060
 		},
 		Location{
-			name:      'Tokyo',
-			latitude:  35.6762,
-			longitude: 139.6503,
+			name:      'Tokyo'
+			latitude:  35.6762
+			longitude: 139.6503
 		},
 		Location{
-			name:      'Sydney',
-			latitude:  -33.8688,
-			longitude: 151.2093,
+			name:      'Sydney'
+			latitude:  -33.8688
+			longitude: 151.2093
 		},
 	]
 
@@ -133,11 +133,11 @@ fn test_embedded_struct_various_types() {
 	}!
 
 	doc := Document{
-		title:      'Test Document',
-		content:    'This is the content',
-		created_by: 'admin',
-		version:    1,
-		is_active:  true,
+		title:      'Test Document'
+		content:    'This is the content'
+		created_by: 'admin'
+		version:    1
+		is_active:  true
 	}
 
 	sql db {
@@ -166,11 +166,11 @@ fn test_embedded_struct_bool_false() {
 	}!
 
 	doc := Document{
-		title:      'Inactive Doc',
-		content:    'Content here',
-		created_by: 'user',
-		version:    2,
-		is_active:  false,
+		title:      'Inactive Doc'
+		content:    'Content here'
+		created_by: 'user'
+		version:    2
+		is_active:  false
 	}
 
 	sql db {
@@ -194,11 +194,11 @@ fn test_employee_with_embedded_person_info() {
 	}!
 
 	emp := Employee{
-		first_name: 'John',
-		last_name:  'Doe',
-		age:        30,
-		department: 'Engineering',
-		salary:     75000.50,
+		first_name: 'John'
+		last_name:  'Doe'
+		age:        30
+		department: 'Engineering'
+		salary:     75000.50
 	}
 
 	sql db {
@@ -228,25 +228,25 @@ fn test_embedded_struct_select_with_where() {
 
 	employees_to_insert := [
 		Employee{
-			first_name: 'Alice',
-			last_name:  'Smith',
-			age:        25,
-			department: 'HR',
-			salary:     50000.0,
+			first_name: 'Alice'
+			last_name:  'Smith'
+			age:        25
+			department: 'HR'
+			salary:     50000.0
 		},
 		Employee{
-			first_name: 'Bob',
-			last_name:  'Jones',
-			age:        35,
-			department: 'Engineering',
-			salary:     80000.0,
+			first_name: 'Bob'
+			last_name:  'Jones'
+			age:        35
+			department: 'Engineering'
+			salary:     80000.0
 		},
 		Employee{
-			first_name: 'Carol',
-			last_name:  'Williams',
-			age:        28,
-			department: 'Engineering',
-			salary:     70000.0,
+			first_name: 'Carol'
+			last_name:  'Williams'
+			age:        28
+			department: 'Engineering'
+			salary:     70000.0
 		},
 	]
 
@@ -283,9 +283,9 @@ fn test_embedded_struct_field_values_integrity() {
 
 	// Insert with specific values that could be confused
 	loc := Location{
-		name:      'Test',
-		latitude:  12.345,
-		longitude: 67.890,
+		name:      'Test'
+		latitude:  12.345
+		longitude: 67.890
 	}
 
 	sql db {
@@ -314,9 +314,9 @@ fn test_update_preserves_embedded_fields() {
 	}!
 
 	loc := Location{
-		name:      'Original',
-		latitude:  10.0,
-		longitude: 20.0,
+		name:      'Original'
+		latitude:  10.0
+		longitude: 20.0
 	}
 
 	sql db {
@@ -348,15 +348,15 @@ fn test_delete_with_embedded_struct() {
 	}!
 
 	loc1 := Location{
-		name:      'ToDelete',
-		latitude:  1.0,
-		longitude: 2.0,
+		name:      'ToDelete'
+		latitude:  1.0
+		longitude: 2.0
 	}
 
 	loc2 := Location{
-		name:      'ToKeep',
-		latitude:  3.0,
-		longitude: 4.0,
+		name:      'ToKeep'
+		latitude:  3.0
+		longitude: 4.0
 	}
 
 	sql db {
@@ -387,11 +387,11 @@ fn test_embedded_struct_zero_values() {
 	}!
 
 	emp := Employee{
-		first_name: '',
-		last_name:  '',
-		age:        0,
-		department: 'Test',
-		salary:     0.0,
+		first_name: ''
+		last_name:  ''
+		age:        0
+		department: 'Test'
+		salary:     0.0
 	}
 
 	sql db {
@@ -419,9 +419,9 @@ fn test_embedded_struct_equality() {
 	}!
 
 	original := Location{
-		name:      'TestCity',
-		latitude:  45.0,
-		longitude: 90.0,
+		name:      'TestCity'
+		latitude:  45.0
+		longitude: 90.0
 	}
 
 	sql db {
