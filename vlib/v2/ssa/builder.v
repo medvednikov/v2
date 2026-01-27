@@ -965,8 +965,10 @@ fn (mut b Builder) expr_array_init(node ast.ArrayInitExpr) ValueID {
 
 			// Compute element address using GEP
 			idx_val := b.mod.add_value_node(.constant, i64_t, i.str(), 0)
-			elem_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_t,
-				[array_ptr, idx_val])
+			elem_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_t, [
+				array_ptr,
+				idx_val,
+			])
 
 			// Store element value
 			b.mod.add_instr(.store, b.cur_block, 0, [elem_val, elem_ptr])
@@ -978,8 +980,10 @@ fn (mut b Builder) expr_array_init(node ast.ArrayInitExpr) ValueID {
 		// Initialize all elements with the init value
 		for i in 0 .. elem_count {
 			idx_val := b.mod.add_value_node(.constant, i64_t, i.str(), 0)
-			elem_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_t,
-				[array_ptr, idx_val])
+			elem_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_t, [
+				array_ptr,
+				idx_val,
+			])
 			b.mod.add_instr(.store, b.cur_block, 0, [init_val, elem_ptr])
 		}
 	} else {
@@ -988,8 +992,10 @@ fn (mut b Builder) expr_array_init(node ast.ArrayInitExpr) ValueID {
 
 		for i in 0 .. elem_count {
 			idx_val := b.mod.add_value_node(.constant, i64_t, i.str(), 0)
-			elem_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_t,
-				[array_ptr, idx_val])
+			elem_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_t, [
+				array_ptr,
+				idx_val,
+			])
 			b.mod.add_instr(.store, b.cur_block, 0, [zero_val, elem_ptr])
 		}
 	}

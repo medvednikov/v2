@@ -310,9 +310,15 @@ fn (mut g Gen) gen_instr(val_id int) {
 fn (g Gen) type_name(id int) string {
 	t := g.mod.type_store.types[id]
 	match t.kind {
-		.void_t { return 'void' }
-		.int_t { return 'int${t.width}_t' }
-		.float_t { return if t.width == 32 { 'float' } else { 'double' } }
+		.void_t {
+			return 'void'
+		}
+		.int_t {
+			return 'int${t.width}_t'
+		}
+		.float_t {
+			return if t.width == 32 { 'float' } else { 'double' }
+		}
 		.ptr_t {
 			// Check if pointing to an array - if so, just use pointer to element type
 			elem_t := g.mod.type_store.types[t.elem_type]
@@ -321,9 +327,15 @@ fn (g Gen) type_name(id int) string {
 			}
 			return g.type_name(t.elem_type) + '*'
 		}
-		.array_t { return g.type_name(t.elem_type) + '*' } // Arrays decay to pointers
-		.struct_t { return 'Struct_${id}' }
-		else { return 'void' }
+		.array_t {
+			return g.type_name(t.elem_type) + '*'
+		} // Arrays decay to pointers
+		.struct_t {
+			return 'Struct_${id}'
+		}
+		else {
+			return 'void'
+		}
 	}
 }
 
