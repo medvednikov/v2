@@ -1269,13 +1269,15 @@ pub fn (mut g Gen) write_typeof_functions() {
 // V type to C typecc
 @[inline]
 fn (mut g Gen) styp(t ast.Type) string {
-	if !t.has_option_or_result() {
+	// Unwrap generic types first to check the concrete type's flags
+	typ := g.unwrap_generic(t)
+	if !typ.has_option_or_result() {
 		return g.base_type(t)
-	} else if t.has_flag(.option) {
+	} else if typ.has_flag(.option) {
 		// Register an optional if it's not registered yet
-		return g.register_option(t)
+		return g.register_option(typ)
 	} else {
-		return g.register_result(t)
+		return g.register_result(typ)
 	}
 }
 
