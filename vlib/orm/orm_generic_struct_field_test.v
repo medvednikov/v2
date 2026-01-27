@@ -13,12 +13,12 @@ struct Payload {
 pub struct Message[T] {
 	id      int @[primary; sql: serial]
 	data    string
-	payload T   @[fkey: 'id']
+	payload T @[fkey: 'id']
 }
 
 // Payload needs to be a proper ORM table with a primary key
 struct PayloadTable {
-	id           int    @[primary; sql: serial]
+	id           int @[primary; sql: serial]
 	some_field_1 string
 	some_field_2 int
 }
@@ -27,7 +27,7 @@ struct PayloadTable {
 pub struct MessageWithPayload[T] {
 	id      int @[primary; sql: serial]
 	data    string
-	payload T   @[fkey: 'id']
+	payload T @[fkey: 'id']
 }
 
 fn test_generic_struct_with_struct_field_and_primary_key() {
@@ -81,9 +81,9 @@ fn test_generic_struct_with_simple_fields() {
 
 // Test that skipping struct fields with @[sql: '-'] works
 pub struct MessageWithSkippedField[T] {
-	id      int    @[primary; sql: serial]
+	id      int @[primary; sql: serial]
 	data    string
-	payload T      @[sql: '-'] // Skip this field in ORM
+	payload T @[sql: '-'] // Skip this field in ORM
 }
 
 fn test_generic_struct_with_skipped_field() {
