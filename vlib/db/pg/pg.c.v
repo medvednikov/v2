@@ -346,7 +346,7 @@ fn res_to_result(res voidptr) Result {
 }
 
 // close frees the underlying resource allocated by the database connection
-pub fn (mut db DB) close() ! {
+pub fn (db &DB) close() ! {
 	if db.conn != unsafe { nil } {
 		// Just a transaction handle, do nothing? Or close the underlying connection?
 		// Typically Tx should use rollback/commit.
