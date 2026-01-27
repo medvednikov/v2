@@ -1034,10 +1034,12 @@ fn (mut g Gen) gen_str_for_struct(info ast.Struct, lang ast.Language, styp strin
 		if base_typ.has_flag(.shared_f) {
 			base_typ = base_typ.clear_flag(.shared_f).deref()
 		}
-		// For C structs, voidptr fields in V may have different actual types in C headers,
-		// so we use string format instead of pointer format to avoid invalid casts
+		// For C structs, voidptr/byteptr fields in V may have different actual types in C headers,
+		// so we use string format instead of pointer format to avoid invalid casts.
+		// charptr fields are excluded as they are properly handled by builtin__tos4.
 		mut base_fmt := g.type_to_fmt(base_typ)
 		is_c_voidptr_field := is_c_struct && field.typ in ast.cptr_types
+			&& field.typ !in ast.charptr_types
 		if is_c_voidptr_field {
 			base_fmt = .si_s
 		}
