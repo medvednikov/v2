@@ -2422,7 +2422,7 @@ fn (mut g Gen) call_args(node ast.CallExpr) {
 	// unwrap generics fn/method arguments to concretes
 	if node.concrete_types.len > 0 && node.concrete_types.all(!it.has_flag(.generic)) {
 		if node.is_method {
-			if func := g.table.find_method(g.table.sym(node.left_type), node.name) {
+			if func := g.table.find_method_with_embeds(g.table.sym(node.left_type), node.name) {
 				if func.generic_names.len > 0 {
 					for i in 0 .. expected_types.len {
 						mut muttable := unsafe { &ast.Table(g.table) }
