@@ -8,7 +8,8 @@ import net
 #include <sys/socket.h>
 #include <sys/uio.h>
 
-const buf_size = max_connection_size
+const initial_buf_size = 8192
+const max_buf_size = 10 * 1024 * 1024 // 10MB max request size
 const kqueue_max_events = 128
 const backlog = max_connection_size
 
@@ -42,10 +43,15 @@ struct Conn {
 	fd        int
 	user_data voidptr
 mut:
-	read_buf  [buf_size]u8
+	read_buf  []u8
 	read_len  int
 	write_buf []u8
 	write_pos int
+
+	// Request parsing state
+	headers_complete  bool
+	content_length    int = -1 // -1 means not yet determined
+	body_start_offset int     // byte offset where body begins
 
 	// Sendfile state
 	file_fd  int = -1
@@ -178,31 +184,92 @@ fn handle_write(kq int, c_ptr voidptr) {
 
 fn handle_read(mut s Server, kq int, c_ptr voidptr) {
 	mut c := unsafe { &Conn(c_ptr) }
-	n := C.recv(c.fd, &c.read_buf[c.read_len], buf_size - c.read_len, 0)
-	if n <= 0 {
-		if n < 0 && C.errno != C.EAGAIN && C.errno != C.EWOULDBLOCK {
-			// Unexpected recv error - send 444 No Response
-			C.send(c.fd, status_444_response.data, status_444_response.len, 0)
+
+	// Edge-triggered kqueue: must read all available data in a loop
+	for {
+		// Ensure we have space to read - grow buffer if needed
+		available := c.read_buf.len - c.read_len
+		if available < 4096 {
+			// Need more space, grow the buffer
+			if c.read_buf.len >= max_buf_size {
+				// Already at max size
+				C.send(c.fd, status_413_response.data, status_413_response.len, 0)
+				close_conn(kq, c_ptr)
+				return
+			}
+			new_size := if c.read_buf.len * 2 > max_buf_size { max_buf_size } else { c.read_buf.len * 2 }
+			// Create new larger buffer and copy existing data
+			mut new_buf := []u8{len: new_size, cap: new_size}
+			for j := 0; j < c.read_len; j++ {
+				new_buf[j] = c.read_buf[j]
+			}
+			c.read_buf = new_buf
+		}
+
+		n := C.recv(c.fd, unsafe { &c.read_buf[c.read_len] }, c.read_buf.len - c.read_len, 0)
+		if n <= 0 {
+			if n < 0 && (C.errno == C.EAGAIN || C.errno == C.EWOULDBLOCK) {
+				// No more data available right now, continue processing what we have
+				break
+			}
+			if n < 0 {
+				// Unexpected recv error - send 444 No Response
+				C.send(c.fd, status_444_response.data, status_444_response.len, 0)
+			}
+			// n == 0 means client closed, or error
 			close_conn(kq, c_ptr)
 			return
 		}
-		// Normal client closure (n == 0 or would block)
-		close_conn(kq, c_ptr)
-		return
+
+		c.read_len += int(n)
 	}
 
-	c.read_len += int(n)
 	if c.read_len == 0 {
 		return
 	}
 
-	// Check if request exceeds buffer size
-	if c.read_len >= buf_size {
-		C.send(c.fd, status_413_response.data, status_413_response.len, 0)
-		close_conn(kq, c_ptr)
-		return
+	// Check if we have complete headers (look for \r\n\r\n)
+	if !c.headers_complete {
+		for i := 0; i <= c.read_len - 4; i++ {
+			if c.read_buf[i] == `\r` && c.read_buf[i + 1] == `\n`
+				&& c.read_buf[i + 2] == `\r` && c.read_buf[i + 3] == `\n` {
+				c.headers_complete = true
+				c.body_start_offset = i + 4
+				// Parse Content-Length from headers
+				c.content_length = parse_content_length(c.read_buf[..i], i)
+				break
+			}
+		}
+		if !c.headers_complete {
+			// Headers not complete yet, wait for more data
+			return
+		}
 	}
 
+	// If we have Content-Length, check if we need to grow buffer and wait for full body
+	if c.content_length > 0 {
+		expected_total := c.body_start_offset + c.content_length
+		// Check if request is too large
+		if expected_total > max_buf_size {
+			C.send(c.fd, status_413_response.data, status_413_response.len, 0)
+			close_conn(kq, c_ptr)
+			return
+		}
+		// Grow buffer if needed to fit expected content
+		if expected_total > c.read_buf.len {
+			mut new_buf := []u8{len: expected_total, cap: expected_total}
+			for j := 0; j < c.read_len; j++ {
+				new_buf[j] = c.read_buf[j]
+			}
+			c.read_buf = new_buf
+		}
+		if c.read_len < expected_total {
+			// Body not complete yet, wait for more data
+			return
+		}
+	}
+
+	// Request is complete, process it
 	mut req_buf := []u8{cap: c.read_len}
 	unsafe {
 		req_buf.push_many(&c.read_buf[0], c.read_len)
@@ -214,7 +281,7 @@ fn handle_read(mut s Server, kq int, c_ptr voidptr) {
 		return
 	}
 	decoded.client_conn_fd = c.fd
-	decoded.user_data = s.user_data
+	decoded.user_data = c.user_data
 
 	resp := s.request_handler(decoded) or {
 		send_bad_request(c.fd)
@@ -239,6 +306,10 @@ fn handle_read(mut s Server, kq int, c_ptr voidptr) {
 
 	c.write_pos = 0
 	c.read_len = 0
+	// Reset parsing state for potential keep-alive
+	c.headers_complete = false
+	c.content_length = -1
+	c.body_start_offset = 0
 
 	if send_pending(c_ptr) {
 		add_event(kq, u64(c.fd), i16(C.EVFILT_WRITE), u16(C.EV_ADD | C.EV_ENABLE | C.EV_CLEAR),
@@ -249,7 +320,48 @@ fn handle_read(mut s Server, kq int, c_ptr voidptr) {
 	close_conn(kq, c_ptr)
 }
 
-fn accept_clients(kq int, listen_fd int) {
+// parse_content_length extracts the Content-Length value from HTTP headers
+@[direct_array_access]
+fn parse_content_length(header_buf []u8, header_len int) int {
+	// Search for "Content-Length:" (case-insensitive)
+	mut i := 0
+	for i < header_len - 15 {
+		// Check for "Content-Length:" (common case) or "content-length:"
+		if (header_buf[i] == `C` || header_buf[i] == `c`)
+			&& (header_buf[i + 1] == `o` || header_buf[i + 1] == `O`)
+			&& (header_buf[i + 2] == `n` || header_buf[i + 2] == `N`)
+			&& (header_buf[i + 3] == `t` || header_buf[i + 3] == `T`)
+			&& (header_buf[i + 4] == `e` || header_buf[i + 4] == `E`)
+			&& (header_buf[i + 5] == `n` || header_buf[i + 5] == `N`)
+			&& (header_buf[i + 6] == `t` || header_buf[i + 6] == `T`)
+			&& header_buf[i + 7] == `-`
+			&& (header_buf[i + 8] == `L` || header_buf[i + 8] == `l`)
+			&& (header_buf[i + 9] == `e` || header_buf[i + 9] == `E`)
+			&& (header_buf[i + 10] == `n` || header_buf[i + 10] == `N`)
+			&& (header_buf[i + 11] == `g` || header_buf[i + 11] == `G`)
+			&& (header_buf[i + 12] == `t` || header_buf[i + 12] == `T`)
+			&& (header_buf[i + 13] == `h` || header_buf[i + 13] == `H`)
+			&& header_buf[i + 14] == `:` {
+			// Found "Content-Length:", now parse the value
+			mut j := i + 15
+			// Skip whitespace
+			for j < header_len && (header_buf[j] == ` ` || header_buf[j] == `\t`) {
+				j++
+			}
+			// Parse number
+			mut val := 0
+			for j < header_len && header_buf[j] >= `0` && header_buf[j] <= `9` {
+				val = val * 10 + int(header_buf[j] - `0`)
+				j++
+			}
+			return val
+		}
+		i++
+	}
+	return 0
+}
+
+fn accept_clients(kq int, listen_fd int, user_data voidptr) {
 	for {
 		client_fd := C.accept(listen_fd, unsafe { nil }, unsafe { nil })
 		if client_fd < 0 {
@@ -262,7 +374,8 @@ fn accept_clients(kq int, listen_fd int) {
 		set_nonblocking(client_fd)
 		mut c := &Conn{
 			fd:        client_fd
-			user_data: unsafe { nil }
+			user_data: user_data
+			read_buf:  []u8{len: initial_buf_size, cap: initial_buf_size}
 			file_fd:   -1
 		}
 		add_event(kq, u64(client_fd), i16(C.EVFILT_READ), u16(C.EV_ADD | C.EV_ENABLE | C.EV_CLEAR),
@@ -328,7 +441,7 @@ pub fn (mut s Server) run() ! {
 			}
 
 			if event.ident == u64(s.socket_fd) {
-				accept_clients(s.poll_fd, s.socket_fd)
+				accept_clients(s.poll_fd, s.socket_fd, s.user_data)
 				continue
 			}
 
