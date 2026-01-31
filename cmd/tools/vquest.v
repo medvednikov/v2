@@ -164,6 +164,11 @@ fn run_implement(cmd cli.Command) ! {
 }
 
 fn run_solve(cmd cli.Command) ! {
+	// Clean up old bug report files
+	for f in os.glob('bug-*.md') or { []string{} } {
+		os.rm(f) or {}
+	}
+
 	user_os := get_target_os(cmd)
 	os_label := get_os_label(user_os)
 	output_override := cmd.flags.get_string('output') or { '' }
