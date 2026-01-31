@@ -177,7 +177,9 @@ pub fn (stmt Stmt) error(code int) IError {
 	}
 }
 
-fn (stmt Stmt) get_field_count() u16 {
+// get_field_count returns the number of columns for the most recent statement.
+// See https://dev.mysql.com/doc/c-api/8.0/en/mysql-stmt-field-count.html
+pub fn (stmt Stmt) get_field_count() u16 {
 	return C.mysql_stmt_field_count(stmt.stmt)
 }
 
