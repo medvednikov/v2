@@ -1,0 +1,11 @@
+// vtest vflags: -autofree
+module main
+
+import x.json2
+
+fn main() {
+	c := json2.Any(123)
+	unsafe {
+		c.free()
+	}
+}

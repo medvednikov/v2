@@ -73,6 +73,9 @@ fn (mut g Gen) gen_free_method(typ ast.Type) string {
 		ast.Interface {
 			g.gen_free_for_interface(sym, sym.info, styp, fn_name)
 		}
+		ast.SumType {
+			g.gen_free_for_sumtype(sym, sym.info, styp, fn_name)
+		}
 		else {
 			println(g.table.type_str(typ))
 			// print_backtrace()
@@ -102,6 +105,36 @@ fn (mut g Gen) gen_free_for_interface(sym ast.TypeSymbol, info ast.Interface, st
 		type_styp := g.gen_type_name_for_free_call(typ_)
 		fn_builder.writeln('\tif (it->_typ == _${sym.cname}_${sub_sym.cname}_index) { ${type_styp}_free(it->_${sub_sym.cname}); return; }')
 	}
+	fn_builder.writeln('}')
+}
+
+fn (mut g Gen) gen_free_for_sumtype(sym ast.TypeSymbol, info ast.SumType, styp string, fn_name string) {
+	g.definitions.writeln('${g.static_non_parallel}void ${fn_name}(${styp}* it);')
+	mut fn_builder := strings.new_builder(128)
+	defer {
+		g.auto_fn_definitions << fn_builder.str()
+	}
+	fn_builder.writeln('${g.static_non_parallel}void ${fn_name}(${styp}* it) {')
+	fn_builder.writeln('\tswitch (it->_typ) {')
+	for typ in info.variants {
+		typ_ := g.unwrap_generic(typ)
+		sub_sym := g.table.sym(typ_)
+		if sub_sym.kind !in [.string, .array, .map, .struct] {
+			continue
+		}
+		if !sub_sym.has_method_with_generic_parent('free') {
+			continue
+		}
+		variant_name := g.get_sumtype_variant_name(typ_, sub_sym)
+		type_styp := g.gen_type_name_for_free_call(typ_)
+		mut type_styp_fn_name := '${type_styp}_free'
+		if sub_sym.is_builtin() {
+			type_styp_fn_name = 'builtin__${type_styp_fn_name}'
+		}
+		fn_builder.writeln('\t\tcase ${int(typ_)}: { ${type_styp_fn_name}(&it->_${variant_name}); return; }')
+	}
+	fn_builder.writeln('\t\tdefault: return;')
+	fn_builder.writeln('\t}')
 	fn_builder.writeln('}')
 }
 

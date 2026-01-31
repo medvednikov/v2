@@ -1,0 +1,6 @@
+void x__json2__Any_free(x__json2__Any* it) {
+	switch (it->_typ) {
+		case 21: { builtin__string_free(&it->_string); return; }
+		default: return;
+	}
+}
