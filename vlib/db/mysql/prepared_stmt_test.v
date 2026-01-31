@@ -1,6 +1,46 @@
 // vtest build: started_mysqld?
 import db.mysql
 
+fn test_get_field_count() {
+	$if !network ? {
+		eprintln('> Skipping test ${@FN}, since `-d network` is not passed.')
+		eprintln('> This test requires a working mysql server running on localhost.')
+		return
+	}
+	config := mysql.Config{
+		host:     '127.0.0.1'
+		port:     3306
+		username: 'root'
+		password: ''
+		dbname:   'mysql'
+	}
+
+	db := mysql.connect(config)!
+
+	mut response := db.exec('drop table if exists test_fields')!
+	assert response == []mysql.Row{}
+
+	response = db.exec('create table if not exists test_fields (
+                        id INT PRIMARY KEY AUTO_INCREMENT,
+                        name TEXT,
+                        age INT)')!
+	assert response == []mysql.Row{}
+
+	mut stmt := db.init_stmt('select id, name, age from test_fields')
+	defer {
+		stmt.close() or {}
+	}
+	stmt.prepare()!
+	stmt.execute()!
+
+	// get_field_count should return 3 for the 3 columns: id, name, age
+	field_count := stmt.get_field_count()
+	assert field_count == 3
+
+	// Clean up
+	db.exec('drop table test_fields')!
+}
+
 fn test_prep() {
 	$if !network ? {
 		eprintln('> Skipping test ${@FN}, since `-d network` is not passed.')
