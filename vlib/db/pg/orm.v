@@ -60,16 +60,95 @@ pub fn (db DB) last_id() int {
 // DDL (table creation/destroying etc)
 
 // create is used internally by V's ORM for processing table creation queries (DDL)
+// If the table already exists, it compares fields and adds any missing columns
 pub fn (db DB) create(table orm.Table, fields []orm.TableField) ! {
-	query := orm.orm_table_gen(.pg, table, '"', true, 0, fields, pg_type_from_v, false) or {
-		return err
-	}
-	stmts := query.split(';')
-	for stmt in stmts {
-		if stmt != '' {
-			pg_stmt_worker(db, stmt + ';', orm.QueryData{}, orm.QueryData{})!
+	// Check if table exists and get existing columns
+	existing_columns := db.get_table_columns(table.name)
+
+	if existing_columns.len == 0 {
+		// Table doesn't exist, create it
+		query := orm.orm_table_gen(.pg, table, '"', true, 0, fields, pg_type_from_v, false) or {
+			return err
+		}
+		stmts := query.split(';')
+		for stmt in stmts {
+			if stmt != '' {
+				pg_stmt_worker(db, stmt + ';', orm.QueryData{}, orm.QueryData{})!
+			}
+		}
+	} else {
+		// Table exists, add missing columns
+		for field in fields {
+			if field.is_arr {
+				continue
+			}
+			field_name := get_field_sql_name(field)
+			if field_name !in existing_columns {
+				add_column_query := orm.orm_column_add_gen(.pg, table, '"', field,
+					pg_type_from_v) or {
+					// Skip fields that can't be added (e.g., skip, primary)
+					continue
+				}
+				pg_stmt_worker(db, add_column_query, orm.QueryData{}, orm.QueryData{})!
+			}
 		}
 	}
+}
+
+// get_table_columns returns the list of column names for a table, or empty array if table doesn't exist
+fn (db DB) get_table_columns(table_name string) []string {
+	// Query information_schema to get column names
+	query := "SELECT column_name FROM information_schema.columns WHERE table_name = '${table_name}' ORDER BY ordinal_position;"
+	res := db.exec(query)
+	if res.len == 0 {
+		return []
+	}
+	mut columns := []string{cap: res.len}
+	for row in res {
+		if row.vals.len > 0 {
+			if col := row.vals[0] {
+				columns << col
+			}
+		}
+	}
+	return columns
+}
+
+// get_field_sql_name extracts the SQL column name from a field (handles @[sql: 'name'] attribute)
+fn get_field_sql_name(field orm.TableField) string {
+	mut name := field.name
+	for attr in field.attrs {
+		if attr.name == 'sql' && attr.has_arg && attr.kind == .string {
+			name = attr.arg
+			break
+		}
+	}
+	// Check if this is a struct field (foreign key) - would have _id suffix
+	typ := get_field_type(field)
+	if typ == 0 {
+		// Unknown type = struct field, append _id
+		name = '${name}_id'
+	}
+	return name
+}
+
+// get_field_type returns the field type, or 0 if it's a struct (foreign key)
+fn get_field_type(field orm.TableField) int {
+	mut typ := field.typ
+	for attr in field.attrs {
+		if attr.name == 'serial' && attr.kind == .plain && !attr.has_arg {
+			return orm.serial
+		}
+		if attr.kind == .plain && attr.name == 'sql' && attr.arg != '' {
+			if attr.arg.to_lower() == 'serial' {
+				return orm.serial
+			}
+			return orm.type_idx[attr.arg]
+		}
+	}
+	// Check if it's a known type
+	_ := pg_type_from_v(typ) or { return 0 }
+	return typ
 }
 
 // drop is used internally by V's ORM for processing table destroying queries (DDL)

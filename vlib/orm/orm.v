@@ -767,6 +767,114 @@ fn sql_field_name(field TableField) string {
 	return name
 }
 
+// Generates an ALTER TABLE ADD COLUMN statement for a single field
+// sql_dialect - The SQL dialect being used
+// table - Table struct
+// q - Quote character for identifiers
+// field - The field to add
+// sql_from_v - Function which maps type indices to sql type names
+pub fn orm_column_add_gen(sql_dialect SQLDialect, table Table, q string, field TableField, sql_from_v fn (int) !string) !string {
+	if field.is_arr {
+		return error('Cannot add array field as column')
+	}
+
+	mut is_skip := false
+	mut default_val := field.default_val
+	mut nullable := field.nullable
+	mut field_name := sql_field_name(field)
+	mut col_typ := sql_from_v(sql_field_type(field)) or {
+		// Struct fields are foreign key references - append _id
+		field_name = '${field_name}_id'
+		// For foreign keys, we need a primary key type - use INT as default
+		sql_from_v(type_idx['int'])!
+	}
+
+	for attr in field.attrs {
+		match attr.name {
+			'sql' {
+				if attr.arg == '-' {
+					is_skip = true
+				}
+			}
+			'skip' {
+				is_skip = true
+			}
+			'sql_type' {
+				col_typ = attr.arg.str()
+			}
+			'default' {
+				if default_val == '' {
+					default_val = attr.arg.str()
+				}
+			}
+			'primary' {
+				// Cannot add a primary key column via ALTER TABLE
+				return error('Cannot add primary key column via ALTER TABLE')
+			}
+			else {}
+		}
+	}
+
+	if is_skip {
+		return error('Field is marked as skip')
+	}
+
+	if col_typ == '' {
+		return error('Unknown type (${field.typ}) for field ${field.name} in struct ${table.name}')
+	}
+
+	mut stmt := 'ALTER TABLE ${q}${table.name}${q} ADD COLUMN ${q}${field_name}${q} ${col_typ}'
+
+	// For new columns, we need a default value if NOT NULL
+	if !nullable {
+		if default_val == '' {
+			// Provide sensible defaults based on type
+			default_val = get_type_default(col_typ, sql_dialect)
+		}
+		stmt += ' DEFAULT ${default_val} NOT NULL'
+	} else if default_val != '' {
+		stmt += ' DEFAULT ${default_val}'
+	}
+
+	stmt += ';'
+
+	$if trace_orm_create ? {
+		eprintln('> orm_column_add: table: ${table.name} | field: ${field_name} | query: ${stmt}')
+	}
+	$if trace_orm ? {
+		eprintln('> orm: ${stmt}')
+	}
+
+	return stmt
+}
+
+// Returns a sensible default value for a SQL type
+fn get_type_default(col_typ string, sql_dialect SQLDialect) string {
+	upper_typ := col_typ.to_upper()
+	return match true {
+		upper_typ.contains('INT') || upper_typ == 'SERIAL' || upper_typ.contains('SMALLINT')
+			|| upper_typ.contains('BIGINT') {
+			'0'
+		}
+		upper_typ.contains('REAL') || upper_typ.contains('DOUBLE') || upper_typ.contains('FLOAT')
+			|| upper_typ.contains('NUMERIC') {
+			'0.0'
+		}
+		upper_typ.contains('BOOL') {
+			if sql_dialect == .pg { 'FALSE' } else { '0' }
+		}
+		upper_typ.contains('TEXT') || upper_typ.contains('VARCHAR') || upper_typ.contains('CHAR') {
+			"''"
+		}
+		upper_typ.contains('TIMESTAMP') || upper_typ.contains('DATE') || upper_typ.contains('TIME') {
+			if sql_dialect == .pg { 'NOW()' } else { 'CURRENT_TIMESTAMP' }
+		}
+		else {
+			'0'
+		}
+	}
+}
+
 // needed for backend functions
 
 fn bool_to_primitive(b bool) Primitive {
