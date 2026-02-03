@@ -2406,7 +2406,7 @@ fn (mut g Gen) expr_with_tmp_var(expr ast.Expr, expr_typ ast.Type, ret_typ ast.T
 	} else {
 		g.go_before_last_stmt().trim_space()
 	}
-	//mut styp := g.base_type(ret_typ)
+	// mut styp := g.base_type(ret_typ)
 	unwrapped_ret_typ := g.unwrap_generic(ret_typ)
 	mut styp := g.base_type(unwrapped_ret_typ)
 	g.empty_line = true
