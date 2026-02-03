@@ -238,7 +238,10 @@ fn veb_tmpl_${fn_name}() string {
 	// Header adds 8 lines (0: empty, 1: import, 2: comment, 3: fn, 4: builder, 5: empty from \n escape, 6: empty from literal, 7: empty from writeln)
 	// Pre-fill the line map with placeholder entries for header lines
 	for _ in 0 .. 8 {
-		p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: 0}
+		p.template_line_map << ast.TemplateLineInfo{
+			tmpl_path: template_file
+			tmpl_line: 0
+		}
 	}
 
 	source.write_string(tmpl_str_start)
@@ -337,32 +340,59 @@ fn veb_tmpl_${fn_name}() string {
 		if line.contains('@if ') {
 			source.writeln(tmpl_str_end)
 			// tmpl_str_end contains '\n', so writeln creates 2 lines: ')' and empty
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			pos := line.index('@if') or { continue }
 			source.writeln('if ' + line[pos + 4..] + '{')
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			source.write_string(tmpl_str_start)
 			continue
 		}
 		if line.contains('@end') {
 			source.writeln(tmpl_str_end)
 			// tmpl_str_end contains '\n', so writeln creates 2 lines: ')' and empty
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			source.writeln('}')
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			source.write_string(tmpl_str_start)
 			continue
 		}
 		if line.contains('@else') {
 			source.writeln(tmpl_str_end)
 			// tmpl_str_end contains '\n', so writeln creates 2 lines: ')' and empty
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			pos := line.index('@else') or { continue }
 			source.writeln('}' + line[pos + 1..] + '{')
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			// source.writeln(' } else { ')
 			source.write_string(tmpl_str_start)
 			continue
@@ -370,18 +400,30 @@ fn veb_tmpl_${fn_name}() string {
 		if line.contains('@for') {
 			source.writeln(tmpl_str_end)
 			// tmpl_str_end contains '\n', so writeln creates 2 lines: ')' and empty
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			pos := line.index('@for') or { continue }
 			source.writeln('for ' + line[pos + 4..] + '{')
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			source.write_string(tmpl_str_start)
 			continue
 		}
 		if state == .simple {
 			// by default, just copy 1:1
 			source.writeln(insert_template_code(fn_name, tmpl_str_start, line))
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			continue
 		}
 		// in_write = false
@@ -393,16 +435,22 @@ fn veb_tmpl_${fn_name}() string {
 				source.write_string('<script src="')
 				source.write_string(line[pos + 5..line.len - 1])
 				source.writeln('"></script>')
-				p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-					continue
+				p.template_line_map << ast.TemplateLineInfo{
+					tmpl_path: template_file
+					tmpl_line: tline_number
+				}
+				continue
 			}
 			if line.contains('@css ') {
 				pos := line.index('@css') or { continue }
 				source.write_string('<link href="')
 				source.write_string(line[pos + 6..line.len - 1])
 				source.writeln('" rel="stylesheet" type="text/css">')
-				p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-					continue
+				p.template_line_map << ast.TemplateLineInfo{
+					tmpl_path: template_file
+					tmpl_line: tline_number
+				}
+				continue
 			}
 		}
 
@@ -413,8 +461,11 @@ fn veb_tmpl_${fn_name}() string {
 					// `span.header {` => `<span class='header'>`
 					class := line.find_between('span.', '{').trim_space()
 					source.writeln('<span class="${class}">')
-					p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-							in_span = true
+					p.template_line_map << ast.TemplateLineInfo{
+						tmpl_path: template_file
+						tmpl_line: tline_number
+					}
+					in_span = true
 					continue
 				} else if line_t.starts_with('.') && line.ends_with('{') {
 					// `.header {` => `<div class='header'>`
@@ -422,14 +473,20 @@ fn veb_tmpl_${fn_name}() string {
 					trimmed := line.trim_space()
 					source.write_string(strings.repeat(`\t`, line.len - trimmed.len)) // add the necessary indent to keep <div><div><div> code clean
 					source.writeln('<div class="${class}">')
-					p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-							continue
+					p.template_line_map << ast.TemplateLineInfo{
+						tmpl_path: template_file
+						tmpl_line: tline_number
+					}
+					continue
 				} else if line_t.starts_with('#') && line.ends_with('{') {
 					// `#header {` => `<div id='header'>`
 					class := line.find_between('#', '{').trim_space()
 					source.writeln('<div id="${class}">')
-					p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-							continue
+					p.template_line_map << ast.TemplateLineInfo{
+						tmpl_path: template_file
+						tmpl_line: tline_number
+					}
+					continue
 				} else if line_t == '}' {
 					source.write_string(strings.repeat(`\t`, line.len - line_t.len)) // add the necessary indent to keep <div><div><div> code clean
 					if in_span {
@@ -438,15 +495,21 @@ fn veb_tmpl_${fn_name}() string {
 					} else {
 						source.writeln('</div>')
 					}
-					p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-							continue
+					p.template_line_map << ast.TemplateLineInfo{
+						tmpl_path: template_file
+						tmpl_line: tline_number
+					}
+					continue
 				}
 			}
 			.js {
 				// if line.contains('//V_TEMPLATE') {
 				source.writeln(insert_template_code(fn_name, tmpl_str_start, line))
-				p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-					//} else {
+				p.template_line_map << ast.TemplateLineInfo{
+					tmpl_path: template_file
+					tmpl_line: tline_number
+				}
+				//} else {
 				// replace `$` to `\$` at first to escape JavaScript template literal syntax
 				// source.writeln(line.replace(r'$', r'\$').replace(r'$$', r'@').replace(r'.$',
 				// r'.@').replace(r"'", r"\'"))
@@ -457,8 +520,11 @@ fn veb_tmpl_${fn_name}() string {
 				// disable template variable declaration in inline stylesheet
 				// because of  some CSS rules prefixed with `@`.
 				source.writeln(line.replace(r'.$', r'.@').replace(r"'", r"\'"))
-				p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
-					continue
+				p.template_line_map << ast.TemplateLineInfo{
+					tmpl_path: template_file
+					tmpl_line: tline_number
+				}
+				continue
 			}
 			else {}
 		}
@@ -495,12 +561,18 @@ fn veb_tmpl_${fn_name}() string {
 			}
 			// println(source.str())
 			source.writeln(insert_template_code(fn_name, tmpl_str_start, line_))
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 			// exit(0)
 		} else {
 			// by default, just copy 1:1
 			source.writeln(insert_template_code(fn_name, tmpl_str_start, line))
-			p.template_line_map << ast.TemplateLineInfo{tmpl_path: template_file, tmpl_line: tline_number}
+			p.template_line_map << ast.TemplateLineInfo{
+				tmpl_path: template_file
+				tmpl_line: tline_number
+			}
 		}
 	}
 

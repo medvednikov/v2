@@ -1120,10 +1120,10 @@ pub mut:
 	notices               []errors.Notice        // all the checker notices in the file
 	call_stack            []errors.CallStackItem // call stack for this file (used for template errors)
 	generic_fns           []&FnDecl
-	global_labels         []string // from `asm { .globl labelname }`
-	template_paths        []string             // all the .html/.md files that were processed with $tmpl
-	template_line_map     []TemplateLineInfo  // maps generated line -> original template location
-	unique_prefix         string              // a hash of the `.path` field, used for making anon fn generation unique
+	global_labels         []string           // from `asm { .globl labelname }`
+	template_paths        []string           // all the .html/.md files that were processed with $tmpl
+	template_line_map     []TemplateLineInfo // maps generated line -> original template location
+	unique_prefix         string             // a hash of the `.path` field, used for making anon fn generation unique
 	//
 	is_parse_text    bool // true for files, produced by parse_text
 	is_template_text bool // true for files, produced by parse_comptime
