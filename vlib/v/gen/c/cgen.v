@@ -1460,7 +1460,10 @@ fn (g &Gen) result_type_text(styp string, base string) string {
 
 fn (mut g Gen) register_option(t ast.Type) string {
 	styp, base := g.option_type_name(t)
-	if !t.has_flag(.generic) {
+	// Only skip registration if the computed base is still an unresolved generic type name
+	// (base_type should have resolved generics, but check to be safe)
+	is_unresolved_generic := g.cur_fn != unsafe { nil } && base in g.cur_fn.generic_names
+	if !is_unresolved_generic {
 		g.options[base] = styp
 	}
 	return if !t.has_flag(.option_mut_param_t) { styp } else { '${styp}*' }
@@ -1468,7 +1471,9 @@ fn (mut g Gen) register_option(t ast.Type) string {
 
 fn (mut g Gen) register_result(t ast.Type) string {
 	styp, base := g.result_type_name(t)
-	if !t.has_flag(.generic) {
+	// Only skip registration if the computed base is still an unresolved generic type name
+	is_unresolved_generic := g.cur_fn != unsafe { nil } && base in g.cur_fn.generic_names
+	if !is_unresolved_generic {
 		g.results[base] = styp
 	}
 	return styp
@@ -1680,6 +1685,12 @@ fn (mut g Gen) write_chan_pop_option_fns() {
 			}
 		}
 		done << opt_el_type
+		// Ensure the option type is registered for typedef generation
+		option_prefix := option_name + '_'
+		if opt_el_type.starts_with(option_prefix) {
+			base := opt_el_type[option_prefix.len..]
+			g.options[base] = opt_el_type
+		}
 		g.channel_definitions.writeln('
 static inline ${opt_el_type} __Option_${styp}_popval(${styp} ch) {
 	${opt_el_type} _tmp = {0};
