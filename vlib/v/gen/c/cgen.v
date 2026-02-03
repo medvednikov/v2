@@ -1686,10 +1686,14 @@ fn (mut g Gen) write_chan_pop_option_fns() {
 		}
 		done << opt_el_type
 		// Ensure the option type is registered for typedef generation
+		// Only add if this styp is not already registered (to avoid duplicates with different bases)
 		option_prefix := option_name + '_'
 		if opt_el_type.starts_with(option_prefix) {
-			base := opt_el_type[option_prefix.len..]
-			g.options[base] = opt_el_type
+			already_registered := opt_el_type in g.options.values()
+			if !already_registered {
+				base := opt_el_type[option_prefix.len..]
+				g.options[base] = opt_el_type
+			}
 		}
 		g.channel_definitions.writeln('
 static inline ${opt_el_type} __Option_${styp}_popval(${styp} ch) {
