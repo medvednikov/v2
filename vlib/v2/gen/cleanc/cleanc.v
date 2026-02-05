@@ -1192,102 +1192,6 @@ fn (mut g Gen) gen_map_init_expr(node ast.MapInitExpr) {
 	g.sb.write_string('((${map_type}){0})')
 }
 
-fn (mut g Gen) gen_range_start_expr(start ast.Expr) {
-	if start is ast.EmptyExpr {
-		g.sb.write_string('0')
-		return
-	}
-	g.gen_expr(start)
-}
-
-fn (mut g Gen) gen_range_end_expr(base ast.Expr, range ast.RangeExpr, is_ptr bool) {
-	if range.end is ast.EmptyExpr {
-		g.gen_expr(base)
-		if is_ptr {
-			g.sb.write_string('->len')
-		} else {
-			g.sb.write_string('.len')
-		}
-		return
-	}
-	if range.op == .ellipsis {
-		g.sb.write_string('(')
-		g.gen_expr(range.end)
-		g.sb.write_string(' + 1)')
-		return
-	}
-	g.gen_expr(range.end)
-}
-
-fn (mut g Gen) gen_slice_expr(base ast.Expr, range ast.RangeExpr) {
-	// Prefer Environment types (v2.types.Scope / expr type map) for slicing strategy.
-	if raw_type := g.get_raw_type(base) {
-		match raw_type {
-			types.String {
-				g.sb.write_string('string__substr(')
-				g.gen_expr(base)
-				g.sb.write_string(', ')
-				g.gen_range_start_expr(range.start)
-				g.sb.write_string(', ')
-				g.gen_range_end_expr(base, range, false)
-				g.sb.write_string(')')
-				return
-			}
-			types.Array {
-				g.sb.write_string('array__slice(')
-				g.gen_expr(base)
-				g.sb.write_string(', ')
-				g.gen_range_start_expr(range.start)
-				g.sb.write_string(', ')
-				g.gen_range_end_expr(base, range, false)
-				g.sb.write_string(')')
-				return
-			}
-			types.Pointer {
-				if raw_type.base_type is types.Array {
-					g.sb.write_string('array__slice(*')
-					g.gen_expr(base)
-					g.sb.write_string(', ')
-					g.gen_range_start_expr(range.start)
-					g.sb.write_string(', ')
-					g.gen_range_end_expr(base, range, true)
-					g.sb.write_string(')')
-					return
-				}
-			}
-			else {}
-		}
-	}
-	// Fallback using inferred C type string.
-	base_type := g.get_expr_type(base)
-	if base_type == 'string' {
-		g.sb.write_string('string__substr(')
-		g.gen_expr(base)
-		g.sb.write_string(', ')
-		g.gen_range_start_expr(range.start)
-		g.sb.write_string(', ')
-		g.gen_range_end_expr(base, range, false)
-		g.sb.write_string(')')
-		return
-	}
-	if base_type.starts_with('Array_') || base_type == 'array' {
-		g.sb.write_string('array__slice(')
-		g.gen_expr(base)
-		g.sb.write_string(', ')
-		g.gen_range_start_expr(range.start)
-		g.sb.write_string(', ')
-		g.gen_range_end_expr(base, range, false)
-		g.sb.write_string(')')
-		return
-	}
-	// Pointer / fixed-array fallback: return pointer to start.
-	g.sb.write_string('(&(')
-	g.gen_expr(base)
-	g.sb.write_string(')[')
-	g.gen_range_start_expr(range.start)
-	g.sb.write_string('])')
-}
-
 fn (mut g Gen) gen_range_expr(node ast.RangeExpr) {
 	// Standalone ranges should be lowered or appear only in IndexExpr slicing.
 	if node.start is ast.EmptyExpr && node.end is ast.EmptyExpr {
@@ -1744,8 +1648,7 @@ fn (mut g Gen) gen_unsafe_expr(node ast.UnsafeExpr) {
 fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 	// Slice syntax: arr[a..b], arr[..b], arr[a..], s[a..b]
 	if node.expr is ast.RangeExpr {
-		g.gen_slice_expr(node.lhs, node.expr)
-		return
+		panic('bug in v2 compiler: slice IndexExpr should have been lowered in v2.transformer')
 	}
 	// Check LHS type from environment to determine indexing strategy
 	if raw_type := g.get_raw_type(node.lhs) {

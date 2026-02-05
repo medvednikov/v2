@@ -174,6 +174,68 @@ fn test_infer_array_type_from_slice() {
 	assert result == 'Array_rune', 'expected Array_rune, got ${result}'
 }
 
+fn test_transform_index_expr_string_slice_lowered() {
+	mut t := create_transformer_with_vars({
+		's': types.Type(string_type())
+	})
+
+	expr := ast.IndexExpr{
+		lhs:  ast.Ident{
+			name: 's'
+		}
+		expr: ast.RangeExpr{
+			op:    .dotdot
+			start: ast.BasicLiteral{
+				kind:  .number
+				value: '1'
+			}
+			end:   ast.BasicLiteral{
+				kind:  .number
+				value: '3'
+			}
+		}
+	}
+
+	result := t.transform_expr(expr)
+	assert result is ast.CallExpr, 'expected CallExpr, got ${result.type_name()}'
+	call := result as ast.CallExpr
+	assert call.lhs is ast.Ident
+	assert (call.lhs as ast.Ident).name == 'string__substr'
+	assert call.args.len == 3
+}
+
+fn test_transform_index_expr_array_slice_lowered() {
+	mut t := create_transformer_with_vars({
+		'arr': types.Type(types.Array{ elem_type: types.int_ })
+	})
+
+	expr := ast.IndexExpr{
+		lhs:  ast.Ident{
+			name: 'arr'
+		}
+		expr: ast.RangeExpr{
+			op:    .ellipsis
+			start: ast.BasicLiteral{
+				kind:  .number
+				value: '0'
+			}
+			end:   ast.BasicLiteral{
+				kind:  .number
+				value: '4'
+			}
+		}
+	}
+
+	result := t.transform_expr(expr)
+	assert result is ast.CallExpr, 'expected CallExpr, got ${result.type_name()}'
+	call := result as ast.CallExpr
+	assert call.lhs is ast.Ident
+	assert (call.lhs as ast.Ident).name == 'array__slice'
+	assert call.args.len == 3
+	// Inclusive range `...` should become end + 1.
+	assert call.args[2] is ast.InfixExpr
+}
+
 fn test_transform_map_init_expr_non_empty_lowers_to_runtime_ctor() {
 	mut t := create_test_transformer()
 

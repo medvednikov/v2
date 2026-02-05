@@ -3455,7 +3455,9 @@ fn (mut t Transformer) collect_and_remove_defers(stmts []ast.Stmt, mut defer_bod
 				expr := stmt.expr
 				if expr is ast.IfExpr {
 					cleaned_if := t.collect_defers_in_if(expr, mut defer_bodies)
-					result << ast.Stmt(ast.ExprStmt{expr: cleaned_if})
+					result << ast.Stmt(ast.ExprStmt{
+						expr: cleaned_if
+					})
 				} else if expr is ast.UnsafeExpr {
 					cleaned_stmts := t.collect_and_remove_defers(expr.stmts, mut defer_bodies)
 					result << ast.Stmt(ast.ExprStmt{
@@ -3517,12 +3519,16 @@ fn (mut t Transformer) inject_defer_before_returns(stmts []ast.Stmt, defer_stmts
 					temp_name := '_defer_t${t.temp_counter}'
 					result << ast.Stmt(ast.AssignStmt{
 						op:  .decl_assign
-						lhs: [ast.Expr(ast.Ident{name: temp_name})]
+						lhs: [ast.Expr(ast.Ident{
+							name: temp_name
+						})]
 						rhs: [stmt.exprs[0]]
 					})
 					result << defer_stmts
 					result << ast.Stmt(ast.ReturnStmt{
-						exprs: [ast.Expr(ast.Ident{name: temp_name})]
+						exprs: [ast.Expr(ast.Ident{
+							name: temp_name
+						})]
 					})
 				} else {
 					result << defer_stmts
@@ -4026,11 +4032,7 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 			})
 		}
 		ast.IndexExpr {
-			ast.Expr(ast.IndexExpr{
-				lhs:      t.transform_expr(expr.lhs)
-				expr:     t.transform_expr(expr.expr)
-				is_gated: expr.is_gated
-			})
+			t.transform_index_expr(expr)
 		}
 		ast.ArrayInitExpr {
 			t.transform_array_init_expr(expr)
@@ -4125,6 +4127,121 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 		else {
 			expr
 		}
+	}
+}
+
+fn (mut t Transformer) transform_index_expr(expr ast.IndexExpr) ast.Expr {
+	lhs := t.transform_expr(expr.lhs)
+
+	// Lower slices in transformer so backends do not need slice-specific type logic.
+	if expr.expr is ast.RangeExpr {
+		return t.transform_slice_index_expr(lhs, expr.lhs, expr.expr, expr.is_gated)
+	}
+
+	return ast.IndexExpr{
+		lhs:      lhs
+		expr:     t.transform_expr(expr.expr)
+		is_gated: expr.is_gated
+	}
+}
+
+fn (mut t Transformer) transform_slice_index_expr(lhs ast.Expr, orig_lhs ast.Expr, range ast.RangeExpr, is_gated bool) ast.Expr {
+	start_expr := if range.start is ast.EmptyExpr {
+		ast.Expr(ast.BasicLiteral{
+			kind:  .number
+			value: '0'
+		})
+	} else {
+		t.transform_expr(range.start)
+	}
+
+	// Build end expression for lowering target calls:
+	// `a..b` -> b, `a...b` -> b + 1, `a..` -> lhs.len.
+	mut end_expr := ast.Expr(ast.empty_expr)
+	if range.end is ast.EmptyExpr {
+		end_expr = ast.SelectorExpr{
+			lhs: lhs
+			rhs: ast.Ident{
+				name: 'len'
+			}
+		}
+	} else {
+		end_expr = t.transform_expr(range.end)
+		if range.op == .ellipsis {
+			end_expr = ast.InfixExpr{
+				op:  .plus
+				lhs: end_expr
+				rhs: ast.BasicLiteral{
+					kind:  .number
+					value: '1'
+				}
+			}
+		}
+	}
+
+	if lhs_type := t.get_expr_type(orig_lhs) {
+		match lhs_type {
+			types.String {
+				return ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'string__substr'
+					}
+					args: [lhs, start_expr, end_expr]
+				}
+			}
+			types.Alias {
+				if lhs_type.name == 'string' || lhs_type.base_type is types.String {
+					return ast.CallExpr{
+						lhs:  ast.Ident{
+							name: 'string__substr'
+						}
+						args: [lhs, start_expr, end_expr]
+					}
+				}
+			}
+			types.Array {
+				return ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'array__slice'
+					}
+					args: [lhs, start_expr, end_expr]
+				}
+			}
+			types.Pointer {
+				if lhs_type.base_type is types.Array {
+					return ast.CallExpr{
+						lhs:  ast.Ident{
+							name: 'array__slice'
+						}
+						args: [
+							ast.Expr(ast.PrefixExpr{
+								op:   .mul
+								expr: lhs
+							}),
+							start_expr,
+							end_expr,
+						]
+					}
+				}
+			}
+			else {}
+		}
+	}
+
+	// Keep as slice IndexExpr if type lookup failed; cleanc treats this as invariant violation.
+	return ast.IndexExpr{
+		lhs:      lhs
+		expr:     ast.RangeExpr{
+			op:    range.op
+			start: start_expr
+			end:   if range.end is ast.EmptyExpr {
+				ast.empty_expr
+			} else {
+				t.transform_expr(range.end)
+			}
+			pos:   range.pos
+		}
+		is_gated: is_gated
 	}
 }
 
@@ -4437,22 +4554,33 @@ fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Exp
 		sizeof_expr := if elem_type_expr !is ast.EmptyExpr {
 			elem_type_expr
 		} else {
-			ast.Expr(ast.Ident{name: 'int'})
+			ast.Expr(ast.Ident{
+				name: 'int'
+			})
 		}
 		len_expr := ast.Expr(if expr.len !is ast.EmptyExpr {
 			t.transform_expr(expr.len)
 		} else {
-			ast.Expr(ast.BasicLiteral{kind: .number, value: '0'})
+			ast.Expr(ast.BasicLiteral{
+				kind:  .number
+				value: '0'
+			})
 		})
 		cap_expr := ast.Expr(if expr.cap !is ast.EmptyExpr {
 			t.transform_expr(expr.cap)
 		} else {
-			ast.Expr(ast.BasicLiteral{kind: .number, value: '0'})
+			ast.Expr(ast.BasicLiteral{
+				kind:  .number
+				value: '0'
+			})
 		})
 		init_expr := ast.Expr(if expr.init !is ast.EmptyExpr {
 			t.transform_expr(expr.init)
 		} else {
-			ast.Expr(ast.BasicLiteral{kind: .number, value: '0'})
+			ast.Expr(ast.BasicLiteral{
+				kind:  .number
+				value: '0'
+			})
 		})
 		return ast.CallExpr{
 			lhs:  ast.Ident{
@@ -4461,7 +4589,10 @@ fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Exp
 			args: [
 				len_expr,
 				cap_expr,
-				ast.Expr(ast.KeywordOperator{op: .key_sizeof, exprs: [sizeof_expr]}),
+				ast.Expr(ast.KeywordOperator{
+					op:    .key_sizeof
+					exprs: [sizeof_expr]
+				}),
 				init_expr,
 			]
 			pos:  expr.pos
