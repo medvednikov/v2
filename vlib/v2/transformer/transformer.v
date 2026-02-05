@@ -5014,11 +5014,7 @@ fn (mut t Transformer) transform_match_expr(expr ast.MatchExpr) ast.Expr {
 			}
 		}
 
-		return ast.MatchExpr{
-			expr:     tag_access
-			branches: branches
-			pos:      expr.pos
-		}
+		return t.lower_match_expr_to_if(tag_access, branches)
 	}
 
 	// Non-sum type match - simple transformation
@@ -5030,10 +5026,101 @@ fn (mut t Transformer) transform_match_expr(expr ast.MatchExpr) ast.Expr {
 			pos:   branch.pos
 		}
 	}
-	return ast.MatchExpr{
-		expr:     t.transform_expr(expr.expr)
-		branches: branches
-		pos:      expr.pos
+	return t.lower_match_expr_to_if(t.transform_expr(expr.expr), branches)
+}
+
+// lower_match_expr_to_if converts a transformed match expression into a nested IfExpr chain.
+// Backends only need to support IfExpr after this lowering.
+fn (mut t Transformer) lower_match_expr_to_if(match_expr ast.Expr, branches []ast.MatchBranch) ast.Expr {
+	is_match_true := match_expr is ast.BasicLiteral && match_expr.kind == .key_true
+	is_match_false := match_expr is ast.BasicLiteral && match_expr.kind == .key_false
+
+	mut current := ast.Expr(ast.empty_expr)
+	for i := branches.len - 1; i >= 0; i-- {
+		branch := branches[i]
+		if branch.cond.len == 0 {
+			current = ast.IfExpr{
+				cond:      ast.empty_expr
+				stmts:     branch.stmts
+				else_expr: current
+				pos:       branch.pos
+			}
+			continue
+		}
+
+		branch_cond := t.build_match_branch_cond(match_expr, branch.cond, is_match_true,
+			is_match_false)
+		current = ast.IfExpr{
+			cond:      branch_cond
+			stmts:     branch.stmts
+			else_expr: current
+			pos:       branch.pos
+		}
+	}
+	return current
+}
+
+fn (mut t Transformer) build_match_branch_cond(match_expr ast.Expr, conds []ast.Expr, is_match_true bool, is_match_false bool) ast.Expr {
+	mut branch_cond := ast.Expr(ast.empty_expr)
+	for cond in conds {
+		single_cond := t.build_single_match_cond(match_expr, cond, is_match_true, is_match_false)
+		if branch_cond is ast.EmptyExpr {
+			branch_cond = single_cond
+		} else {
+			branch_cond = ast.InfixExpr{
+				op:  .logical_or
+				lhs: branch_cond
+				rhs: single_cond
+				pos: cond.pos()
+			}
+		}
+	}
+	return branch_cond
+}
+
+fn (mut t Transformer) build_single_match_cond(match_expr ast.Expr, cond ast.Expr, is_match_true bool, is_match_false bool) ast.Expr {
+	if is_match_true || is_match_false {
+		cond_expr := t.transform_expr(cond)
+		if is_match_false {
+			return ast.PrefixExpr{
+				op:   .not
+				expr: cond_expr
+				pos:  cond.pos()
+			}
+		}
+		return cond_expr
+	}
+
+	if cond is ast.RangeExpr {
+		lower_bound := ast.InfixExpr{
+			op:  .ge
+			lhs: match_expr
+			rhs: t.transform_expr(cond.start)
+			pos: cond.pos
+		}
+		if cond.end is ast.EmptyExpr {
+			return lower_bound
+		}
+		upper_op := if cond.op == .dotdot { token.Token.lt } else { token.Token.le }
+		upper_bound := ast.InfixExpr{
+			op:  upper_op
+			lhs: match_expr
+			rhs: t.transform_expr(cond.end)
+			pos: cond.pos
+		}
+		return ast.InfixExpr{
+			op:  .and
+			lhs: lower_bound
+			rhs: upper_bound
+			pos: cond.pos
+		}
+	}
+
+	return ast.InfixExpr{
+		op:  .eq
+		lhs: match_expr
+		rhs: t.transform_expr(cond)
+		pos: cond.pos()
 	}
 }
 

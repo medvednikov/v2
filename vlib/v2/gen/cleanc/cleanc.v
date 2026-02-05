@@ -1018,8 +1018,18 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			// Handle else / else-if
 			if node.else_expr !is ast.EmptyExpr {
 				if node.else_expr is ast.IfExpr {
-					g.sb.write_string(' else ')
-					g.gen_expr(node.else_expr)
+					else_if := node.else_expr as ast.IfExpr
+					if else_if.cond is ast.EmptyExpr {
+						g.sb.writeln(' else {')
+						g.indent++
+						g.gen_stmts(else_if.stmts)
+						g.indent--
+						g.write_indent()
+						g.sb.write_string('}')
+					} else {
+						g.sb.write_string(' else ')
+						g.gen_expr(node.else_expr)
+					}
 				} else {
 					g.sb.writeln(' else {')
 					g.indent++
@@ -1059,7 +1069,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] MapInitExpr */ {0}')
 		}
 		ast.MatchExpr {
-			g.sb.write_string('/* [TODO] MatchExpr */ 0')
+			panic('bug in v2 compiler: MatchExpr should have been lowered in v2.transformer')
 		}
 		ast.UnsafeExpr {
 			g.gen_unsafe_expr(node)
