@@ -2690,8 +2690,9 @@ fn (mut t Transformer) expand_single_or_expr(or_expr ast.OrExpr, mut prefix_stmt
 	}
 
 	if !is_result && !is_option {
-		// Not a Result/Option call, return as-is
-		return or_expr
+		// V only allows `or` on Result/Option expressions.
+		// If type lookup fails, default to Result (more common).
+		is_result = true
 	}
 
 	// Get base type using expression-based lookup first, then fallback
@@ -3809,6 +3810,31 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 				typ:  expr.typ
 				pos:  expr.pos
 			})
+		}
+		ast.OrExpr {
+			// OrExpr in expression context (e.g., nested, in return, in for-loop condition)
+			mut prefix_stmts := []ast.Stmt{}
+			result_expr := t.expand_single_or_expr(expr, mut prefix_stmts)
+			if prefix_stmts.len > 0 {
+				// Wrap in UnsafeExpr — cleanc emits as GCC compound expression ({ ... })
+				prefix_stmts << ast.ExprStmt{
+					expr: result_expr
+				}
+				ast.Expr(ast.UnsafeExpr{
+					stmts: prefix_stmts
+				})
+			} else {
+				result_expr
+			}
+		}
+		ast.IfGuardExpr {
+			// IfGuardExpr should only appear as IfExpr condition, handled by transform_if_expr.
+			// If it somehow reaches here standalone, just evaluate the RHS.
+			if expr.stmt.rhs.len > 0 {
+				t.transform_expr(expr.stmt.rhs[0])
+			} else {
+				expr
+			}
 		}
 		else {
 			expr
@@ -5223,11 +5249,87 @@ fn (mut t Transformer) transform_if_expr(expr ast.IfExpr) ast.Expr {
 			synth_pos := t.next_synth_pos()
 			rhs := guard.stmt.rhs[0]
 
-			// Check if RHS returns Option type
+			// Check if RHS returns Result or Option type
+			mut is_result := t.expr_returns_result(rhs)
 			mut is_option := t.expr_returns_option(rhs)
-			if !is_option {
+			if !is_result && !is_option {
 				fn_name := t.get_call_fn_name(rhs)
+				is_result = fn_name != '' && t.fn_returns_result(fn_name)
 				is_option = fn_name != '' && t.fn_returns_option(fn_name)
+			}
+
+			if is_result {
+				// Handle Result if-guard using temp variable pattern
+				// Transform: if var := result_call() { body } else { else_body }
+				// To: { _tmp := result_call(); if !_tmp.is_error { var := _tmp.data; body } else { else_body } }
+				temp_name := t.gen_temp_name()
+				temp_ident := ast.Ident{
+					name: temp_name
+					pos:  synth_pos
+				}
+
+				mut is_blank := false
+				if guard.stmt.lhs.len == 1 {
+					lhs0 := guard.stmt.lhs[0]
+					if lhs0 is ast.Ident {
+						if lhs0.name == '_' {
+							is_blank = true
+						}
+					}
+				}
+
+				// 1. _tmp := result_call()
+				temp_assign := ast.AssignStmt{
+					op:  .decl_assign
+					lhs: [ast.Expr(temp_ident)]
+					rhs: [t.transform_expr(rhs)]
+					pos: synth_pos
+				}
+
+				// 2. Condition: !_tmp.is_error
+				success_cond := ast.PrefixExpr{
+					op:   .not
+					expr: ast.SelectorExpr{
+						lhs: temp_ident
+						rhs: ast.Ident{
+							name: 'is_error'
+						}
+					}
+				}
+
+				// 3. Body: var := _tmp.data; original_body
+				mut body_stmts := []ast.Stmt{}
+				if !is_blank {
+					data_access := ast.SelectorExpr{
+						lhs: temp_ident
+						rhs: ast.Ident{
+							name: 'data'
+						}
+					}
+					body_stmts << ast.AssignStmt{
+						op:  .decl_assign
+						lhs: guard.stmt.lhs
+						rhs: [ast.Expr(data_access)]
+						pos: guard.stmt.pos
+					}
+				}
+				for s in expr.stmts {
+					body_stmts << s
+				}
+
+				modified_if := ast.IfExpr{
+					cond:      success_cond
+					stmts:     t.transform_stmts(body_stmts)
+					else_expr: t.transform_expr(expr.else_expr)
+					pos:       synth_pos
+				}
+
+				// Wrap temp assignment + if in UnsafeExpr (compound expression)
+				return ast.UnsafeExpr{
+					stmts: [ast.Stmt(temp_assign), ast.ExprStmt{
+						expr: modified_if
+					}]
+				}
 			}
 
 			if is_option {

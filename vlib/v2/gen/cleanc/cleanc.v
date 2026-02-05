@@ -828,8 +828,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.gen_unsafe_expr(node)
 		}
 		ast.OrExpr {
-			// TODO: OrExpr - not all cases are expanded by transformer yet
-			g.sb.write_string('/* [TODO] OrExpr */ 0')
+			panic('bug in v2 compiler: OrExpr should have been expanded in v2.transformer')
 		}
 		ast.AsCastExpr {
 			g.sb.write_string('/* [TODO] AsCastExpr */ 0')
@@ -878,8 +877,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] FieldInit */ 0')
 		}
 		ast.IfGuardExpr {
-			// TODO: IfGuardExpr - not all cases are expanded by transformer yet
-			g.sb.write_string('/* [TODO] IfGuardExpr */ 0')
+			panic('bug in v2 compiler: IfGuardExpr should have been expanded in v2.transformer')
 		}
 		ast.GenericArgs {
 			panic('bug in v2 compiler: GenericArgs should have been resolved during type checking')
