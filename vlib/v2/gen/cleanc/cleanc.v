@@ -290,8 +290,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			panic('bug in v2 compiler: ForInStmt should have been lowered in v2.transformer')
 		}
 		ast.DeferStmt {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] DeferStmt */')
+			panic('bug in v2 compiler: DeferStmt should have been lowered in v2.transformer')
 		}
 		ast.AssertStmt {
 			g.write_indent()

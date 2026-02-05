@@ -3290,6 +3290,11 @@ fn (mut t Transformer) transform_fn_decl(decl ast.FnDecl) ast.FnDecl {
 	// Transform function body
 	transformed_stmts := t.transform_stmts(decl.stmts)
 
+	// Lower defer statements: collect defers, remove them from body,
+	// inject defer body before every return and at end of function
+	has_return_type := decl.typ.return_type !is ast.EmptyExpr
+	final_stmts := t.lower_defer_stmts(transformed_stmts, has_return_type)
+
 	// Restore previous scope and fn_root_scope
 	t.scope = old_scope
 	t.fn_root_scope = old_fn_root_scope
@@ -3303,9 +3308,181 @@ fn (mut t Transformer) transform_fn_decl(decl ast.FnDecl) ast.FnDecl {
 		language:   decl.language
 		name:       decl.name
 		typ:        decl.typ
-		stmts:      transformed_stmts
+		stmts:      final_stmts
 		pos:        decl.pos
 	}
+}
+
+// lower_defer_stmts collects DeferStmts from the function body (at any nesting level),
+// removes them, and injects their bodies before every return statement (and at the end
+// of the function). Defers execute in LIFO order (last defer first).
+fn (mut t Transformer) lower_defer_stmts(stmts []ast.Stmt, has_return_type bool) []ast.Stmt {
+	// Collect all defer bodies (recursively) and build cleaned stmt list
+	mut defer_bodies := [][]ast.Stmt{}
+	body := t.collect_and_remove_defers(stmts, mut defer_bodies)
+	if defer_bodies.len == 0 {
+		return stmts
+	}
+	// Build combined defer body in LIFO order (reverse)
+	mut defer_stmts := []ast.Stmt{}
+	for i := defer_bodies.len - 1; i >= 0; i-- {
+		defer_stmts << defer_bodies[i]
+	}
+	// Inject defer body before every return in the body
+	result := t.inject_defer_before_returns(body, defer_stmts, has_return_type)
+	// If the body doesn't end with a return, append defer stmts at the end
+	if result.len == 0 || !t.stmt_ends_with_return(result[result.len - 1]) {
+		mut final := result.clone()
+		final << defer_stmts
+		return final
+	}
+	return result
+}
+
+// collect_and_remove_defers recursively walks statements, collects DeferStmt bodies,
+// and returns the statements with DeferStmts removed.
+fn (mut t Transformer) collect_and_remove_defers(stmts []ast.Stmt, mut defer_bodies [][]ast.Stmt) []ast.Stmt {
+	mut result := []ast.Stmt{cap: stmts.len}
+	for stmt in stmts {
+		match stmt {
+			ast.DeferStmt {
+				defer_bodies << stmt.stmts
+			}
+			ast.ExprStmt {
+				expr := stmt.expr
+				if expr is ast.IfExpr {
+					cleaned_if := t.collect_defers_in_if(expr, mut defer_bodies)
+					result << ast.Stmt(ast.ExprStmt{expr: cleaned_if})
+				} else if expr is ast.UnsafeExpr {
+					cleaned_stmts := t.collect_and_remove_defers(expr.stmts, mut defer_bodies)
+					result << ast.Stmt(ast.ExprStmt{
+						expr: ast.UnsafeExpr{
+							stmts: cleaned_stmts
+						}
+					})
+				} else {
+					result << stmt
+				}
+			}
+			ast.ForStmt {
+				result << ast.Stmt(ast.ForStmt{
+					init:  stmt.init
+					cond:  stmt.cond
+					post:  stmt.post
+					stmts: t.collect_and_remove_defers(stmt.stmts, mut defer_bodies)
+				})
+			}
+			ast.BlockStmt {
+				result << ast.Stmt(ast.BlockStmt{
+					stmts: t.collect_and_remove_defers(stmt.stmts, mut defer_bodies)
+				})
+			}
+			else {
+				result << stmt
+			}
+		}
+	}
+	return result
+}
+
+fn (mut t Transformer) collect_defers_in_if(node ast.IfExpr, mut defer_bodies [][]ast.Stmt) ast.Expr {
+	new_else := t.collect_defers_in_else(node.else_expr, mut defer_bodies)
+	return ast.IfExpr{
+		cond:      node.cond
+		stmts:     t.collect_and_remove_defers(node.stmts, mut defer_bodies)
+		else_expr: new_else
+	}
+}
+
+fn (mut t Transformer) collect_defers_in_else(else_expr ast.Expr, mut defer_bodies [][]ast.Stmt) ast.Expr {
+	if else_expr is ast.IfExpr {
+		return t.collect_defers_in_if(else_expr, mut defer_bodies)
+	}
+	return else_expr
+}
+
+// inject_defer_before_returns walks the statement list and replaces return statements
+// with: { defer_body; return expr; } — saving the return value in a temp var if needed.
+fn (mut t Transformer) inject_defer_before_returns(stmts []ast.Stmt, defer_stmts []ast.Stmt, has_return_type bool) []ast.Stmt {
+	mut result := []ast.Stmt{cap: stmts.len}
+	for stmt in stmts {
+		match stmt {
+			ast.ReturnStmt {
+				if has_return_type && stmt.exprs.len > 0 {
+					// Save return value to temp, run defers, return temp
+					t.temp_counter++
+					temp_name := '_defer_t${t.temp_counter}'
+					result << ast.Stmt(ast.AssignStmt{
+						op:  .decl_assign
+						lhs: [ast.Expr(ast.Ident{name: temp_name})]
+						rhs: [stmt.exprs[0]]
+					})
+					result << defer_stmts
+					result << ast.Stmt(ast.ReturnStmt{
+						exprs: [ast.Expr(ast.Ident{name: temp_name})]
+					})
+				} else {
+					result << defer_stmts
+					result << stmt
+				}
+			}
+			ast.ExprStmt {
+				expr := stmt.expr
+				if expr is ast.IfExpr {
+					result << ast.Stmt(ast.ExprStmt{
+						expr: t.inject_defer_in_if_expr(expr, defer_stmts, has_return_type)
+					})
+				} else {
+					result << stmt
+				}
+			}
+			ast.ForStmt {
+				result << ast.Stmt(ast.ForStmt{
+					init:  stmt.init
+					cond:  stmt.cond
+					post:  stmt.post
+					stmts: t.inject_defer_before_returns(stmt.stmts, defer_stmts, has_return_type)
+				})
+			}
+			ast.BlockStmt {
+				result << ast.Stmt(ast.BlockStmt{
+					stmts: t.inject_defer_before_returns(stmt.stmts, defer_stmts, has_return_type)
+				})
+			}
+			else {
+				result << stmt
+			}
+		}
+	}
+	return result
+}
+
+fn (mut t Transformer) inject_defer_in_if_expr(node ast.IfExpr, defer_stmts []ast.Stmt, has_return_type bool) ast.Expr {
+	new_else := t.inject_defer_in_else(node.else_expr, defer_stmts, has_return_type)
+	return ast.IfExpr{
+		cond:      node.cond
+		stmts:     t.inject_defer_before_returns(node.stmts, defer_stmts, has_return_type)
+		else_expr: new_else
+	}
+}
+
+fn (mut t Transformer) inject_defer_in_else(else_expr ast.Expr, defer_stmts []ast.Stmt, has_return_type bool) ast.Expr {
+	match else_expr {
+		ast.IfExpr {
+			// else if: recurse
+			return t.inject_defer_in_if_expr(else_expr, defer_stmts, has_return_type)
+		}
+		ast.EmptyExpr {
+			return else_expr
+		}
+		else {
+			return else_expr
+		}
+	}
+}
+
+fn (t &Transformer) stmt_ends_with_return(stmt ast.Stmt) bool {
+	return stmt is ast.ReturnStmt
 }
 
 // expr_to_type_name extracts a type name from a type expression
