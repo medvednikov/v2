@@ -712,6 +712,13 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 				continue
 			}
 		}
+		// Expand lock/rlock expressions into mutex lock/unlock calls around the body
+		if stmt is ast.ExprStmt {
+			if stmt.expr is ast.LockExpr {
+				result << t.expand_lock_expr(stmt.expr)
+				continue
+			}
+		}
 		// Check for map iteration expansion
 		if stmt is ast.ForStmt {
 			if expanded := t.try_expand_for_in_map(stmt) {
@@ -3313,6 +3320,102 @@ fn (mut t Transformer) transform_fn_decl(decl ast.FnDecl) ast.FnDecl {
 	}
 }
 
+// expand_lock_expr lowers a LockExpr into mutex lock/unlock calls around the body.
+// lock data { body } => sync__RwMutex_lock(&data.mtx); body; sync__RwMutex_unlock(&data.mtx);
+// rlock data { body } => sync__RwMutex_rlock(&data.mtx); body; sync__RwMutex_runlock(&data.mtx);
+fn (mut t Transformer) expand_lock_expr(expr ast.LockExpr) []ast.Stmt {
+	mut result := []ast.Stmt{}
+	// Emit lock calls
+	for lock_expr in expr.lock_exprs {
+		result << ast.ExprStmt{
+			expr: ast.CallExpr{
+				lhs:  ast.Ident{
+					name: 'sync__RwMutex_lock'
+				}
+				args: [
+					ast.Expr(ast.PrefixExpr{
+						op:   .amp
+						expr: ast.SelectorExpr{
+							lhs: lock_expr
+							rhs: ast.Ident{
+								name: 'mtx'
+							}
+						}
+					}),
+				]
+			}
+		}
+	}
+	// Emit rlock calls
+	for rlock_expr in expr.rlock_exprs {
+		result << ast.ExprStmt{
+			expr: ast.CallExpr{
+				lhs:  ast.Ident{
+					name: 'sync__RwMutex_rlock'
+				}
+				args: [
+					ast.Expr(ast.PrefixExpr{
+						op:   .amp
+						expr: ast.SelectorExpr{
+							lhs: rlock_expr
+							rhs: ast.Ident{
+								name: 'mtx'
+							}
+						}
+					}),
+				]
+			}
+		}
+	}
+	// Emit transformed body stmts
+	for stmt in t.transform_stmts(expr.stmts) {
+		result << stmt
+	}
+	// Emit unlock calls (reverse order of lock)
+	for lock_expr in expr.lock_exprs {
+		result << ast.ExprStmt{
+			expr: ast.CallExpr{
+				lhs:  ast.Ident{
+					name: 'sync__RwMutex_unlock'
+				}
+				args: [
+					ast.Expr(ast.PrefixExpr{
+						op:   .amp
+						expr: ast.SelectorExpr{
+							lhs: lock_expr
+							rhs: ast.Ident{
+								name: 'mtx'
+							}
+						}
+					}),
+				]
+			}
+		}
+	}
+	// Emit runlock calls (reverse order of rlock)
+	for rlock_expr in expr.rlock_exprs {
+		result << ast.ExprStmt{
+			expr: ast.CallExpr{
+				lhs:  ast.Ident{
+					name: 'sync__RwMutex_runlock'
+				}
+				args: [
+					ast.Expr(ast.PrefixExpr{
+						op:   .amp
+						expr: ast.SelectorExpr{
+							lhs: rlock_expr
+							rhs: ast.Ident{
+								name: 'mtx'
+							}
+						}
+					}),
+				]
+			}
+		}
+	}
+	return result
+}
+
 // lower_defer_stmts collects DeferStmts from the function body (at any nesting level),
 // removes them, and injects their bodies before every return statement (and at the end
 // of the function). Defers execute in LIFO order (last defer first).
@@ -3951,12 +4054,10 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 			})
 		}
 		ast.LockExpr {
-			// Transform the statements inside lock blocks (important for map iteration expansion)
-			ast.Expr(ast.LockExpr{
-				lock_exprs:  expr.lock_exprs
-				rlock_exprs: expr.rlock_exprs
-				stmts:       t.transform_stmts(expr.stmts)
-				pos:         expr.pos
+			// Lower to mutex lock/unlock calls wrapped in UnsafeExpr (compound expression)
+			mut stmts := t.expand_lock_expr(expr)
+			ast.Expr(ast.UnsafeExpr{
+				stmts: stmts
 			})
 		}
 		ast.FieldInit {
@@ -3981,7 +4082,15 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 			t.transform_string_inter_literal(expr)
 		}
 		ast.AsCastExpr {
-			// Transform the inner expression (important for smartcast to be applied)
+			// If the inner expression has an active smartcast to the same type,
+			// the 'as' cast is redundant - just return the smartcasted expression.
+			inner_expr := expr.expr
+			if inner_expr is ast.Ident {
+				if _ := t.find_smartcast_for_expr(inner_expr.name) {
+					return t.transform_expr(inner_expr)
+				}
+			}
+			// No smartcast - transform inner and keep AsCastExpr for codegen
 			ast.Expr(ast.AsCastExpr{
 				expr: t.transform_expr(expr.expr)
 				typ:  expr.typ

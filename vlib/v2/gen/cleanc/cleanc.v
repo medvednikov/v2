@@ -203,7 +203,8 @@ fn (mut g Gen) set_file_module(file ast.File) {
 			return
 		}
 	}
-	g.cur_module = ''
+	// Files without a module declaration are in the 'main' module
+	g.cur_module = 'main'
 }
 
 fn (mut g Gen) gen_file(file ast.File) {
@@ -829,10 +830,10 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			panic('bug in v2 compiler: OrExpr should have been expanded in v2.transformer')
 		}
 		ast.AsCastExpr {
-			g.sb.write_string('/* [TODO] AsCastExpr */ 0')
+			g.gen_as_cast_expr(node)
 		}
 		ast.StringInterLiteral {
-			g.sb.write_string('/* [TODO] StringInterLiteral */ (string){"", 0}')
+			g.gen_string_inter_literal(node)
 		}
 		ast.FnLiteral {
 			g.sb.write_string('/* [TODO] FnLiteral */ NULL')
@@ -860,7 +861,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] SelectExpr */ 0')
 		}
 		ast.LockExpr {
-			g.sb.write_string('/* [TODO] LockExpr */ 0')
+			panic('bug in v2 compiler: LockExpr should have been lowered in v2.transformer')
 		}
 		ast.Type {
 			g.sb.write_string('/* [TODO] Type */ 0')
@@ -1178,6 +1179,12 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 		}
 		ast.CastExpr {
 			return g.expr_type_to_c(node.typ)
+		}
+		ast.AsCastExpr {
+			return g.expr_type_to_c(node.typ)
+		}
+		ast.StringInterLiteral {
+			return 'string'
 		}
 		else {
 			return 'int'
@@ -1567,6 +1574,109 @@ fn (mut g Gen) gen_keyword_operator(node ast.KeywordOperator) {
 		else {
 			g.sb.write_string('/* KeywordOperator: ${node.op} */ 0')
 		}
+	}
+}
+
+fn (mut g Gen) gen_as_cast_expr(node ast.AsCastExpr) {
+	// a as Cat => (*((main__Cat*)a._data._Cat))
+	type_name := g.expr_type_to_c(node.typ)
+	// Short variant name for _data._ accessor (strip module prefix)
+	short_name := if type_name.contains('__') {
+		type_name.all_after_last('__')
+	} else {
+		type_name
+	}
+	g.sb.write_string('(*((${type_name}*)(')
+	g.gen_expr(node.expr)
+	g.sb.write_string(')._data._${short_name}))')
+}
+
+fn (mut g Gen) gen_string_inter_literal(node ast.StringInterLiteral) {
+	// Use sprintf approach with asprintf (allocates automatically)
+	// Wrapped in GCC compound expression ({ ... })
+	// Build format string, stripping V string delimiters from values
+	mut fmt_str := strings.new_builder(64)
+	for i, raw_val in node.values {
+		mut val := raw_val
+		// Strip V string delimiters: leading quote from first value, trailing from last
+		if i == 0 {
+			val = val.trim_left("'\"")
+		}
+		if i == node.values.len - 1 {
+			val = val.trim_right("'\"")
+		}
+		escaped := val.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t',
+			'\\t')
+		fmt_str.write_string(escaped)
+		if i < node.inters.len {
+			inter := node.inters[i]
+			fmt_str.write_string(g.get_sprintf_format(inter))
+		}
+	}
+	fmt := fmt_str.str()
+	g.sb.write_string('({ char* _sip; int _sil = asprintf(&_sip, "${fmt}"')
+	// Write arguments
+	for inter in node.inters {
+		g.sb.write_string(', ')
+		g.write_sprintf_arg(inter)
+	}
+	g.sb.write_string('); (string){_sip, _sil}; })')
+}
+
+fn (mut g Gen) write_sprintf_arg(inter ast.StringInter) {
+	expr_type := g.get_expr_type(inter.expr)
+	if expr_type == 'string' {
+		g.gen_expr(inter.expr)
+		g.sb.write_string('.str')
+	} else if expr_type == 'bool' {
+		g.sb.write_string('(')
+		g.gen_expr(inter.expr)
+		g.sb.write_string(' ? "true" : "false")')
+	} else {
+		g.gen_expr(inter.expr)
+	}
+}
+
+fn (mut g Gen) get_sprintf_format(inter ast.StringInter) string {
+	mut fmt := '%'
+	// Width
+	if inter.width > 0 {
+		fmt += '${inter.width}'
+	}
+	// Precision
+	if inter.precision > 0 {
+		fmt += '.${inter.precision}'
+	}
+	// Format specifier
+	if inter.format != .unformatted {
+		match inter.format {
+			.decimal { fmt += 'd' }
+			.float { fmt += 'f' }
+			.hex { fmt += 'x' }
+			.octal { fmt += 'o' }
+			.character { fmt += 'c' }
+			.exponent { fmt += 'e' }
+			.exponent_short { fmt += 'g' }
+			.binary { fmt += 'd' } // binary not supported in printf, fallback to decimal
+			.pointer_address { fmt += 'p' }
+			.string { fmt += 's' }
+			.unformatted { fmt += 'd' }
+		}
+		return fmt
+	}
+	// Infer from expression type
+	expr_type := g.get_expr_type(inter.expr)
+	match expr_type {
+		'string' { return '%s' }
+		'int', 'i8', 'i16', 'i32' { return '%d' }
+		'i64' { return '%lld' }
+		'u8', 'u16', 'u32' { return '%u' }
+		'u64' { return '%llu' }
+		'f32', 'f64', 'float_literal' { return '%f' }
+		'bool' { return '%s' }
+		'rune' { return '%c' }
+		'char' { return '%c' }
+		else { return '%d' }
 	}
 }
 
