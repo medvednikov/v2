@@ -479,11 +479,16 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 }
 
 // lookup_var_type looks up a variable's type from the current function scope
+// Only returns types for actual variables, not modules or other object types
 fn (mut g Gen) lookup_var_type(name string) ?string {
 	if g.cur_fn_scope == unsafe { nil } {
 		return none
 	}
 	if obj := g.cur_fn_scope.lookup_parent(name, 0) {
+		// Skip module objects - they're not variables
+		if obj is types.Module {
+			return none
+		}
 		return g.types_type_to_c(obj.typ())
 	}
 	return none
@@ -9849,22 +9854,7 @@ fn (mut g Gen) gen_decl_if_expr_branch(name string, if_expr ast.IfExpr) {
 // preregister_branch_vars pre-registers variable declarations from if-branch statements
 // so that type inference can work correctly for the final expression
 fn (mut g Gen) preregister_branch_vars(stmts []ast.Stmt) {
-	for stmt in stmts {
-		if stmt is ast.AssignStmt {
-			if stmt.op == .decl_assign {
-				for i, lhs in stmt.lhs {
-					mut var_name := ''
-					if lhs is ast.Ident {
-						var_name = lhs.name
-					} else if lhs is ast.ModifierExpr {
-						if lhs.expr is ast.Ident {
-							var_name = lhs.expr.name
-						}
-					}
-				}
-			}
-		}
-	}
+	// No longer needed - Environment tracks all variable types
 }
 
 fn (mut g Gen) write_indent() {
