@@ -29,6 +29,7 @@ mut:
 	tmp_counter                    int // Counter for unique temp variable names
 	fn_types                       map[string]string
 	fn_ret_counts                  map[string]int // Track number of return values for multi-return functions
+	fn_var_types                   map[string]string              // Track local variable types in current function (params + locals)
 	mut_params                     map[string]bool                // Track mut parameters (need dereference on assignment)
 	mut_receivers                  map[string]bool                // Track which methods have mutable receivers
 	ref_receivers                  map[string]bool                // Track which methods have reference receivers (&Type)
@@ -481,6 +482,11 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 // lookup_var_type looks up a variable's type from the current function scope
 // Only returns types for actual variables, not modules or other object types
 fn (mut g Gen) lookup_var_type(name string) ?string {
+	// Check per-function variable tracking first (params + locals we've generated)
+	if name in g.fn_var_types {
+		return g.fn_var_types[name]
+	}
+	// Fall back to Environment scope for transformer-created temp variables
 	if g.cur_fn_scope == unsafe { nil } {
 		return none
 	}
@@ -1947,6 +1953,10 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 				}
 				return variant_mangled
 			}
+		}
+		// Check per-function variable tracking first (params + locals we've generated)
+		if node.name in g.fn_var_types {
+			return g.fn_var_types[node.name]
 		}
 		// Check Environment scope for variables registered by transformer and checker
 		if g.cur_fn_scope != unsafe { nil } {
@@ -4520,6 +4530,7 @@ fn (mut g Gen) gen_fn_head(node ast.FnDecl) {
 fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 	g.mut_params = map[string]bool{}
 	g.defer_stmts.clear()
+	g.fn_var_types = map[string]string{} // Reset per-function variable tracking
 
 	// Set current function scope for looking up transformer-created temp variables
 	fn_name := g.get_fn_name(node)
@@ -4637,17 +4648,25 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		return
 	}
 
-	// Track mut params for proper handling (types come from Environment)
+	// Track receiver type and mut status
 	if node.is_method && node.receiver.name != '' {
+		receiver_type := g.expr_type_to_c(node.receiver.typ)
 		if node.receiver.is_mut {
+			g.fn_var_types[node.receiver.name] = receiver_type + '*'
 			g.mut_params[node.receiver.name] = true
+		} else {
+			g.fn_var_types[node.receiver.name] = receiver_type
 		}
 	}
 
-	// Track mut params
+	// Track parameter types and mut status
 	for param in node.typ.params {
+		param_type := g.expr_type_to_c(param.typ)
 		if param.is_mut {
+			g.fn_var_types[param.name] = param_type + '*'
 			g.mut_params[param.name] = true
+		} else {
+			g.fn_var_types[param.name] = param_type
 		}
 	}
 
@@ -4723,6 +4742,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					}
 					typ := g.get_expr_type(rhs_i)
 					c_typ := g.type_for_c_decl(typ)
+					g.fn_var_types[name] = c_typ // Track variable type
 					g.write_indent()
 					g.sb.write_string('${c_typ} ${name} = ')
 					g.gen_expr(rhs_i)
@@ -4777,6 +4797,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					if rhs.lhs is ast.Ident {
 						if rhs.lhs.name == 'error' || rhs.lhs.name == 'error_with_code' {
 							// error() creates an IError value
+							g.fn_var_types[name] = 'IError' // Track variable type
 							g.write_indent()
 							g.sb.write_string('IError ${name} = ')
 							g.gen_expr(rhs)
@@ -4790,6 +4811,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 				if rhs is ast.ArrayInitExpr {
 					if arr_info := g.get_fixed_array_info_from_init(rhs) {
 						// Generate C array declaration: int name[6] = {0}
+						g.fn_var_types[name] = arr_info.elem_type // Track variable type
 						g.sb.write_string('${arr_info.elem_type} ${name}[${arr_info.size}] = ')
 						g.gen_expr(rhs)
 						g.sb.writeln(';')
@@ -4797,6 +4819,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					}
 				}
 				c_typ := g.type_for_c_decl(typ)
+				g.fn_var_types[name] = c_typ // Track variable type
 				g.sb.write_string('${c_typ} ${name} = ')
 				g.gen_expr(rhs)
 				g.sb.writeln(';')
@@ -5975,6 +5998,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.write_indent()
 				g.sb.write_string('{ ')
 				// Get the interface value
+				g.fn_var_types['__type_id'] = 'int' // Track temp variable type
 				g.sb.write_string('int __type_id = (')
 				g.gen_expr(node.expr)
 				g.sb.writeln(')._type_id;')
@@ -6048,6 +6072,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				// Sum type matching - generate if-else chain checking _tag
 				g.write_indent()
 				g.sb.write_string('{ ')
+				g.fn_var_types['__match_val'] = match_type // Track temp variable type
 				g.sb.write_string('${match_type} __match_val = ')
 				g.gen_expr(node.expr)
 				g.sb.writeln(';')
@@ -6155,6 +6180,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.write_indent()
 				g.sb.write_string('{ ')
 				c_match_type := g.type_for_c_decl(match_type)
+				g.fn_var_types['__match_val'] = c_match_type // Track temp variable type
 				g.sb.write_string('${c_match_type} __match_val = ')
 				g.gen_expr(node.expr)
 				g.sb.writeln(';')
@@ -9683,6 +9709,7 @@ fn (mut g Gen) gen_decl_if_expr(name string, if_expr ast.IfExpr) {
 	// Infer type and declare variable
 	typ := g.infer_type(if_expr)
 	c_typ := g.type_for_c_decl(typ)
+	g.fn_var_types[name] = c_typ // Track variable type
 	g.sb.writeln('${c_typ} ${name};')
 
 	// Generate if-statement with assignment in each branch
@@ -9933,6 +9960,7 @@ fn (mut g Gen) gen_assign_match_expr(lhs ast.Expr, match_expr ast.MatchExpr, op 
 	if is_decl && var_name != '' {
 		typ := g.infer_type(match_expr)
 		c_typ := g.type_for_c_decl(typ)
+		g.fn_var_types[var_name] = c_typ // Track variable type
 		g.write_indent()
 		g.sb.writeln('${c_typ} ${var_name};')
 	}
@@ -9945,6 +9973,7 @@ fn (mut g Gen) gen_assign_match_expr(lhs ast.Expr, match_expr ast.MatchExpr, op 
 		g.sb.write_string('{ ')
 		match_type := g.infer_type(match_expr.expr)
 		c_match_type := g.type_for_c_decl(match_type)
+		g.fn_var_types['__match_val'] = c_match_type // Track temp variable type
 		g.sb.write_string('${c_match_type} __match_val = ')
 		g.gen_expr(match_expr.expr)
 		g.sb.writeln(';')
@@ -10302,6 +10331,7 @@ fn (mut g Gen) gen_for_in_range(node ast.ForStmt, for_in ast.ForInStmt) {
 	range_expr := for_in.expr as ast.RangeExpr
 
 	// Generate: for (int i = start; i < end; i++) { ... }
+	g.fn_var_types[var_name] = 'int' // Track loop variable type
 	g.write_indent()
 	g.sb.write_string('for (int ${var_name} = ')
 	g.gen_expr(range_expr.start)
@@ -10375,6 +10405,7 @@ fn (mut g Gen) gen_for_in_array(node ast.ForStmt, for_in ast.ForInStmt) {
 	// Use a hidden index if no key specified
 	idx_var := if key_name != '' { key_name } else { '_idx_${value_name}' }
 
+	g.fn_var_types[idx_var] = 'int' // Track index variable type
 	g.write_indent()
 	g.sb.write_string('for (int ${idx_var} = 0; ${idx_var} < ')
 	g.gen_expr(for_in.expr)
@@ -10382,6 +10413,7 @@ fn (mut g Gen) gen_for_in_array(node ast.ForStmt, for_in ast.ForInStmt) {
 	g.indent++
 
 	// Declare and assign value variable
+	g.fn_var_types[value_name] = elem_type // Track value variable type
 	g.write_indent()
 	g.sb.write_string('${elem_type} ${value_name} = ((${elem_type}*)')
 	g.gen_expr(for_in.expr)
@@ -10420,16 +10452,19 @@ fn (mut g Gen) gen_for_in_iterator(node ast.ForStmt, for_in ast.ForInStmt, iter_
 	g.indent++
 
 	// Declare iterator variable
+	g.fn_var_types['_iter_${value_name}'] = iter_type // Track iterator variable type
 	g.write_indent()
 	g.sb.write_string('${iter_type} _iter_${value_name} = ')
 	g.gen_expr(for_in.expr)
 	g.sb.writeln(';')
 
 	// Declare value variable
+	g.fn_var_types[value_name] = elem_type // Track value variable type
 	g.write_indent()
 	g.sb.writeln('${elem_type} ${value_name};')
 
 	// Declare option temporary variable
+	g.fn_var_types['_opt_${value_name}'] = option_type // Track option temp variable type
 	g.write_indent()
 	g.sb.writeln('${option_type} _opt_${value_name};')
 
@@ -10921,6 +10956,7 @@ fn (mut g Gen) gen_multi_return_assign(node ast.AssignStmt) {
 	g.tmp_counter++
 
 	// Generate: TupleN_type __tmp = func();
+	g.fn_var_types[tmp_name] = tuple_type // Track temp variable type
 	g.write_indent()
 	g.sb.write_string('${tuple_type} ${tmp_name} = ')
 	g.gen_expr(rhs)
@@ -10955,6 +10991,7 @@ fn (mut g Gen) gen_multi_return_assign(node ast.AssignStmt) {
 		g.write_indent()
 		if is_decl {
 			// Declaration: Type a = __tmp.f0; (or unwrapped for Result/Option)
+			g.fn_var_types[name] = elem_type // Track variable type
 			g.sb.writeln('${elem_type} ${name} = ${accessor}.f${i};')
 		} else {
 			// Assignment: a = __tmp.f0;
