@@ -14,11 +14,21 @@ pub struct Gen {
 	env   &types.Environment = unsafe { nil }
 	pref  &pref.Preferences  = unsafe { nil }
 mut:
-	sb           strings.Builder
-	indent       int
-	cur_fn_scope &types.Scope = unsafe { nil }
-	cur_module   string
+	sb             strings.Builder
+	indent         int
+	cur_fn_scope   &types.Scope = unsafe { nil }
+	cur_module     string
+	emitted_types  map[string]bool
 }
+
+struct StructDeclInfo {
+	decl   ast.StructDecl
+	module string
+}
+
+const primitive_types = ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32',
+	'f64', 'bool', 'rune', 'byte', 'voidptr', 'charptr', 'usize', 'isize', 'void', 'char',
+	'byteptr', 'float_literal', 'int_literal']
 
 fn is_empty_stmt(s ast.Stmt) bool {
 	return s is ast.EmptyStmt
@@ -48,7 +58,101 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 pub fn (mut g Gen) gen() string {
 	g.write_preamble()
 
-	// Generate code for all files
+	// Pass 1: Forward declarations for all structs/unions (needed for mutual references)
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			if stmt is ast.StructDecl {
+				if stmt.language == .c {
+					continue
+				}
+				name := g.get_struct_name(stmt)
+				if name in g.emitted_types {
+					continue
+				}
+				g.emitted_types[name] = true
+				keyword := if stmt.is_union { 'union' } else { 'struct' }
+				g.sb.writeln('typedef ${keyword} ${name} ${name};')
+			}
+		}
+	}
+	g.sb.writeln('')
+
+	// Pass 2: Enum declarations (before struct definitions that may reference them)
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			if stmt is ast.EnumDecl {
+				g.gen_enum_decl(stmt)
+			}
+		}
+	}
+
+	// Pass 3: Full struct definitions (use named struct/union to match forward decls)
+	// Collect all struct decls, then emit in dependency order
+	mut all_structs := []StructDeclInfo{}
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			if stmt is ast.StructDecl {
+				if stmt.language == .c {
+					continue
+				}
+				all_structs << StructDeclInfo{
+					decl:   stmt
+					module: g.cur_module
+				}
+			}
+		}
+	}
+	// Emit structs with only primitive fields first, then the rest
+	// Repeat until all are emitted (simple topo sort)
+	for _ in 0 .. all_structs.len {
+		mut emitted_any := false
+		for info in all_structs {
+			g.cur_module = info.module
+			name := g.get_struct_name(info.decl)
+			if 'body_${name}' in g.emitted_types {
+				continue
+			}
+			// Check if all field types are already defined
+			if g.struct_fields_resolved(info.decl) {
+				g.gen_struct_decl(info.decl)
+				emitted_any = true
+			}
+		}
+		if !emitted_any {
+			break
+		}
+	}
+	// Emit any remaining structs (circular deps - just emit them)
+	for info in all_structs {
+		g.cur_module = info.module
+		g.gen_struct_decl(info.decl)
+	}
+
+	// Pass 4: Function forward declarations
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			if stmt is ast.FnDecl {
+				if stmt.language == .c {
+					continue
+				}
+				if g.env != unsafe { nil } {
+					fn_name := g.get_fn_name(stmt)
+					if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
+						g.cur_fn_scope = fn_scope
+					}
+				}
+				g.gen_fn_head(stmt)
+				g.sb.writeln(';')
+			}
+		}
+	}
+	g.sb.writeln('')
+
+	// Pass 5: Everything else (function bodies, consts, globals, etc.)
 	for file in g.files {
 		g.gen_file(file)
 	}
@@ -88,35 +192,26 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('typedef double float_literal;')
 	g.sb.writeln('typedef int64_t int_literal;')
 	g.sb.writeln('')
-
-	// V string type
-	g.sb.writeln('typedef struct { char* str; int len; } string;')
-	g.sb.writeln('')
-
-	// Builtin print functions
-	g.sb.writeln('static void builtin__println(string s) { printf("%.*s\\n", s.len, s.str); }')
-	g.sb.writeln('static string builtin__int_str(int n) { static char buf[32]; int len = snprintf(buf, sizeof(buf), "%d", n); return (string){buf, len}; }')
-	g.sb.writeln('static string builtin__i64_str(i64 n) { static char buf[32]; int len = snprintf(buf, sizeof(buf), "%lld", (long long)n); return (string){buf, len}; }')
-	g.sb.writeln('static string builtin__u8_str(u8 n) { static char buf[32]; int len = snprintf(buf, sizeof(buf), "%u", (unsigned)n); return (string){buf, len}; }')
-	g.sb.writeln('static string builtin__bool_str(bool b) { return b ? (string){"true", 4} : (string){"false", 5}; }')
 	g.sb.writeln('')
 }
 
-fn (mut g Gen) gen_file(file ast.File) {
-	// Determine module name from ModuleStmt
-	mut file_module := ''
+fn (mut g Gen) set_file_module(file ast.File) {
 	for stmt in file.stmts {
 		if stmt is ast.ModuleStmt {
-			file_module = stmt.name.replace('.', '_')
-			break
+			g.cur_module = stmt.name.replace('.', '_')
+			return
 		}
 	}
-	// Skip non-main modules for now (runtime is in preamble)
-	if file_module != '' && file_module != 'main' {
-		return
-	}
-	g.cur_module = file_module
+	g.cur_module = ''
+}
+
+fn (mut g Gen) gen_file(file ast.File) {
+	g.set_file_module(file)
 	for stmt in file.stmts {
+		// Skip struct/enum decls - already emitted in earlier passes
+		if stmt is ast.StructDecl || stmt is ast.EnumDecl {
+			continue
+		}
 		g.gen_stmt(stmt)
 	}
 }
@@ -161,23 +256,76 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			}
 		}
 		ast.ModuleStmt {
-			// Track current module
 			g.cur_module = node.name.replace('.', '_')
 		}
 		ast.ImportStmt {}
-		ast.ConstDecl {}
-		ast.StructDecl {}
-		ast.EnumDecl {}
-		ast.TypeDecl {}
-		ast.InterfaceDecl {}
-		ast.GlobalDecl {}
-		ast.Directive {}
+		ast.ConstDecl {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] ConstDecl (${node.fields.len} fields) */')
+		}
+		ast.StructDecl {
+			g.gen_struct_decl(node)
+		}
+		ast.EnumDecl {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] EnumDecl: ${node.name} */')
+		}
+		ast.TypeDecl {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] TypeDecl */')
+		}
+		ast.InterfaceDecl {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] InterfaceDecl: ${node.name} */')
+		}
+		ast.GlobalDecl {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] GlobalDecl (${node.fields.len} fields) */')
+		}
+		ast.Directive {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] Directive: #${node.name} ${node.value} */')
+		}
+		ast.ForInStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] ForInStmt */')
+		}
+		ast.DeferStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] DeferStmt */')
+		}
+		ast.AssertStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] AssertStmt */')
+		}
+		ast.ComptimeStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] ComptimeStmt */')
+		}
+		ast.BlockStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] BlockStmt */')
+		}
+		ast.LabelStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] LabelStmt: ${node.name} */')
+		}
+		ast.AsmStmt {
+			g.write_indent()
+			g.sb.writeln('/* [TODO] AsmStmt */')
+		}
 		[]ast.Attribute {}
-		else {}
+		ast.EmptyStmt {}
+		// else {}
 	}
 }
 
 fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
+	// Skip C extern function declarations (e.g., fn C.puts(...))
+	if node.language == .c {
+		return
+	}
+
 	// Set function scope for type lookups
 	if g.env != unsafe { nil } {
 		fn_name := g.get_fn_name(node)
@@ -262,6 +410,17 @@ fn (mut g Gen) get_fn_name(node ast.FnDecl) string {
 	if node.name == 'main' {
 		return 'main'
 	}
+	// Methods: ReceiverType__method_name
+	if node.is_method && node.receiver.name != '' {
+		receiver_type := g.expr_type_to_c(node.receiver.typ)
+		// Strip pointer suffix for method naming
+		base_type := if receiver_type.ends_with('*') {
+			receiver_type[..receiver_type.len - 1]
+		} else {
+			receiver_type
+		}
+		return '${base_type}__${node.name}'
+	}
 	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
 		return '${g.cur_module}__${node.name}'
 	}
@@ -306,6 +465,11 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			.mul_assign { '*=' }
 			.div_assign { '/=' }
 			.mod_assign { '%=' }
+			.and_assign { '&=' }
+			.or_assign { '|=' }
+			.xor_assign { '^=' }
+			.left_shift_assign { '<<=' }
+			.right_shift_assign { '>>=' }
 			else { '=' }
 		}
 		g.sb.write_string(' ${op_str} ')
@@ -382,6 +546,144 @@ fn (mut g Gen) gen_stmt_inline(node ast.Stmt) {
 		}
 		else {}
 	}
+}
+
+const c_keywords = ['auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do', 'double',
+	'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long', 'register',
+	'restrict', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef',
+	'union', 'unsigned', 'void', 'volatile', 'while', '_Bool', '_Complex', '_Imaginary']
+
+fn escape_c_keyword(name string) string {
+	if name in c_keywords {
+		return '_${name}'
+	}
+	return name
+}
+
+// Check if all non-pointer field types of a struct are already defined
+fn (g &Gen) struct_fields_resolved(node ast.StructDecl) bool {
+	for field in node.fields {
+		typ_name := g.field_type_name(field.typ)
+		if typ_name == '' {
+			continue
+		}
+		// Pointer types are fine with forward declarations
+		if g.is_pointer_type(field.typ) {
+			continue
+		}
+		// Primitive types are always resolved
+		if typ_name in primitive_types {
+			continue
+		}
+		// Check if this type's body has been emitted
+		if 'body_${typ_name}' !in g.emitted_types && 'enum_${typ_name}' !in g.emitted_types {
+			return false
+		}
+	}
+	return true
+}
+
+fn (g &Gen) field_type_name(e ast.Expr) string {
+	match e {
+		ast.Ident {
+			return e.name
+		}
+		ast.SelectorExpr {
+			if e.lhs is ast.Ident {
+				return '${e.lhs.name}__${e.rhs.name}'
+			}
+			return ''
+		}
+		ast.PrefixExpr {
+			return g.field_type_name(e.expr)
+		}
+		else {
+			return ''
+		}
+	}
+}
+
+fn (g &Gen) is_pointer_type(e ast.Expr) bool {
+	if e is ast.PrefixExpr {
+		return e.op == .amp
+	}
+	if e is ast.Ident {
+		return e.name in ['voidptr', 'charptr', 'byteptr']
+	}
+	return false
+}
+
+fn (mut g Gen) get_struct_name(node ast.StructDecl) string {
+	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+		return '${g.cur_module}__${node.name}'
+	}
+	return node.name
+}
+
+fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
+	// Skip C extern struct declarations
+	if node.language == .c {
+		return
+	}
+
+	name := g.get_struct_name(node)
+	body_key := 'body_${name}'
+	if body_key in g.emitted_types {
+		return
+	}
+	g.emitted_types[body_key] = true
+	keyword := if node.is_union { 'union' } else { 'struct' }
+
+	// Use named struct to match the forward declaration: typedef struct name name;
+	g.sb.writeln('${keyword} ${name} {')
+	// Embedded structs as fields
+	for emb in node.embedded {
+		emb_type := g.expr_type_to_c(emb)
+		g.sb.writeln('\t${emb_type} ${emb_type};')
+	}
+	// Regular fields
+	for field in node.fields {
+		field_name := escape_c_keyword(field.name)
+		field_type := g.expr_type_to_c(field.typ)
+		g.sb.writeln('\t${field_type} ${field_name};')
+	}
+	g.sb.writeln('};')
+	g.sb.writeln('')
+}
+
+fn (mut g Gen) get_enum_name(node ast.EnumDecl) string {
+	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+		return '${g.cur_module}__${node.name}'
+	}
+	return node.name
+}
+
+fn (mut g Gen) gen_enum_decl(node ast.EnumDecl) {
+	name := g.get_enum_name(node)
+	enum_key := 'enum_${name}'
+	if enum_key in g.emitted_types {
+		return
+	}
+	g.emitted_types[enum_key] = true
+	is_flag := node.attributes.has('flag')
+
+	g.sb.writeln('typedef enum {')
+	for i, field in node.fields {
+		g.sb.write_string('\t${name}__${field.name}')
+		if field.value !is ast.EmptyExpr {
+			g.sb.write_string(' = ')
+			g.gen_expr(field.value)
+		} else if is_flag {
+			g.sb.write_string(' = ${u64(1) << i}U')
+		}
+		if i < node.fields.len - 1 {
+			g.sb.writeln(',')
+		} else {
+			g.sb.writeln('')
+		}
+	}
+	g.sb.writeln('} ${name};')
+	g.sb.writeln('')
 }
 
 fn (mut g Gen) gen_expr(node ast.Expr) {
@@ -484,7 +786,6 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				} else {
 					g.sb.writeln(' else {')
 					g.indent++
-					// else_expr might be another IfExpr wrapping stmts
 					g.gen_stmts_from_expr(node.else_expr)
 					g.indent--
 					g.write_indent()
@@ -503,16 +804,91 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string(op)
 		}
 		ast.ModifierExpr {
-			// Handle mut, shared, etc. - just pass through to inner expr
 			g.gen_expr(node.expr)
 		}
+		ast.CastExpr {
+			g.sb.write_string('/* [TODO] CastExpr */ 0')
+		}
+		ast.IndexExpr {
+			g.sb.write_string('/* [TODO] IndexExpr */ 0')
+		}
+		ast.ArrayInitExpr {
+			g.sb.write_string('/* [TODO] ArrayInitExpr */ {0}')
+		}
+		ast.InitExpr {
+			g.sb.write_string('/* [TODO] InitExpr */ {0}')
+		}
+		ast.MapInitExpr {
+			g.sb.write_string('/* [TODO] MapInitExpr */ {0}')
+		}
+		ast.MatchExpr {
+			g.sb.write_string('/* [TODO] MatchExpr */ 0')
+		}
+		ast.UnsafeExpr {
+			g.sb.write_string('/* [TODO] UnsafeExpr */ 0')
+		}
+		ast.OrExpr {
+			g.sb.write_string('/* [TODO] OrExpr */ 0')
+		}
+		ast.AsCastExpr {
+			g.sb.write_string('/* [TODO] AsCastExpr */ 0')
+		}
+		ast.StringInterLiteral {
+			g.sb.write_string('/* [TODO] StringInterLiteral */ (string){"", 0}')
+		}
+		ast.FnLiteral {
+			g.sb.write_string('/* [TODO] FnLiteral */ NULL')
+		}
+		ast.LambdaExpr {
+			g.sb.write_string('/* [TODO] LambdaExpr */ NULL')
+		}
+		ast.ComptimeExpr {
+			g.sb.write_string('/* [TODO] ComptimeExpr */ 0')
+		}
+		ast.Keyword {
+			g.sb.write_string('/* [TODO] Keyword: ${node.tok} */ 0')
+		}
+		ast.KeywordOperator {
+			g.sb.write_string('/* [TODO] KeywordOperator */ 0')
+		}
+		ast.RangeExpr {
+			g.sb.write_string('/* [TODO] RangeExpr */ 0')
+		}
+		ast.SelectExpr {
+			g.sb.write_string('/* [TODO] SelectExpr */ 0')
+		}
+		ast.LockExpr {
+			g.sb.write_string('/* [TODO] LockExpr */ 0')
+		}
+		ast.Type {
+			g.sb.write_string('/* [TODO] Type */ 0')
+		}
+		ast.AssocExpr {
+			g.sb.write_string('/* [TODO] AssocExpr */ {0}')
+		}
+		ast.Tuple {
+			g.sb.write_string('/* [TODO] Tuple */ {0}')
+		}
+		ast.FieldInit {
+			g.sb.write_string('/* [TODO] FieldInit */ 0')
+		}
+		ast.IfGuardExpr {
+			g.sb.write_string('/* [TODO] IfGuardExpr */ 0')
+		}
+		ast.GenericArgs {
+			g.sb.write_string('/* [TODO] GenericArgs */ 0')
+		}
+		ast.GenericArgOrIndexExpr {
+			g.sb.write_string('/* [TODO] GenericArgOrIndexExpr */ 0')
+		}
+		ast.SqlExpr {
+			g.sb.write_string('/* [TODO] SqlExpr */ 0')
+		}
 		ast.EmptyExpr {}
-		else {}
 	}
 }
 
 fn (mut g Gen) gen_stmts_from_expr(e ast.Expr) {
-	// IfExpr's else branch stores stmts in an IfExpr with empty cond
 	if e is ast.IfExpr {
 		g.gen_stmts(e.stmts)
 	}
@@ -522,51 +898,65 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	mut name := ''
 	if lhs is ast.Ident {
 		name = lhs.name
+	} else if lhs is ast.SelectorExpr {
+		// Handle C.puts, C.putchar etc.
+		if lhs.lhs is ast.Ident && lhs.lhs.name == 'C' {
+			name = lhs.rhs.name
+			g.sb.write_string('${name}(')
+			for i, arg in args {
+				if i > 0 {
+					g.sb.write_string(', ')
+				}
+				g.gen_expr(arg)
+			}
+			g.sb.write_string(')')
+			return
+		}
 	}
 
 	// Handle builtin print functions with type-aware argument conversion
 	if name in ['println', 'eprintln', 'print', 'eprint'] {
-		stream := if name in ['eprintln', 'eprint'] { 'stderr' } else { 'stdout' }
-		newline := if name in ['println', 'eprintln'] { true } else { false }
-
 		if args.len == 1 {
 			arg := args[0]
 			arg_type := g.get_expr_type(arg)
 
+			c_name := if g.cur_module == 'builtin' {
+				name
+			} else {
+				'builtin__${name}'
+			}
+
 			if arg_type == 'string' {
-				// Direct string: use builtin__println
-				c_name := 'builtin__${name}'
 				g.sb.write_string('${c_name}(')
 				g.gen_expr(arg)
 				g.sb.write_string(')')
 			} else if arg_type in ['int', 'i8', 'i16', 'i32'] {
-				// Integer types: convert to string via int_str
-				g.sb.write_string('builtin__println(builtin__int_str(')
+				g.sb.write_string('${c_name}(int_str(')
 				g.gen_expr(arg)
 				g.sb.write_string('))')
-			} else if arg_type in ['i64'] {
-				g.sb.write_string('builtin__println(builtin__i64_str(')
+			} else if arg_type == 'i64' {
+				g.sb.write_string('${c_name}(i64_str(')
+				g.gen_expr(arg)
+				g.sb.write_string('))')
+			} else if arg_type == 'u64' {
+				g.sb.write_string('${c_name}(u64_str(')
 				g.gen_expr(arg)
 				g.sb.write_string('))')
 			} else if arg_type == 'bool' {
-				g.sb.write_string('builtin__println(builtin__bool_str(')
+				g.sb.write_string('${c_name}(bool_str(')
 				g.gen_expr(arg)
 				g.sb.write_string('))')
 			} else {
-				// Fallback: try printf with %d for now
-				if newline {
-					g.sb.write_string('printf("%d\\n", ')
-				} else {
-					g.sb.write_string('fprintf(${stream}, "%d", ')
-				}
+				// Fallback
+				g.sb.write_string('${c_name}(/* ${arg_type} */ int_str(')
 				g.gen_expr(arg)
-				g.sb.write_string(')')
+				g.sb.write_string('))')
 			}
 			return
 		}
 	}
 
-	// Regular function call
+	// Regular function call - mangle name based on module
 	c_name := if name != '' && g.cur_module != '' && g.cur_module != 'main'
 		&& g.cur_module != 'builtin' {
 		'${g.cur_module}__${name}'
@@ -778,6 +1168,12 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			}
 			return 'void*'
 		}
+		ast.SelectorExpr {
+			if e.lhs is ast.Ident {
+				return '${e.lhs.name}__${e.rhs.name}'
+			}
+			return g.expr_type_to_c(e.lhs) + '__${e.rhs.name}'
+		}
 		ast.EmptyExpr {
 			return 'void'
 		}
@@ -798,6 +1194,9 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			if e is ast.ResultType {
 				base_type := g.expr_type_to_c(e.base_type)
 				return '_result_${base_type}'
+			}
+			if e is ast.FnType {
+				return 'void*'
 			}
 			return 'int'
 		}

@@ -176,10 +176,8 @@ fn (mut b Builder) gen_cleanc() {
 
 		println('[*] Compiled ${output_name}')
 
-		// Clean up C file unless -keepc is specified
-		if !b.pref.keep_c {
-			os.rm(c_file) or {}
-		}
+		// Keep C file (always preserve for debugging)
+		// To explicitly remove, use os.rm manually
 	}
 }
 
