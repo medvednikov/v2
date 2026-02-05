@@ -1,3 +1,32 @@
+enum Color {
+	red
+	green
+	blue
+}
+
+@[flag]
+enum Permissions {
+	read
+	write
+	execute
+}
+
+type MyInt = int
+
+type Number = int | string
+
+interface Drawable {
+	draw() int
+}
+
+struct Circle {
+	radius int
+}
+
+fn (c Circle) draw() int {
+	return c.radius
+}
+
 fn add(a int, b int) int {
 	return a + b
 }
@@ -44,4 +73,19 @@ fn main() {
 
 	// 7. String literal
 	println('hello')
+
+	// 8. Enum usage
+	color := Color.red
+	println(int(color)) // 0
+
+	color2 := Color.blue
+	println(int(color2)) // 2
+
+	// 9. Flag enum
+	perm := Permissions.read
+	println(int(perm)) // 1
+
+	// 10. Type alias
+	my_val := MyInt(42)
+	println(int(my_val)) // 42
 }

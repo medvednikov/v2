@@ -59,7 +59,7 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 pub fn (mut g Gen) gen() string {
 	g.write_preamble()
 
-	// Pass 1: Forward declarations for all structs/unions (needed for mutual references)
+	// Pass 1: Forward declarations for all structs/unions/sumtypes/interfaces (needed for mutual references)
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
@@ -74,17 +74,41 @@ pub fn (mut g Gen) gen() string {
 				g.emitted_types[name] = true
 				keyword := if stmt.is_union { 'union' } else { 'struct' }
 				g.sb.writeln('typedef ${keyword} ${name} ${name};')
+			} else if stmt is ast.TypeDecl {
+				if stmt.variants.len > 0 {
+					// Sum type needs forward struct declaration
+					name := g.get_type_decl_name(stmt)
+					if name !in g.emitted_types {
+						g.emitted_types[name] = true
+						g.sb.writeln('typedef struct ${name} ${name};')
+					}
+				}
+			} else if stmt is ast.InterfaceDecl {
+				name := g.get_interface_name(stmt)
+				if name !in g.emitted_types {
+					g.emitted_types[name] = true
+					g.sb.writeln('typedef struct ${name} ${name};')
+				}
 			}
 		}
 	}
 	g.sb.writeln('')
 
-	// Pass 2: Enum declarations (before struct definitions that may reference them)
+	// Pass 2: Enum declarations, type aliases, interface structs, and sum type structs
+	// (before struct definitions that may reference them)
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
 			if stmt is ast.EnumDecl {
 				g.gen_enum_decl(stmt)
+			} else if stmt is ast.TypeDecl {
+				if stmt.variants.len == 0 && stmt.base_type !is ast.EmptyExpr {
+					g.gen_type_alias(stmt)
+				} else if stmt.variants.len > 0 {
+					g.gen_sum_type_decl(stmt)
+				}
+			} else if stmt is ast.InterfaceDecl {
+				g.gen_interface_decl(stmt)
 			}
 		}
 	}
@@ -210,8 +234,9 @@ fn (mut g Gen) set_file_module(file ast.File) {
 fn (mut g Gen) gen_file(file ast.File) {
 	g.set_file_module(file)
 	for stmt in file.stmts {
-		// Skip struct/enum decls - already emitted in earlier passes
-		if stmt is ast.StructDecl || stmt is ast.EnumDecl {
+		// Skip struct/enum/type/interface decls - already emitted in earlier passes
+		if stmt is ast.StructDecl || stmt is ast.EnumDecl || stmt is ast.TypeDecl
+			|| stmt is ast.InterfaceDecl {
 			continue
 		}
 		g.gen_stmt(stmt)
@@ -268,16 +293,17 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			g.gen_struct_decl(node)
 		}
 		ast.EnumDecl {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] EnumDecl: ${node.name} */')
+			g.gen_enum_decl(node)
 		}
 		ast.TypeDecl {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] TypeDecl */')
+			if node.variants.len > 0 {
+				g.gen_sum_type_decl(node)
+			} else if node.base_type !is ast.EmptyExpr {
+				g.gen_type_alias(node)
+			}
 		}
 		ast.InterfaceDecl {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] InterfaceDecl: ${node.name} */')
+			g.gen_interface_decl(node)
 		}
 		ast.GlobalDecl {
 			g.write_indent()
@@ -575,7 +601,8 @@ fn (g &Gen) struct_fields_resolved(node ast.StructDecl) bool {
 			continue
 		}
 		// Check if this type's body has been emitted
-		if 'body_${typ_name}' !in g.emitted_types && 'enum_${typ_name}' !in g.emitted_types {
+		if 'body_${typ_name}' !in g.emitted_types && 'enum_${typ_name}' !in g.emitted_types
+			&& 'alias_${typ_name}' !in g.emitted_types {
 			return false
 		}
 	}
@@ -683,6 +710,143 @@ fn (mut g Gen) gen_enum_decl(node ast.EnumDecl) {
 	}
 	g.sb.writeln('} ${name};')
 	g.sb.writeln('')
+}
+
+fn (mut g Gen) get_type_decl_name(node ast.TypeDecl) string {
+	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+		return '${g.cur_module}__${node.name}'
+	}
+	return node.name
+}
+
+fn (mut g Gen) gen_type_alias(node ast.TypeDecl) {
+	name := g.get_type_decl_name(node)
+	alias_key := 'alias_${name}'
+	if alias_key in g.emitted_types {
+		return
+	}
+	g.emitted_types[alias_key] = true
+
+	// Check if base type is a function type - needs special syntax
+	if node.base_type is ast.Type {
+		if node.base_type is ast.FnType {
+			fn_type := node.base_type as ast.FnType
+			mut ret_type := 'void'
+			if fn_type.return_type !is ast.EmptyExpr {
+				ret_type = g.expr_type_to_c(fn_type.return_type)
+			}
+			g.sb.write_string('typedef ${ret_type} (*${name})(')
+			for i, param in fn_type.params {
+				if i > 0 {
+					g.sb.write_string(', ')
+				}
+				param_type := g.expr_type_to_c(param.typ)
+				if param.is_mut {
+					g.sb.write_string('${param_type}*')
+				} else {
+					g.sb.write_string(param_type)
+				}
+			}
+			g.sb.writeln(');')
+			return
+		}
+	}
+	base_type := g.expr_type_to_c(node.base_type)
+	g.sb.writeln('typedef ${base_type} ${name};')
+}
+
+fn (mut g Gen) gen_sum_type_decl(node ast.TypeDecl) {
+	name := g.get_type_decl_name(node)
+	body_key := 'body_${name}'
+	if body_key in g.emitted_types {
+		return
+	}
+	g.emitted_types[body_key] = true
+
+	g.sb.writeln('struct ${name} {')
+	g.sb.writeln('\tint _tag;')
+	g.sb.writeln('\tunion {')
+	for i, variant in node.variants {
+		variant_name := g.get_variant_field_name(variant, i)
+		g.sb.writeln('\t\tvoid* ${variant_name};')
+	}
+	g.sb.writeln('\t} _data;')
+	g.sb.writeln('};')
+	g.sb.writeln('')
+}
+
+fn (g &Gen) get_variant_field_name(variant ast.Expr, idx int) string {
+	if variant is ast.Ident {
+		return '_${variant.name}'
+	} else if variant is ast.SelectorExpr {
+		if variant.lhs is ast.Ident {
+			return '_${variant.lhs.name}__${variant.rhs.name}'
+		}
+		return '_${variant.rhs.name}'
+	} else if variant is ast.Type {
+		if variant is ast.ArrayType {
+			elem := g.field_type_name(variant.elem_type)
+			return '_Array_${elem}'
+		}
+		if variant is ast.MapType {
+			key := g.field_type_name(variant.key_type)
+			val := g.field_type_name(variant.value_type)
+			return '_Map_${key}_${val}'
+		}
+	}
+	return '_v${idx}'
+}
+
+fn (mut g Gen) get_interface_name(node ast.InterfaceDecl) string {
+	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+		return '${g.cur_module}__${node.name}'
+	}
+	return node.name
+}
+
+fn (mut g Gen) gen_interface_decl(node ast.InterfaceDecl) {
+	name := g.get_interface_name(node)
+	body_key := 'body_${name}'
+	if body_key in g.emitted_types {
+		return
+	}
+	g.emitted_types[body_key] = true
+
+	g.sb.writeln('struct ${name} {')
+	g.sb.writeln('\tvoid* _object;')
+	g.sb.writeln('\tint _type_id;')
+	// Generate function pointers for each method
+	for field in node.fields {
+		if fn_type := g.get_fn_type_from_expr(field.typ) {
+			mut ret := 'void'
+			if fn_type.return_type !is ast.EmptyExpr {
+				ret = g.expr_type_to_c(fn_type.return_type)
+			}
+			g.sb.write_string('\t${ret} (*${field.name})(void*')
+			for param in fn_type.params {
+				g.sb.write_string(', ')
+				t := g.expr_type_to_c(param.typ)
+				g.sb.write_string(t)
+			}
+			g.sb.writeln(');')
+		} else {
+			// Regular field
+			t := g.expr_type_to_c(field.typ)
+			g.sb.writeln('\t${t} ${field.name};')
+		}
+	}
+	g.sb.writeln('};')
+	g.sb.writeln('')
+}
+
+// Helper to extract FnType from an Expr (handles ast.Type wrapping)
+fn (g Gen) get_fn_type_from_expr(e ast.Expr) ?ast.FnType {
+	if e is ast.Type {
+		if e is ast.FnType {
+			return e
+		}
+	}
+	return none
 }
 
 fn (mut g Gen) gen_expr(node ast.Expr) {
