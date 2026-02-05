@@ -810,7 +810,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] CastExpr */ 0')
 		}
 		ast.IndexExpr {
-			g.sb.write_string('/* [TODO] IndexExpr */ 0')
+			g.gen_index_expr(node)
 		}
 		ast.ArrayInitExpr {
 			g.sb.write_string('/* [TODO] ArrayInitExpr */ {0}')
@@ -825,7 +825,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] MatchExpr */ 0')
 		}
 		ast.UnsafeExpr {
-			g.sb.write_string('/* [TODO] UnsafeExpr */ 0')
+			g.gen_unsafe_expr(node)
 		}
 		ast.OrExpr {
 			g.sb.write_string('/* [TODO] OrExpr */ 0')
@@ -1133,6 +1133,34 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 		ast.ParenExpr {
 			return g.get_expr_type(node.expr)
 		}
+		ast.UnsafeExpr {
+			// Infer from last statement in the block
+			if node.stmts.len > 0 {
+				last := node.stmts[node.stmts.len - 1]
+				if last is ast.ExprStmt {
+					return g.get_expr_type(last.expr)
+				}
+			}
+			return 'int'
+		}
+		ast.IndexExpr {
+			// Try to get element type from LHS type
+			if raw_type := g.get_raw_type(node.lhs) {
+				match raw_type {
+					types.Array {
+						return g.types_type_to_c(raw_type.elem_type)
+					}
+					types.ArrayFixed {
+						return g.types_type_to_c(raw_type.elem_type)
+					}
+					types.String {
+						return 'u8'
+					}
+					else {}
+				}
+			}
+			return 'int'
+		}
 		else {
 			return 'int'
 		}
@@ -1204,6 +1232,113 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			return 'int'
 		}
 	}
+}
+
+// get_raw_type returns the raw types.Type for an expression from the Environment
+fn (mut g Gen) get_raw_type(node ast.Expr) ?types.Type {
+	if g.env == unsafe { nil } {
+		return none
+	}
+	// For identifiers, check function scope first
+	if node is ast.Ident {
+		if g.cur_fn_scope != unsafe { nil } {
+			if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
+				if obj is types.Module {
+					return none
+				}
+				return obj.typ()
+			}
+		}
+	}
+	// Try environment lookup by position
+	pos := node.pos()
+	if pos != 0 {
+		return g.env.get_expr_type(pos)
+	}
+	return none
+}
+
+fn (mut g Gen) gen_unsafe_expr(node ast.UnsafeExpr) {
+	if node.stmts.len == 0 {
+		g.sb.write_string('0')
+		return
+	}
+	if node.stmts.len == 1 {
+		stmt := node.stmts[0]
+		if stmt is ast.ExprStmt {
+			g.gen_expr(stmt.expr)
+		} else {
+			// Single non-expression statement (e.g., return) - emit directly
+			g.gen_stmt(stmt)
+		}
+		return
+	}
+	// Multi-statement: use GCC compound expression ({ ... })
+	g.sb.write_string('({ ')
+	for i, stmt in node.stmts {
+		if i < node.stmts.len - 1 {
+			g.gen_stmt(stmt)
+		}
+	}
+	// Last statement - if it's an ExprStmt, its value is the block's value
+	last := node.stmts[node.stmts.len - 1]
+	if last is ast.ExprStmt {
+		g.gen_expr(last.expr)
+		g.sb.write_string('; ')
+	} else {
+		g.gen_stmt(last)
+		g.sb.write_string('0; ')
+	}
+	g.sb.write_string('})')
+}
+
+fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
+	// Check LHS type from environment to determine indexing strategy
+	if raw_type := g.get_raw_type(node.lhs) {
+		if raw_type is types.ArrayFixed {
+			// Fixed arrays are C arrays - direct indexing
+			g.gen_expr(node.lhs)
+			g.sb.write_string('[')
+			g.gen_expr(node.expr)
+			g.sb.write_string(']')
+			return
+		}
+		if raw_type is types.Array {
+			// Dynamic arrays: ((elem_type*)arr.data)[idx]
+			elem_type := g.types_type_to_c(raw_type.elem_type)
+			g.sb.write_string('((${elem_type}*)')
+			g.gen_expr(node.lhs)
+			g.sb.write_string('.data)[')
+			g.gen_expr(node.expr)
+			g.sb.write_string(']')
+			return
+		}
+		if raw_type is types.String {
+			// String character access: lhs.str[idx]
+			g.gen_expr(node.lhs)
+			g.sb.write_string('.str[')
+			g.gen_expr(node.expr)
+			g.sb.write_string(']')
+			return
+		}
+		if raw_type is types.Pointer {
+			// Pointer to array: use -> accessor
+			if raw_type.base_type is types.Array {
+				elem_type := g.types_type_to_c(raw_type.base_type.elem_type)
+				g.sb.write_string('((${elem_type}*)')
+				g.gen_expr(node.lhs)
+				g.sb.write_string('->data)[')
+				g.gen_expr(node.expr)
+				g.sb.write_string(']')
+				return
+			}
+		}
+	}
+	// Fallback: direct C array indexing
+	g.gen_expr(node.lhs)
+	g.sb.write_string('[')
+	g.gen_expr(node.expr)
+	g.sb.write_string(']')
 }
 
 fn (mut g Gen) write_indent() {
