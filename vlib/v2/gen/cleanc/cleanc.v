@@ -17,6 +17,7 @@ mut:
 	sb             strings.Builder
 	indent         int
 	cur_fn_scope   &types.Scope = unsafe { nil }
+	cur_fn_name    string
 	cur_module     string
 	emitted_types  map[string]bool
 }
@@ -287,8 +288,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			g.sb.writeln('/* [TODO] Directive: #${node.name} ${node.value} */')
 		}
 		ast.ForInStmt {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] ForInStmt */')
+			panic('bug in v2 compiler: ForInStmt should have been lowered in v2.transformer')
 		}
 		ast.DeferStmt {
 			g.write_indent()
@@ -299,8 +299,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			g.sb.writeln('/* [TODO] AssertStmt */')
 		}
 		ast.ComptimeStmt {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] ComptimeStmt */')
+			panic('bug in v2 compiler: ComptimeStmt should have been handled in v2.transformer')
 		}
 		ast.BlockStmt {
 			g.write_indent()
@@ -327,6 +326,7 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 	}
 
 	// Set function scope for type lookups
+	g.cur_fn_name = node.name
 	if g.env != unsafe { nil } {
 		fn_name := g.get_fn_name(node)
 		if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
@@ -828,6 +828,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.gen_unsafe_expr(node)
 		}
 		ast.OrExpr {
+			// TODO: OrExpr - not all cases are expanded by transformer yet
 			g.sb.write_string('/* [TODO] OrExpr */ 0')
 		}
 		ast.AsCastExpr {
@@ -843,8 +844,11 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] LambdaExpr */ NULL')
 		}
 		ast.ComptimeExpr {
-			// Transformer should resolve comptime fully; this is a passthrough safety net
-			g.gen_expr(node.expr)
+			// $if comptime should be resolved by transformer; @FN etc. handled here
+			if node.expr is ast.IfExpr {
+				panic('bug in v2 compiler: comptime \$if should have been resolved in v2.transformer')
+			}
+			g.gen_comptime_expr(node)
 		}
 		ast.Keyword {
 			g.sb.write_string('/* [TODO] Keyword: ${node.tok} */ 0')
@@ -874,13 +878,14 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] FieldInit */ 0')
 		}
 		ast.IfGuardExpr {
+			// TODO: IfGuardExpr - not all cases are expanded by transformer yet
 			g.sb.write_string('/* [TODO] IfGuardExpr */ 0')
 		}
 		ast.GenericArgs {
-			g.sb.write_string('/* [TODO] GenericArgs */ 0')
+			panic('bug in v2 compiler: GenericArgs should have been resolved during type checking')
 		}
 		ast.GenericArgOrIndexExpr {
-			g.sb.write_string('/* [TODO] GenericArgOrIndexExpr */ 0')
+			panic('bug in v2 compiler: GenericArgOrIndexExpr should have been resolved during type checking')
 		}
 		ast.SqlExpr {
 			g.sb.write_string('/* [TODO] SqlExpr */ 0')
@@ -1340,6 +1345,40 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 	g.sb.write_string('[')
 	g.gen_expr(node.expr)
 	g.sb.write_string(']')
+}
+
+fn (mut g Gen) gen_comptime_expr(node ast.ComptimeExpr) {
+	if node.expr is ast.Ident {
+		name := node.expr.name
+		match name {
+			'FN', 'METHOD', 'FUNCTION' {
+				fn_name := g.cur_fn_name
+				g.sb.write_string('(string){"${fn_name}", ${fn_name.len}}')
+			}
+			'MOD' {
+				mod_name := g.cur_module
+				g.sb.write_string('(string){"${mod_name}", ${mod_name.len}}')
+			}
+			'FILE' {
+				g.sb.write_string('(string){__FILE__, sizeof(__FILE__)-1}')
+			}
+			'LINE' {
+				g.sb.write_string('__LINE__')
+			}
+			'VCURRENTHASH' {
+				g.sb.write_string('(string){"VCURRENTHASH", 12}')
+			}
+			'VEXE' {
+				g.sb.write_string('__vexe_path()')
+			}
+			else {
+				g.sb.write_string('(string){"", 0} /* unknown comptime: ${name} */')
+			}
+		}
+		return
+	}
+	// Fallback: emit the inner expression
+	g.gen_expr(node.expr)
 }
 
 fn (mut g Gen) write_indent() {

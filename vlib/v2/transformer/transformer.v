@@ -588,9 +588,8 @@ fn (mut t Transformer) transform_stmt(stmt ast.Stmt) ast.Stmt {
 			}
 		}
 		ast.ComptimeStmt {
-			ast.ComptimeStmt{
-				stmt: t.transform_stmt(stmt.stmt)
-			}
+			// Unwrap ComptimeStmt - the inner stmt is transformed directly
+			t.transform_stmt(stmt.stmt)
 		}
 		ast.DeferStmt {
 			ast.DeferStmt{
@@ -3367,24 +3366,33 @@ fn (mut t Transformer) transform_for_stmt(stmt ast.ForStmt) ast.ForStmt {
 	// Check if this is a for-in loop (init is ForInStmt)
 	if stmt.init is ast.ForInStmt {
 		for_in := stmt.init as ast.ForInStmt
-		// Check if iterating over a fixed array - transform to indexed for loop
+		// Check for range expression: for i in 0..n
+		if for_in.expr is ast.RangeExpr {
+			result := t.transform_range_for_in(stmt, for_in, for_in.expr)
+			t.close_scope()
+			return result
+		}
 		if iter_type := t.get_expr_type(for_in.expr) {
+			// Fixed array - transform to indexed for loop with literal size
 			if iter_type is types.ArrayFixed {
 				result := t.transform_fixed_array_for_in(stmt, for_in, iter_type)
 				t.close_scope()
 				return result
 			}
-			// Also check for ArrayInitExpr with fixed array type
-			// Infer the element type from the iterable expression and register loop variables
+			// Dynamic array or string - transform to indexed for loop with .len
+			if iter_type is types.Array || iter_type is types.String {
+				result := t.transform_array_for_in(stmt, for_in, iter_type)
+				t.close_scope()
+				return result
+			}
+			// Other iterable types - register loop variables for type inference
 			value_type := iter_type.value_type()
-			// Register value variable if it has a name
 			if for_in.value is ast.Ident {
 				value_name := (for_in.value as ast.Ident).name
 				if value_name != '' && value_name != '_' {
 					t.scope.insert(value_name, value_type)
 				}
 			}
-			// Register key variable if present
 			key_type := iter_type.key_type()
 			if for_in.key is ast.Ident {
 				key_name := (for_in.key as ast.Ident).name
@@ -3403,6 +3411,156 @@ fn (mut t Transformer) transform_for_stmt(stmt ast.ForStmt) ast.ForStmt {
 	}
 	t.close_scope()
 	return result
+}
+
+// transform_array_for_in transforms `for x in arr` / `for i, x in arr` / `for c in str`
+// into: for (int _idx = 0; _idx < arr.len; _idx++) { T x = arr[_idx]; ... }
+fn (mut t Transformer) transform_array_for_in(stmt ast.ForStmt, for_in ast.ForInStmt, iter_type types.Type) ast.ForStmt {
+	mut value_name := '_elem'
+	if for_in.value is ast.Ident {
+		value_name = for_in.value.name
+	} else if for_in.value is ast.ModifierExpr {
+		if for_in.value.expr is ast.Ident {
+			value_name = for_in.value.expr.name
+		}
+	}
+
+	mut key_name := '_idx'
+	mut has_explicit_key := false
+	if for_in.key is ast.Ident {
+		key_name = for_in.key.name
+		has_explicit_key = true
+	} else if for_in.key is ast.ModifierExpr {
+		if for_in.key.expr is ast.Ident {
+			key_name = for_in.key.expr.name
+			has_explicit_key = true
+		}
+	}
+	if !has_explicit_key {
+		key_name = '_idx_${value_name}'
+	}
+
+	// Register loop variables in scope
+	key_type := iter_type.key_type()
+	value_type := iter_type.value_type()
+	t.scope.insert(key_name, key_type)
+	t.scope.insert(value_name, value_type)
+
+	transformed_expr := t.transform_expr(for_in.expr)
+
+	// Build: elem := arr[_idx]
+	value_assign := ast.AssignStmt{
+		op:  .decl_assign
+		lhs: [ast.Expr(ast.Ident{
+			name: value_name
+		})]
+		rhs: [
+			ast.Expr(ast.IndexExpr{
+				lhs:  transformed_expr
+				expr: ast.Ident{
+					name: key_name
+				}
+			}),
+		]
+	}
+
+	mut new_stmts := []ast.Stmt{cap: stmt.stmts.len + 1}
+	new_stmts << value_assign
+	for s in stmt.stmts {
+		new_stmts << t.transform_stmt(s)
+	}
+
+	// Build: for (_idx := 0; _idx < arr.len; _idx++) { ... }
+	return ast.ForStmt{
+		init:  ast.AssignStmt{
+			op:  .decl_assign
+			lhs: [ast.Expr(ast.Ident{
+				name: key_name
+			})]
+			rhs: [ast.Expr(ast.BasicLiteral{
+				value: '0'
+				kind:  .number
+			})]
+		}
+		cond:  ast.InfixExpr{
+			op:  .lt
+			lhs: ast.Ident{
+				name: key_name
+			}
+			rhs: ast.SelectorExpr{
+				lhs: transformed_expr
+				rhs: ast.Ident{
+					name: 'len'
+				}
+			}
+		}
+		post:  ast.AssignStmt{
+			op:  .plus_assign
+			lhs: [ast.Expr(ast.Ident{
+				name: key_name
+			})]
+			rhs: [ast.Expr(ast.BasicLiteral{
+				value: '1'
+				kind:  .number
+			})]
+		}
+		stmts: new_stmts
+	}
+}
+
+// transform_range_for_in transforms `for i in start..end` into
+// for (int i = start; i < end; i++) { ... }
+fn (mut t Transformer) transform_range_for_in(stmt ast.ForStmt, for_in ast.ForInStmt, range ast.RangeExpr) ast.ForStmt {
+	mut value_name := '_i'
+	if for_in.value is ast.Ident {
+		value_name = for_in.value.name
+	} else if for_in.value is ast.ModifierExpr {
+		if for_in.value.expr is ast.Ident {
+			value_name = for_in.value.expr.name
+		}
+	}
+
+	t.scope.insert(value_name, types.Type(types.int_))
+
+	cmp_op := if range.op == .ellipsis { token.Token.le } else { token.Token.lt } // `...` inclusive, `..` exclusive
+
+	mut new_stmts := []ast.Stmt{cap: stmt.stmts.len}
+	for s in stmt.stmts {
+		new_stmts << t.transform_stmt(s)
+	}
+
+	// Use the start/end expressions but strip original positions to avoid
+	// env type misattribution (checker may register iterable type at start pos)
+	start_expr := t.strip_pos(t.transform_expr(range.start))
+	end_expr := t.strip_pos(t.transform_expr(range.end))
+
+	return ast.ForStmt{
+		init:  ast.AssignStmt{
+			op:  .decl_assign
+			lhs: [ast.Expr(ast.Ident{
+				name: value_name
+			})]
+			rhs: [start_expr]
+		}
+		cond:  ast.InfixExpr{
+			op:  cmp_op
+			lhs: ast.Ident{
+				name: value_name
+			}
+			rhs: end_expr
+		}
+		post:  ast.AssignStmt{
+			op:  .plus_assign
+			lhs: [ast.Expr(ast.Ident{
+				name: value_name
+			})]
+			rhs: [ast.Expr(ast.BasicLiteral{
+				value: '1'
+				kind:  .number
+			})]
+		}
+		stmts: new_stmts
+	}
 }
 
 // transform_fixed_array_for_in transforms `for elem in fixed_arr` to indexed for loop
@@ -3501,6 +3659,27 @@ fn (mut t Transformer) transform_fixed_array_for_in(stmt ast.ForStmt, for_in ast
 			})]
 		}
 		stmts: new_stmts
+	}
+}
+
+// strip_pos creates a copy of a simple expression with pos=0 so that
+// the cleanc env type lookup won't misattribute the original checker type.
+fn (t &Transformer) strip_pos(e ast.Expr) ast.Expr {
+	match e {
+		ast.BasicLiteral {
+			return ast.BasicLiteral{
+				value: e.value
+				kind:  e.kind
+			}
+		}
+		ast.Ident {
+			return ast.Ident{
+				name: e.name
+			}
+		}
+		else {
+			return e
+		}
 	}
 }
 
@@ -8383,38 +8562,24 @@ fn (mut t Transformer) eval_comptime_if(node ast.IfExpr) ast.Expr {
 				return t.transform_expr(stmt.expr)
 			}
 		}
-		// Transform all statements in the block
-		return ast.ComptimeExpr{
-			expr: ast.IfExpr{
-				cond:      node.cond
-				stmts:     t.transform_stmts(node.stmts)
-				else_expr: t.transform_expr(node.else_expr)
-			}
-		}
+		// Multi-statement branch at expression level can't be represented;
+		// statement-level expansion handles these properly
+		return ast.empty_expr
 	} else {
 		// Condition is false - evaluate else branch
 		else_e := node.else_expr
 		if else_e !is ast.EmptyExpr {
 			if else_e is ast.IfExpr {
 				if else_e.cond is ast.EmptyExpr {
-					// Plain $else block - transform all statements
+					// Plain $else block
 					if else_e.stmts.len == 1 {
 						stmt := else_e.stmts[0]
 						if stmt is ast.ExprStmt {
 							return t.transform_expr(stmt.expr)
 						}
 					}
-					// Multiple statements in $else - keep as comptime expr with transformed stmts
-					return ast.ComptimeExpr{
-						expr: ast.IfExpr{
-							cond:      node.cond
-							stmts:     t.transform_stmts(node.stmts)
-							else_expr: ast.IfExpr{
-								cond:  else_e.cond
-								stmts: t.transform_stmts(else_e.stmts)
-							}
-						}
-					}
+					// Multi-statement $else at expression level
+					return ast.empty_expr
 				} else {
 					// $else $if - recursive evaluation
 					return t.eval_comptime_if(else_e)
@@ -8422,10 +8587,8 @@ fn (mut t Transformer) eval_comptime_if(node ast.IfExpr) ast.Expr {
 			}
 		}
 	}
-	// Fallback - keep original comptime expr instead of returning empty
-	return ast.ComptimeExpr{
-		expr: node
-	}
+	// Condition is false and no else branch - return empty (comptime block is skipped)
+	return ast.empty_expr
 }
 
 // resolve_comptime_if_stmts evaluates a compile-time $if condition and returns
