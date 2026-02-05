@@ -174,6 +174,41 @@ fn test_infer_array_type_from_slice() {
 	assert result == 'Array_rune', 'expected Array_rune, got ${result}'
 }
 
+fn test_transform_map_init_expr_non_empty_lowers_to_runtime_ctor() {
+	mut t := create_test_transformer()
+
+	expr := ast.MapInitExpr{
+		keys: [
+			ast.Expr(ast.StringLiteral{
+				value: 'foo'
+			}),
+			ast.Expr(ast.StringLiteral{
+				value: 'bar'
+			}),
+		]
+		vals: [
+			ast.Expr(ast.BasicLiteral{
+				kind:  .number
+				value: '1'
+			}),
+			ast.Expr(ast.BasicLiteral{
+				kind:  .number
+				value: '2'
+			}),
+		]
+	}
+
+	result := t.transform_map_init_expr(expr)
+
+	assert result is ast.CallExpr, 'expected CallExpr, got ${result.type_name()}'
+	call := result as ast.CallExpr
+	assert call.lhs is ast.Ident
+	assert (call.lhs as ast.Ident).name == 'builtin__new_map_init_noscan_value'
+	assert call.args.len == 9, 'expected 9 args for map constructor, got ${call.args.len}'
+	assert call.args[7] is ast.ArrayInitExpr, 'expected key array arg'
+	assert call.args[8] is ast.ArrayInitExpr, 'expected value array arg'
+}
+
 fn test_is_string_expr_string_literal() {
 	mut t := create_test_transformer()
 
@@ -258,12 +293,19 @@ fn test_expand_single_or_expr_defaults_to_result() {
 	// Build: some_call() or { 0 }
 	or_expr := ast.OrExpr{
 		expr:  ast.CallExpr{
-			lhs:  ast.Ident{ name: 'some_call' }
+			lhs:  ast.Ident{
+				name: 'some_call'
+			}
 			args: []
 		}
-		stmts: [ast.Stmt(ast.ExprStmt{
-			expr: ast.BasicLiteral{ kind: .number, value: '0' }
-		})]
+		stmts: [
+			ast.Stmt(ast.ExprStmt{
+				expr: ast.BasicLiteral{
+					kind:  .number
+					value: '0'
+				}
+			}),
+		]
 	}
 
 	mut prefix_stmts := []ast.Stmt{}
@@ -303,10 +345,14 @@ fn test_expand_single_or_expr_with_return_in_or_block() {
 
 	or_expr := ast.OrExpr{
 		expr:  ast.CallExpr{
-			lhs:  ast.Ident{ name: 'some_call' }
+			lhs:  ast.Ident{
+				name: 'some_call'
+			}
 			args: []
 		}
-		stmts: [ast.Stmt(ast.FlowControlStmt{ op: .key_return })]
+		stmts: [ast.Stmt(ast.FlowControlStmt{
+			op: .key_return
+		})]
 	}
 
 	mut prefix_stmts := []ast.Stmt{}
@@ -330,12 +376,19 @@ fn test_transform_expr_or_expr_wraps_in_unsafe() {
 
 	or_expr := ast.OrExpr{
 		expr:  ast.CallExpr{
-			lhs:  ast.Ident{ name: 'get_value' }
+			lhs:  ast.Ident{
+				name: 'get_value'
+			}
 			args: []
 		}
-		stmts: [ast.Stmt(ast.ExprStmt{
-			expr: ast.BasicLiteral{ kind: .number, value: '42' }
-		})]
+		stmts: [
+			ast.Stmt(ast.ExprStmt{
+				expr: ast.BasicLiteral{
+					kind:  .number
+					value: '42'
+				}
+			}),
+		]
 	}
 
 	result := t.transform_expr(or_expr)
@@ -368,11 +421,17 @@ fn test_transform_expr_if_guard_standalone_evaluates_rhs() {
 	guard := ast.IfGuardExpr{
 		stmt: ast.AssignStmt{
 			op:  .decl_assign
-			lhs: [ast.Expr(ast.Ident{ name: 'x' })]
-			rhs: [ast.Expr(ast.CallExpr{
-				lhs:  ast.Ident{ name: 'some_func' }
-				args: []
+			lhs: [ast.Expr(ast.Ident{
+				name: 'x'
 			})]
+			rhs: [
+				ast.Expr(ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'some_func'
+					}
+					args: []
+				}),
+			]
 		}
 	}
 
@@ -392,7 +451,9 @@ fn test_transform_expr_if_guard_empty_rhs() {
 	guard := ast.IfGuardExpr{
 		stmt: ast.AssignStmt{
 			op:  .decl_assign
-			lhs: [ast.Expr(ast.Ident{ name: 'x' })]
+			lhs: [ast.Expr(ast.Ident{
+				name: 'x'
+			})]
 			rhs: []
 		}
 	}
@@ -411,20 +472,31 @@ fn test_transform_if_expr_with_if_guard_result_uses_temp_var() {
 
 	// Build: if x := result_call() { body } else { else_body }
 	if_expr := ast.IfExpr{
-		cond:  ast.IfGuardExpr{
+		cond:      ast.IfGuardExpr{
 			stmt: ast.AssignStmt{
 				op:  .decl_assign
-				lhs: [ast.Expr(ast.Ident{ name: 'x' })]
-				rhs: [ast.Expr(ast.CallExpr{
-					lhs:  ast.Ident{ name: 'result_call' }
-					args: []
+				lhs: [ast.Expr(ast.Ident{
+					name: 'x'
 				})]
+				rhs: [
+					ast.Expr(ast.CallExpr{
+						lhs:  ast.Ident{
+							name: 'result_call'
+						}
+						args: []
+					}),
+				]
 			}
 		}
-		stmts: [ast.Stmt(ast.ExprStmt{
-			expr: ast.Ident{ name: 'x' }
+		stmts:     [ast.Stmt(ast.ExprStmt{
+			expr: ast.Ident{
+				name: 'x'
+			}
 		})]
-		else_expr: ast.BasicLiteral{ kind: .number, value: '0' }
+		else_expr: ast.BasicLiteral{
+			kind:  .number
+			value: '0'
+		}
 	}
 
 	result := t.transform_if_expr(if_expr)
@@ -441,20 +513,34 @@ fn test_transform_if_expr_with_if_guard_blank_lhs() {
 	mut t := create_test_transformer()
 
 	if_expr := ast.IfExpr{
-		cond:  ast.IfGuardExpr{
+		cond:      ast.IfGuardExpr{
 			stmt: ast.AssignStmt{
 				op:  .decl_assign
-				lhs: [ast.Expr(ast.Ident{ name: '_' })]
-				rhs: [ast.Expr(ast.CallExpr{
-					lhs:  ast.Ident{ name: 'some_call' }
-					args: []
+				lhs: [ast.Expr(ast.Ident{
+					name: '_'
 				})]
+				rhs: [
+					ast.Expr(ast.CallExpr{
+						lhs:  ast.Ident{
+							name: 'some_call'
+						}
+						args: []
+					}),
+				]
 			}
 		}
-		stmts: [ast.Stmt(ast.ExprStmt{
-			expr: ast.BasicLiteral{ kind: .number, value: '1' }
-		})]
-		else_expr: ast.BasicLiteral{ kind: .number, value: '0' }
+		stmts:     [
+			ast.Stmt(ast.ExprStmt{
+				expr: ast.BasicLiteral{
+					kind:  .number
+					value: '1'
+				}
+			}),
+		]
+		else_expr: ast.BasicLiteral{
+			kind:  .number
+			value: '0'
+		}
 	}
 
 	result := t.transform_if_expr(if_expr)
@@ -472,20 +558,31 @@ fn test_transform_if_expr_preserves_else() {
 	mut t := create_test_transformer()
 
 	if_expr := ast.IfExpr{
-		cond:  ast.IfGuardExpr{
+		cond:      ast.IfGuardExpr{
 			stmt: ast.AssignStmt{
 				op:  .decl_assign
-				lhs: [ast.Expr(ast.Ident{ name: 'val' })]
-				rhs: [ast.Expr(ast.CallExpr{
-					lhs:  ast.Ident{ name: 'try_get' }
-					args: []
+				lhs: [ast.Expr(ast.Ident{
+					name: 'val'
 				})]
+				rhs: [
+					ast.Expr(ast.CallExpr{
+						lhs:  ast.Ident{
+							name: 'try_get'
+						}
+						args: []
+					}),
+				]
 			}
 		}
-		stmts: [ast.Stmt(ast.ExprStmt{
-			expr: ast.Ident{ name: 'val' }
+		stmts:     [ast.Stmt(ast.ExprStmt{
+			expr: ast.Ident{
+				name: 'val'
+			}
 		})]
-		else_expr: ast.BasicLiteral{ kind: .number, value: '-1' }
+		else_expr: ast.BasicLiteral{
+			kind:  .number
+			value: '-1'
+		}
 	}
 
 	result := t.transform_if_expr(if_expr)
