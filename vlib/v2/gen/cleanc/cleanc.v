@@ -29,7 +29,6 @@ mut:
 	tmp_counter                    int // Counter for unique temp variable names
 	fn_types                       map[string]string
 	fn_ret_counts                  map[string]int // Track number of return values for multi-return functions
-	var_types                      map[string]string
 	mut_params                     map[string]bool                // Track mut parameters (need dereference on assignment)
 	mut_receivers                  map[string]bool                // Track which methods have mutable receivers
 	ref_receivers                  map[string]bool                // Track which methods have reference receivers (&Type)
@@ -119,7 +118,6 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 		sb:                          strings.new_builder(4096)
 		fn_types:                    map[string]string{}
 		fn_ret_counts:               map[string]int{}
-		var_types:                   map[string]string{}
 		mut_receivers:               map[string]bool{}
 		ref_receivers:               map[string]bool{}
 		enum_names:                  map[string]bool{}
@@ -476,6 +474,17 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 		if typ := g.env.get_expr_type(pos) {
 			return g.types_type_to_c(typ)
 		}
+	}
+	return none
+}
+
+// lookup_var_type looks up a variable's type from the current function scope
+fn (mut g Gen) lookup_var_type(name string) ?string {
+	if g.cur_fn_scope == unsafe { nil } {
+		return none
+	}
+	if obj := g.cur_fn_scope.lookup_parent(name, 0) {
+		return g.types_type_to_c(obj.typ())
 	}
 	return none
 }
@@ -1878,9 +1887,9 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 // Also checks if it's declared as a dynamic array in generated C (e.g., hardcoded arrays).
 fn (mut g Gen) is_fixed_array_expr(node ast.Expr) bool {
 	if node is ast.Ident {
-		// First check if it's declared as a dynamic array in generated C
+		// Check if it's declared as a dynamic array in generated C
 		// (e.g., hardcoded arrays are converted from FixedArray to Array)
-		if t := g.var_types[node.name] {
+		if t := g.lookup_var_type(node.name) {
 			if t.starts_with('Array_') {
 				return false // It's a dynamic array struct, not a fixed array
 			}
@@ -1896,7 +1905,7 @@ fn (mut g Gen) is_fixed_array_expr(node ast.Expr) bool {
 			}
 		}
 		// Now check Environment for actual type
-		if g.env != unsafe { nil } && g.cur_fn_scope != unsafe { nil } {
+		if g.cur_fn_scope != unsafe { nil } {
 			if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
 				typ := obj.typ()
 				return typ is types.ArrayFixed
@@ -1907,7 +1916,7 @@ fn (mut g Gen) is_fixed_array_expr(node ast.Expr) bool {
 }
 
 // get_expr_type returns the type of an expression, using fast-path lookups for simple cases
-// For identifiers, directly looks up in var_types/Environment instead of recursing through infer_type
+// For identifiers, directly looks up in Environment instead of recursing through infer_type
 fn (mut g Gen) get_expr_type(node ast.Expr) string {
 	// Fast path for identifiers - direct lookup without recursion
 	if node is ast.Ident {
@@ -1934,15 +1943,11 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 				return variant_mangled
 			}
 		}
-		// Check Environment scope FIRST for temp variables registered by transformer
-		if g.env != unsafe { nil } && g.cur_fn_scope != unsafe { nil } {
+		// Check Environment scope for variables registered by transformer and checker
+		if g.cur_fn_scope != unsafe { nil } {
 			if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
 				return g.types_type_to_c(obj.typ())
 			}
-		}
-		// Direct lookups in generated var_types
-		if t := g.var_types[node.name] {
-			return t
 		}
 		if t := g.global_var_types[node.name] {
 			return t
@@ -2533,8 +2538,11 @@ fn (mut g Gen) infer_type(node ast.Expr) string {
 					return variant_mangled
 				}
 			}
-			if t := g.var_types[node.name] {
-				return t
+			// Check Environment scope for variables registered by transformer and checker
+			if g.cur_fn_scope != unsafe { nil } {
+				if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
+					return g.types_type_to_c(obj.typ())
+				}
 			}
 			// Check global variable types
 			if t := g.global_var_types[node.name] {
@@ -2543,13 +2551,6 @@ fn (mut g Gen) infer_type(node ast.Expr) string {
 			// Check constant types
 			if t := g.const_types[node.name] {
 				return t
-			}
-			// Check Environment scope by name (for transformer-created temp variables)
-			// This is needed because transformer registers temp vars in scopes, not in g.var_types
-			if g.env != unsafe { nil } && g.cur_fn_scope != unsafe { nil } {
-				if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
-					return g.types_type_to_c(obj.typ())
-				}
 			}
 			// Special case: 'err' in or-blocks is always IError
 			if node.name == 'err' {
@@ -2851,43 +2852,13 @@ fn (mut g Gen) infer_type(node ast.Expr) string {
 		}
 		ast.LockExpr {
 			// Lock expression - return the type of the last expression in the block
-			// Pre-scan statements to populate var_types for temp variables before type inference
 			if node.stmts.len > 0 {
-				// Pre-scan decl_assign statements to temporarily populate var_types
-				mut temp_vars := map[string]string{}
-				for stmt in node.stmts {
-					if stmt is ast.AssignStmt {
-						if stmt.op == .decl_assign {
-							for i, lhs_expr in stmt.lhs {
-								mut var_name := ''
-								if lhs_expr is ast.Ident {
-									var_name = lhs_expr.name
-								}
-								if var_name != '' && i < stmt.rhs.len {
-									// Infer type and store temporarily
-									var_type := g.infer_type(stmt.rhs[i])
-									temp_vars[var_name] = var_type
-									// Also add to var_types for nested lookups
-									g.var_types[var_name] = var_type
-								}
-							}
-						}
-					}
-				}
-
-				// Now infer the return type with populated var_types
 				last_stmt := node.stmts.last()
 				result_type := if last_stmt is ast.ExprStmt {
 					g.infer_type(last_stmt.expr)
 				} else {
 					'void'
 				}
-
-				// Remove temp vars from var_types (they'll be added again during generation)
-				for var_name in temp_vars.keys() {
-					g.var_types.delete(var_name)
-				}
-
 				return result_type
 			}
 			return 'void'
@@ -4542,7 +4513,6 @@ fn (mut g Gen) gen_fn_head(node ast.FnDecl) {
 }
 
 fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
-	g.var_types = map[string]string{}
 	g.mut_params = map[string]bool{}
 	g.defer_stmts.clear()
 
@@ -4662,25 +4632,17 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		return
 	}
 
-	// Register receiver for methods (skip static methods with no receiver)
+	// Track mut params for proper handling (types come from Environment)
 	if node.is_method && node.receiver.name != '' {
-		receiver_type := g.expr_type_to_c(node.receiver.typ)
 		if node.receiver.is_mut {
-			g.var_types[node.receiver.name] = receiver_type + '*'
 			g.mut_params[node.receiver.name] = true
-		} else {
-			g.var_types[node.receiver.name] = receiver_type
 		}
 	}
 
-	// Register params with element types for proper inference
+	// Track mut params
 	for param in node.typ.params {
-		t := g.get_field_type_for_inference(param.typ)
 		if param.is_mut {
-			g.var_types[param.name] = t + '*'
 			g.mut_params[param.name] = true
-		} else {
-			g.var_types[param.name] = t
 		}
 	}
 
@@ -4755,7 +4717,6 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 						continue // Skip blank identifier
 					}
 					typ := g.get_expr_type(rhs_i)
-					g.var_types[name] = typ
 					c_typ := g.type_for_c_decl(typ)
 					g.write_indent()
 					g.sb.write_string('${c_typ} ${name} = ')
@@ -4811,7 +4772,6 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					if rhs.lhs is ast.Ident {
 						if rhs.lhs.name == 'error' || rhs.lhs.name == 'error_with_code' {
 							// error() creates an IError value
-							g.var_types[name] = 'IError'
 							g.write_indent()
 							g.sb.write_string('IError ${name} = ')
 							g.gen_expr(rhs)
@@ -4821,7 +4781,6 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					}
 				}
 				typ := g.get_expr_type(rhs)
-				g.var_types[name] = typ
 				// Handle fixed-size array declarations specially
 				if rhs is ast.ArrayInitExpr {
 					if arr_info := g.get_fixed_array_info_from_init(rhs) {
@@ -5089,7 +5048,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					} else if expr is ast.Ident {
 						// Check if returning an IError variable (from err := error(msg))
 						id := expr as ast.Ident
-						if var_type := g.var_types[id.name] {
+						if var_type := g.lookup_var_type(id.name) {
 							if var_type == 'IError' {
 								if g.cur_fn_returns_result {
 									// Wrap error in Result type
@@ -5403,7 +5362,6 @@ fn (mut g Gen) gen_stmt_inline(node ast.Stmt) {
 					name = lhs.name
 				}
 				t := g.get_expr_type(rhs)
-				g.var_types[name] = t
 				g.sb.write_string('${t} ${name} = ')
 				g.gen_expr(rhs)
 			} else {
@@ -5548,7 +5506,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				type_name := node.name['__type_id_'.len..]
 				type_id := g.get_or_assign_type_id(type_name)
 				g.sb.write_string('${type_id}')
-			} else if node.name in g.var_types {
+			} else if g.lookup_var_type(node.name) != none {
 				// Local variable - use as-is
 				g.sb.write_string(node.name)
 			} else if mangled := g.const_mangled[node.name] {
@@ -6769,7 +6727,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 						is_method = false
 						is_c_call = true
 					} else if node.lhs.lhs.name in g.module_names
-						&& node.lhs.lhs.name !in g.var_types
+						&& g.lookup_var_type(node.lhs.lhs.name) == none
 						&& node.lhs.lhs.name !in g.global_var_types {
 						// Module-qualified function call: strconv.f64_to_str_l(x)
 						// But only if the name is not a local variable (which takes precedence)
@@ -7563,7 +7521,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 							// If param expects the sum type, pass the original variable (un-smartcast)
 							// If param expects the variant type, pass the smartcast pattern as-is
 							orig_var := g.extract_smartcast_original_var(arg)
-							orig_type := g.var_types[orig_var] or { '' }
+							orig_type := g.lookup_var_type(orig_var) or { '' }
 							// Only pass original variable if its type matches the parameter type
 							// For nested sum types (Outer containing Inner), we need the smartcast
 							if param_type in g.sum_type_names && orig_type == param_type {
@@ -7801,7 +7759,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 						g.gen_expr(node.expr)
 						g.sb.write_string(')')
 						return
-					} else if lhs_name in g.module_names && lhs_name !in g.var_types
+					} else if lhs_name in g.module_names && g.lookup_var_type(lhs_name) == none
 						&& lhs_name !in g.global_var_types {
 						// Resolve import alias if present (but not if lhs_name is a local variable)
 						resolved_mod := g.resolve_module_name(lhs_name)
@@ -8062,7 +8020,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 						arg_type := g.get_expr_type(node.expr)
 						if g.is_smartcast_to_sum_type_variant(node.expr, arg_type) {
 							orig_var := g.extract_smartcast_original_var(node.expr)
-							orig_type := g.var_types[orig_var] or { '' }
+							orig_type := g.lookup_var_type(orig_var) or { '' }
 							// Only pass original variable if its type matches the parameter type
 							// For nested sum types (Outer containing Inner), we need the smartcast
 							if param_type in g.sum_type_names && orig_type == param_type {
@@ -8621,7 +8579,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				}
 				// Check if this is a module-qualified name (e.g., strconv.double_minus_zero)
 				// But only if it's not a local variable (which takes precedence)
-				if node.lhs.name in g.module_names && node.lhs.name !in g.var_types
+				if node.lhs.name in g.module_names && g.lookup_var_type(node.lhs.name) == none
 					&& node.lhs.name !in g.global_var_types {
 					// Module constant/function access: generate module__name
 					// Resolve import alias if present
@@ -9719,7 +9677,6 @@ fn (mut g Gen) gen_decl_if_expr(name string, if_expr ast.IfExpr) {
 
 	// Infer type and declare variable
 	typ := g.infer_type(if_expr)
-	g.var_types[name] = typ
 	c_typ := g.type_for_c_decl(typ)
 	g.sb.writeln('${c_typ} ${name};')
 
@@ -9904,10 +9861,6 @@ fn (mut g Gen) preregister_branch_vars(stmts []ast.Stmt) {
 							var_name = lhs.expr.name
 						}
 					}
-					if var_name != '' && i < stmt.rhs.len {
-						var_type := g.infer_type(stmt.rhs[i])
-						g.var_types[var_name] = var_type
-					}
 				}
 			}
 		}
@@ -9955,7 +9908,7 @@ fn (mut g Gen) has_range_condition(match_expr ast.MatchExpr) bool {
 					continue // Assume it's an enum shorthand value
 				}
 				// Check if it's a local variable (not an enum value)
-				if c.name in g.var_types {
+				if g.lookup_var_type(c.name) != none {
 					return true
 				}
 			}
@@ -9989,7 +9942,6 @@ fn (mut g Gen) gen_assign_match_expr(lhs ast.Expr, match_expr ast.MatchExpr, op 
 	// For declarations, emit the variable declaration first
 	if is_decl && var_name != '' {
 		typ := g.infer_type(match_expr)
-		g.var_types[var_name] = typ
 		c_typ := g.type_for_c_decl(typ)
 		g.write_indent()
 		g.sb.writeln('${c_typ} ${var_name};')
@@ -10359,9 +10311,6 @@ fn (mut g Gen) gen_for_in_range(node ast.ForStmt, for_in ast.ForInStmt) {
 
 	range_expr := for_in.expr as ast.RangeExpr
 
-	// Register loop variable type
-	g.var_types[var_name] = 'int'
-
 	// Generate: for (int i = start; i < end; i++) { ... }
 	g.write_indent()
 	g.sb.write_string('for (int ${var_name} = ')
@@ -10433,12 +10382,6 @@ fn (mut g Gen) gen_for_in_array(node ast.ForStmt, for_in ast.ForInStmt) {
 		elem_type = unsanitize_type_for_c(raw_elem)
 	}
 
-	// Register variable types
-	g.var_types[value_name] = elem_type
-	if key_name != '' {
-		g.var_types[key_name] = 'int'
-	}
-
 	// Use a hidden index if no key specified
 	idx_var := if key_name != '' { key_name } else { '_idx_${value_name}' }
 
@@ -10469,9 +10412,6 @@ fn (mut g Gen) gen_for_in_iterator(node ast.ForStmt, for_in ast.ForInStmt, iter_
 	} else {
 		'int'
 	}
-
-	// Register variable type
-	g.var_types[value_name] = elem_type
 
 	// Get the option type for the element
 	option_type := g.get_option_type(elem_type)
@@ -11025,7 +10965,6 @@ fn (mut g Gen) gen_multi_return_assign(node ast.AssignStmt) {
 		g.write_indent()
 		if is_decl {
 			// Declaration: Type a = __tmp.f0; (or unwrapped for Result/Option)
-			g.var_types[name] = elem_type
 			g.sb.writeln('${elem_type} ${name} = ${accessor}.f${i};')
 		} else {
 			// Assignment: a = __tmp.f0;
