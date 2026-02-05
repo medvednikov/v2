@@ -843,7 +843,8 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] LambdaExpr */ NULL')
 		}
 		ast.ComptimeExpr {
-			g.sb.write_string('/* [TODO] ComptimeExpr */ 0')
+			// Transformer should resolve comptime fully; this is a passthrough safety net
+			g.gen_expr(node.expr)
 		}
 		ast.Keyword {
 			g.sb.write_string('/* [TODO] Keyword: ${node.tok} */ 0')

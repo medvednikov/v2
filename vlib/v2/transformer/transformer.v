@@ -657,6 +657,18 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 				continue
 			}
 		}
+		// Expand compile-time $if at the statement level
+		if stmt is ast.ExprStmt {
+			if stmt.expr is ast.ComptimeExpr {
+				if stmt.expr.expr is ast.IfExpr {
+					selected := t.resolve_comptime_if_stmts(stmt.expr.expr)
+					for s in selected {
+						result << t.transform_stmt(s)
+					}
+					continue
+				}
+			}
+		}
 		// Check for OrExpr in expression statements (e.g., println(may_fail() or { 0 }))
 		if stmt is ast.ExprStmt {
 			if expanded := t.try_expand_or_expr_stmt(stmt) {
@@ -8414,6 +8426,26 @@ fn (mut t Transformer) eval_comptime_if(node ast.IfExpr) ast.Expr {
 	return ast.ComptimeExpr{
 		expr: node
 	}
+}
+
+// resolve_comptime_if_stmts evaluates a compile-time $if condition and returns
+// the selected branch's statements, fully resolving the comptime at statement level.
+fn (mut t Transformer) resolve_comptime_if_stmts(node ast.IfExpr) []ast.Stmt {
+	cond_result := t.eval_comptime_cond(node.cond)
+	if cond_result {
+		return node.stmts
+	}
+	// Condition is false - evaluate else branch
+	else_e := node.else_expr
+	if else_e is ast.IfExpr {
+		if else_e.cond is ast.EmptyExpr {
+			// Plain $else block
+			return else_e.stmts
+		}
+		// $else $if - recursive evaluation
+		return t.resolve_comptime_if_stmts(else_e)
+	}
+	return []
 }
 
 // eval_comptime_cond evaluates a compile-time condition expression
