@@ -67,16 +67,24 @@ fn main() {
 		return
 	}
 
-	// Run Reference (v run test.v)
-	println('[*] Running reference: v -enable-globals run ${input_file}...')
-	ref_res := os.execute('v -n -w -enable-globals run ${input_file}')
-	if ref_res.exit_code != 0 {
-		eprintln('Error: Reference run failed')
-		eprintln(ref_res.output)
-		return
+	// Get expected output: use .out file if --skip-builtin, otherwise run reference compiler
+	mut expected_out := ''
+	out_file := input_file.replace('.v', '.out')
+	if os.args.contains('--skip-builtin') && os.exists(out_file) {
+		println('[*] Using expected output from ${out_file}')
+		expected_out = os.read_file(out_file) or { '' }.trim_space().replace('\r\n', '\n')
+	} else {
+		// Run Reference (v run test.v)
+		println('[*] Running reference: v -enable-globals run ${input_file}...')
+		ref_res := os.execute('v -n -w -enable-globals run ${input_file}')
+		if ref_res.exit_code != 0 {
+			eprintln('Error: Reference run failed')
+			eprintln(ref_res.output)
+			return
+		}
+		// Normalize newlines
+		expected_out = ref_res.output.trim_space().replace('\r\n', '\n')
 	}
-	// Normalize newlines
-	expected_out := ref_res.output.trim_space().replace('\r\n', '\n')
 
 	// Run Generated Binary (the v2-produced one we saved earlier)
 	println('[*] Running generated binary...')
