@@ -839,6 +839,61 @@ fn (mut g Gen) gen_interface_decl(node ast.InterfaceDecl) {
 	g.sb.writeln('')
 }
 
+fn (g &Gen) is_enum_type(name string) bool {
+	// Check emitted_types for enum_Name or enum_module__Name
+	if 'enum_${name}' in g.emitted_types {
+		return true
+	}
+	qualified := g.get_qualified_name(name)
+	if 'enum_${qualified}' in g.emitted_types {
+		return true
+	}
+	// Also check the types.Environment
+	if g.env != unsafe { nil } {
+		mut scope := lock g.env.scopes {
+			g.env.scopes[g.cur_module] or { unsafe { nil } }
+		}
+		if scope != unsafe { nil } {
+			if obj := scope.lookup_parent(name, 0) {
+				if obj is types.Type {
+					if obj is types.Enum {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+fn (g &Gen) get_qualified_name(name string) string {
+	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+		return '${g.cur_module}__${name}'
+	}
+	return name
+}
+
+fn (g &Gen) is_type_name(name string) bool {
+	if name in primitive_types {
+		return true
+	}
+	// Check if it's a known emitted type (enum, struct, alias, sum type, interface)
+	qualified := g.get_qualified_name(name)
+	if 'enum_${name}' in g.emitted_types || 'enum_${qualified}' in g.emitted_types {
+		return true
+	}
+	if 'body_${name}' in g.emitted_types || 'body_${qualified}' in g.emitted_types {
+		return true
+	}
+	if 'alias_${name}' in g.emitted_types || 'alias_${qualified}' in g.emitted_types {
+		return true
+	}
+	if name in g.emitted_types || qualified in g.emitted_types {
+		return true
+	}
+	return false
+}
+
 // Helper to extract FnType from an Expr (handles ast.Type wrapping)
 fn (g Gen) get_fn_type_from_expr(e ast.Expr) ?ast.FnType {
 	if e is ast.Type {
@@ -863,7 +918,12 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 		ast.StringLiteral {
 			val := node.value.trim("'").trim('"')
 			escaped := val.replace('"', '\\"')
-			g.sb.write_string('(string){"${escaped}", ${val.len}}')
+			if node.kind == .c {
+				// C string literal: emit raw C string
+				g.sb.write_string('"${escaped}"')
+			} else {
+				g.sb.write_string('(string){"${escaped}", ${val.len}}')
+			}
 		}
 		ast.Ident {
 			if node.name == 'nil' {
@@ -921,12 +981,26 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.gen_call_expr(node.lhs, node.args)
 		}
 		ast.CallOrCastExpr {
-			// Single-arg call: println(x) is parsed as CallOrCastExpr
-			g.gen_call_expr(node.lhs, [node.expr])
+			// Check if this is a type cast: int(x), MyInt(42), etc.
+			if node.lhs is ast.Ident && g.is_type_name(node.lhs.name) {
+				type_name := g.expr_type_to_c(node.lhs)
+				g.sb.write_string('((${type_name})(')
+				g.gen_expr(node.expr)
+				g.sb.write_string('))')
+			} else {
+				// Single-arg call: println(x) is parsed as CallOrCastExpr
+				g.gen_call_expr(node.lhs, [node.expr])
+			}
 		}
 		ast.SelectorExpr {
-			g.gen_expr(node.lhs)
-			g.sb.write_string('.${node.rhs.name}')
+			// Check if LHS is an enum type name -> emit EnumName__field
+			if node.lhs is ast.Ident && g.is_enum_type(node.lhs.name) {
+				enum_name := g.get_qualified_name(node.lhs.name)
+				g.sb.write_string('${enum_name}__${node.rhs.name}')
+			} else {
+				g.gen_expr(node.lhs)
+				g.sb.write_string('.${node.rhs.name}')
+			}
 		}
 		ast.IfExpr {
 			// Skip empty conditions (pure else blocks shouldn't appear at top level)
