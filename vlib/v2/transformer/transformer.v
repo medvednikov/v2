@@ -4146,15 +4146,39 @@ fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Exp
 	// Dynamic array: transform to builtin__new_array_from_c_array_noscan(len, cap, sizeof(elem), values)
 	arr_len := exprs.len
 
-	// Handle empty arrays - keep as ArrayInitExpr with empty elements, cleanc will generate (array){0}
+	// Handle empty dynamic arrays: lower to __new_array_with_default_noscan(len, cap, sizeof(elem), init)
 	if arr_len == 0 {
-		return ast.ArrayInitExpr{
-			typ:   expr.typ
-			exprs: []ast.Expr{}
-			init:  expr.init
-			cap:   if expr.cap !is ast.EmptyExpr { t.transform_expr(expr.cap) } else { expr.cap }
-			len:   if expr.len !is ast.EmptyExpr { t.transform_expr(expr.len) } else { expr.len }
-			pos:   expr.pos
+		sizeof_expr := if elem_type_expr !is ast.EmptyExpr {
+			elem_type_expr
+		} else {
+			ast.Expr(ast.Ident{name: 'int'})
+		}
+		len_expr := ast.Expr(if expr.len !is ast.EmptyExpr {
+			t.transform_expr(expr.len)
+		} else {
+			ast.Expr(ast.BasicLiteral{kind: .number, value: '0'})
+		})
+		cap_expr := ast.Expr(if expr.cap !is ast.EmptyExpr {
+			t.transform_expr(expr.cap)
+		} else {
+			ast.Expr(ast.BasicLiteral{kind: .number, value: '0'})
+		})
+		init_expr := ast.Expr(if expr.init !is ast.EmptyExpr {
+			t.transform_expr(expr.init)
+		} else {
+			ast.Expr(ast.BasicLiteral{kind: .number, value: '0'})
+		})
+		return ast.CallExpr{
+			lhs:  ast.Ident{
+				name: '__new_array_with_default_noscan'
+			}
+			args: [
+				len_expr,
+				cap_expr,
+				ast.Expr(ast.KeywordOperator{op: .key_sizeof, exprs: [sizeof_expr]}),
+				init_expr,
+			]
+			pos:  expr.pos
 		}
 	}
 

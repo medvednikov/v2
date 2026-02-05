@@ -812,10 +812,10 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.gen_index_expr(node)
 		}
 		ast.ArrayInitExpr {
-			g.sb.write_string('/* [TODO] ArrayInitExpr */ {0}')
+			g.gen_array_init_expr(node)
 		}
 		ast.InitExpr {
-			g.sb.write_string('/* [TODO] InitExpr */ {0}')
+			g.gen_init_expr(node)
 		}
 		ast.MapInitExpr {
 			g.sb.write_string('/* [TODO] MapInitExpr */ {0}')
@@ -1164,6 +1164,22 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			}
 			return 'int'
 		}
+		ast.InitExpr {
+			return g.expr_type_to_c(node.typ)
+		}
+		ast.ArrayInitExpr {
+			elem := g.extract_array_elem_type(node.typ)
+			if elem != '' {
+				if g.is_dynamic_array_type(node.typ) {
+					return 'Array_${elem}'
+				}
+				return 'Array_fixed_${elem}_${node.exprs.len}'
+			}
+			return 'array'
+		}
+		ast.CastExpr {
+			return g.expr_type_to_c(node.typ)
+		}
 		else {
 			return 'int'
 		}
@@ -1376,6 +1392,84 @@ fn (mut g Gen) gen_comptime_expr(node ast.ComptimeExpr) {
 	}
 	// Fallback: emit the inner expression
 	g.gen_expr(node.expr)
+}
+
+fn (mut g Gen) gen_init_expr(node ast.InitExpr) {
+	type_name := g.expr_type_to_c(node.typ)
+	if node.fields.len == 0 {
+		g.sb.write_string('((${type_name}){0})')
+		return
+	}
+	g.sb.write_string('((${type_name}){')
+	for i, field in node.fields {
+		if i > 0 {
+			g.sb.write_string(',')
+		}
+		g.sb.write_string('.${field.name} = ')
+		g.gen_expr(field.value)
+	}
+	g.sb.write_string('})')
+}
+
+fn (mut g Gen) gen_array_init_expr(node ast.ArrayInitExpr) {
+	elem_type := g.extract_array_elem_type(node.typ)
+	if node.exprs.len > 0 {
+		// Has elements
+		if elem_type != '' && g.is_dynamic_array_type(node.typ) {
+			// Dynamic array compound literal: (elem_type[N]){e1, e2, ...}
+			g.sb.write_string('(${elem_type}[${node.exprs.len}]){')
+			for i, e in node.exprs {
+				if i > 0 {
+					g.sb.write_string(', ')
+				}
+				g.gen_expr(e)
+			}
+			g.sb.write_string('}')
+			return
+		}
+		// Fixed-size array or untyped: {e1, e2, ...}
+		g.sb.write_string('{')
+		for i, e in node.exprs {
+			if i > 0 {
+				g.sb.write_string(', ')
+			}
+			g.gen_expr(e)
+		}
+		g.sb.write_string('}')
+		return
+	}
+	// Empty array: should have been lowered by transformer to __new_array_with_default_noscan()
+	// Fallback: zero-init
+	g.sb.write_string('(array){0}')
+}
+
+// extract_array_elem_type extracts the element C type from an array type expression
+fn (mut g Gen) extract_array_elem_type(e ast.Expr) string {
+	match e {
+		ast.Type {
+			if e is ast.ArrayType {
+				return g.expr_type_to_c(e.elem_type)
+			}
+			if e is ast.ArrayFixedType {
+				return g.expr_type_to_c(e.elem_type)
+			}
+		}
+		else {}
+	}
+	return ''
+}
+
+// is_dynamic_array_type checks if the type expression is a dynamic array (ArrayType, not ArrayFixedType)
+fn (g &Gen) is_dynamic_array_type(e ast.Expr) bool {
+	match e {
+		ast.Type {
+			if e is ast.ArrayType {
+				return true
+			}
+		}
+		else {}
+	}
+	return false
 }
 
 fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
