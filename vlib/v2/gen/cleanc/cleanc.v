@@ -261,8 +261,7 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 		}
 		ast.ImportStmt {}
 		ast.ConstDecl {
-			g.write_indent()
-			g.sb.writeln('/* [TODO] ConstDecl (${node.fields.len} fields) */')
+			g.gen_const_decl(node)
 		}
 		ast.StructDecl {
 			g.gen_struct_decl(node)
@@ -807,7 +806,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.gen_expr(node.expr)
 		}
 		ast.CastExpr {
-			g.sb.write_string('/* [TODO] CastExpr */ 0')
+			g.gen_cast_expr(node)
 		}
 		ast.IndexExpr {
 			g.gen_index_expr(node)
@@ -853,7 +852,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('/* [TODO] Keyword: ${node.tok} */ 0')
 		}
 		ast.KeywordOperator {
-			g.sb.write_string('/* [TODO] KeywordOperator */ 0')
+			g.gen_keyword_operator(node)
 		}
 		ast.RangeExpr {
 			g.sb.write_string('/* [TODO] RangeExpr */ 0')
@@ -1377,6 +1376,105 @@ fn (mut g Gen) gen_comptime_expr(node ast.ComptimeExpr) {
 	}
 	// Fallback: emit the inner expression
 	g.gen_expr(node.expr)
+}
+
+fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
+	for field in node.fields {
+		name := if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+			'${g.cur_module}__${field.name}'
+		} else {
+			field.name
+		}
+		typ := g.get_expr_type(field.value)
+		if typ == 'string' {
+			// String constants need a global variable
+			g.sb.write_string('string ${name} = ')
+			g.gen_expr(field.value)
+			g.sb.writeln(';')
+		} else {
+			// Integer/other constants: use #define for TCC compatibility
+			g.sb.write_string('#define ${name} ')
+			g.gen_expr(field.value)
+			g.sb.writeln('')
+		}
+	}
+}
+
+fn (mut g Gen) gen_cast_expr(node ast.CastExpr) {
+	type_name := g.expr_type_to_c(node.typ)
+	g.sb.write_string('((${type_name})(')
+	g.gen_expr(node.expr)
+	g.sb.write_string('))')
+}
+
+fn (mut g Gen) gen_keyword_operator(node ast.KeywordOperator) {
+	match node.op {
+		.key_sizeof {
+			if node.exprs.len > 0 {
+				g.sb.write_string('sizeof(')
+				g.sb.write_string(g.expr_type_to_c(node.exprs[0]))
+				g.sb.write_string(')')
+			} else {
+				g.sb.write_string('0')
+			}
+		}
+		.key_typeof {
+			if node.exprs.len > 0 {
+				type_name := g.expr_type_to_c(node.exprs[0])
+				g.sb.write_string('(string){"${type_name}", ${type_name.len}}')
+			} else {
+				g.sb.write_string('(string){"", 0}')
+			}
+		}
+		.key_offsetof {
+			if node.exprs.len >= 2 {
+				g.sb.write_string('offsetof(')
+				g.sb.write_string(g.expr_type_to_c(node.exprs[0]))
+				g.sb.write_string(', ')
+				field_expr := node.exprs[1]
+				if field_expr is ast.Ident {
+					g.sb.write_string(field_expr.name)
+				} else {
+					g.gen_expr(field_expr)
+				}
+				g.sb.write_string(')')
+			} else {
+				g.sb.write_string('0')
+			}
+		}
+		.key_isreftype {
+			g.sb.write_string('0')
+		}
+		.key_likely {
+			if node.exprs.len > 0 {
+				g.sb.write_string('__builtin_expect((')
+				g.gen_expr(node.exprs[0])
+				g.sb.write_string('), 1)')
+			} else {
+				g.sb.write_string('1')
+			}
+		}
+		.key_unlikely {
+			if node.exprs.len > 0 {
+				g.sb.write_string('__builtin_expect((')
+				g.gen_expr(node.exprs[0])
+				g.sb.write_string('), 0)')
+			} else {
+				g.sb.write_string('0')
+			}
+		}
+		.key_dump {
+			// dump(expr) - just evaluate the expression
+			if node.exprs.len > 0 {
+				g.gen_expr(node.exprs[0])
+			} else {
+				g.sb.write_string('0')
+			}
+		}
+		else {
+			g.sb.write_string('/* KeywordOperator: ${node.op} */ 0')
+		}
+	}
 }
 
 fn (mut g Gen) write_indent() {
