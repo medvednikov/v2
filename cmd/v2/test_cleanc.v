@@ -11,9 +11,15 @@ enum Permissions {
 	execute
 }
 
+struct string {
+	str voidptr
+	len int
+}
 type MyInt = int
 
 type Number = int | string
+
+fn C.printf(voidptr)
 
 fn print_int(n int) {
 	C.printf(c"%d\n", n)
