@@ -1848,7 +1848,7 @@ fn (mut c Checker) match_expr(expr ast.MatchExpr, used_as_expr bool) Type {
 fn (mut c Checker) resolve_generic_arg_or_index_expr(expr ast.GenericArgOrIndexExpr) ast.Expr {
 	lhs_type := c.expr(expr.lhs)
 	// expr_type := c.expr(expr.expr)
-	if lhs_type is FnType {
+	if c.is_callable_type(lhs_type) {
 		return ast.GenericArgs{
 			lhs:  expr.lhs
 			args: [expr.expr]
@@ -1862,10 +1862,27 @@ fn (mut c Checker) resolve_generic_arg_or_index_expr(expr ast.GenericArgOrIndexE
 	}
 }
 
+fn (c &Checker) is_callable_type(t Type) bool {
+	match t {
+		FnType {
+			return true
+		}
+		Alias {
+			return c.is_callable_type(t.base_type)
+		}
+		Pointer {
+			return c.is_callable_type(t.base_type)
+		}
+		else {
+			return false
+		}
+	}
+}
+
 fn (mut c Checker) resolve_call_or_cast_expr(expr ast.CallOrCastExpr) ast.Expr {
 	lhs_type := c.expr(expr.lhs)
 	// expr_type := c.expr(expr.expr)
-	if lhs_type is FnType {
+	if c.is_callable_type(lhs_type) {
 		return ast.CallExpr{
 			lhs:  expr.lhs
 			args: [expr.expr]

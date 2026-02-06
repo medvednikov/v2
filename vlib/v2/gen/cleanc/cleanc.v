@@ -3558,24 +3558,6 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 					}
 				}
 			}
-			ast.InfixExpr {
-				if node.op in [.plus, .minus, .mul, .div, .mod, .amp, .pipe, .xor, .left_shift,
-					.right_shift] {
-					lhs_t := g.get_expr_type(node.lhs)
-					rhs_t := g.get_expr_type(node.rhs)
-					if t.ends_with('Fn') || lhs_t.ends_with('Fn') || rhs_t.ends_with('Fn') {
-						return 'u64'
-					}
-					if t == '' || t == 'int' {
-						if lhs_t != '' && lhs_t != 'int' {
-							return lhs_t
-						}
-						if rhs_t != '' && rhs_t != 'int' {
-							return rhs_t
-						}
-					}
-				}
-			}
 			else {}
 		}
 		return t
@@ -4349,6 +4331,24 @@ fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
 
 fn (mut g Gen) gen_cast_expr(node ast.CastExpr) {
 	type_name := g.expr_type_to_c(node.typ)
+	if type_name.starts_with('_option_') {
+		value_type := option_value_type(type_name)
+		if value_type != '' && value_type != 'void' {
+			g.sb.write_string('({ ${type_name} _opt = (${type_name}){ .state = 2 }; ${value_type} _val = ')
+			g.gen_expr(node.expr)
+			g.sb.write_string('; _option_ok(&_val, (_option*)&_opt, sizeof(_val)); _opt; })')
+			return
+		}
+	}
+	if type_name.starts_with('_result_') {
+		value_type := g.result_value_type(type_name)
+		if value_type != '' && value_type != 'void' {
+			g.sb.write_string('({ ${type_name} _res = (${type_name}){0}; ${value_type} _val = ')
+			g.gen_expr(node.expr)
+			g.sb.write_string('; _result_ok(&_val, (_result*)&_res, sizeof(_val)); _res; })')
+			return
+		}
+	}
 	expr_type := g.get_expr_type(node.expr)
 	if expr_type.starts_with('_result_') && g.result_value_type(expr_type) != '' {
 		g.sb.write_string('((${type_name})(')

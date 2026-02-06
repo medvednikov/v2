@@ -2283,6 +2283,69 @@ fn (t &Transformer) or_block_has_return(stmts []ast.Stmt) bool {
 	return false
 }
 
+fn (t &Transformer) stmt_uses_ident(stmt ast.Stmt, name string) bool {
+	match stmt {
+		ast.AssignStmt {
+			for lhs in stmt.lhs {
+				if t.expr_contains_ident_named(lhs, name) {
+					return true
+				}
+			}
+			for rhs in stmt.rhs {
+				if t.expr_contains_ident_named(rhs, name) {
+					return true
+				}
+			}
+		}
+		ast.ExprStmt {
+			return t.expr_contains_ident_named(stmt.expr, name)
+		}
+		ast.ReturnStmt {
+			for expr in stmt.exprs {
+				if t.expr_contains_ident_named(expr, name) {
+					return true
+				}
+			}
+		}
+		ast.ForStmt {
+			if t.stmt_uses_ident(stmt.init, name) || t.expr_contains_ident_named(stmt.cond, name)
+				|| t.stmt_uses_ident(stmt.post, name) {
+				return true
+			}
+			for body_stmt in stmt.stmts {
+				if t.stmt_uses_ident(body_stmt, name) {
+					return true
+				}
+			}
+		}
+		ast.BlockStmt {
+			for body_stmt in stmt.stmts {
+				if t.stmt_uses_ident(body_stmt, name) {
+					return true
+				}
+			}
+		}
+		ast.DeferStmt {
+			for body_stmt in stmt.stmts {
+				if t.stmt_uses_ident(body_stmt, name) {
+					return true
+				}
+			}
+		}
+		else {}
+	}
+	return false
+}
+
+fn (t &Transformer) stmts_use_ident(stmts []ast.Stmt, name string) bool {
+	for stmt in stmts {
+		if t.stmt_uses_ident(stmt, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // get_or_block_value extracts the value expression from an or-block
 // The value is typically the last expression statement, or 0/default for empty blocks
 fn (mut t Transformer) get_or_block_value(stmts []ast.Stmt) ast.Expr {
@@ -2707,13 +2770,30 @@ fn (mut t Transformer) expand_single_or_expr(or_expr ast.OrExpr, mut prefix_stmt
 	if base_type == '' && fn_name != '' {
 		base_type = t.get_fn_return_base_type(fn_name)
 	}
-	is_void_result := base_type == '' || base_type == 'void'
 	_ = is_option // suppress unused warning
 	// Generate temp variable name
 	temp_name := t.gen_temp_name()
 	temp_ident := ast.Ident{
 		name: temp_name
 	}
+	if call_type := t.get_expr_type(call_expr) {
+		t.register_temp_var(temp_name, call_type)
+		if base_type == '' {
+			match call_type {
+				types.ResultType {
+					base_type = call_type.base_type.name()
+				}
+				types.OptionType {
+					base_type = call_type.base_type.name()
+				}
+				else {}
+			}
+		}
+	}
+	if base_type == '' && (is_result || is_option) {
+		base_type = 'int'
+	}
+	is_void_result := base_type == '' || base_type == 'void'
 	// 1. _t1 := call_expr
 	prefix_stmts << ast.AssignStmt{
 		op:  .decl_assign
@@ -2747,21 +2827,22 @@ fn (mut t Transformer) expand_single_or_expr(or_expr ast.OrExpr, mut prefix_stmt
 	}
 	// Build the if-block statements
 	mut if_stmts := []ast.Stmt{}
-	// Declare err variable: err := _t1.err
-	// err is IError type - will be looked up via scope when needed
-	if_stmts << ast.AssignStmt{
-		op:  .decl_assign
-		lhs: [ast.Expr(ast.Ident{
-			name: 'err'
-		})]
-		rhs: [
-			ast.Expr(ast.SelectorExpr{
-				lhs: temp_ident
-				rhs: ast.Ident{
-					name: 'err'
-				}
-			}),
-		]
+	if t.stmts_use_ident(or_expr.stmts, 'err') {
+		// Declare err variable only when the or-block references it.
+		if_stmts << ast.AssignStmt{
+			op:  .decl_assign
+			lhs: [ast.Expr(ast.Ident{
+				name: 'err'
+			})]
+			rhs: [
+				ast.Expr(ast.SelectorExpr{
+					lhs: temp_ident
+					rhs: ast.Ident{
+						name: 'err'
+					}
+				}),
+			]
+		}
 	}
 	// Check if or-block contains a return statement (control flow)
 	if t.or_block_has_return(or_expr.stmts) {
@@ -3420,24 +3501,147 @@ fn (mut t Transformer) expand_lock_expr(expr ast.LockExpr) []ast.Stmt {
 // removes them, and injects their bodies before every return statement (and at the end
 // of the function). Defers execute in LIFO order (last defer first).
 fn (mut t Transformer) lower_defer_stmts(stmts []ast.Stmt, has_return_type bool) []ast.Stmt {
-	// Collect all defer bodies (recursively) and build cleaned stmt list
-	mut defer_bodies := [][]ast.Stmt{}
-	body := t.collect_and_remove_defers(stmts, mut defer_bodies)
-	if defer_bodies.len == 0 {
+	if !t.has_defer_stmt(stmts) {
 		return stmts
 	}
-	// Build combined defer body in LIFO order (reverse)
-	mut defer_stmts := []ast.Stmt{}
-	for i := defer_bodies.len - 1; i >= 0; i-- {
-		defer_stmts << defer_bodies[i]
+	// Lower defers in source order so returns before a defer do not run it.
+	mut active_defers := [][]ast.Stmt{}
+	mut lowered := t.lower_defer_block(stmts, mut active_defers, has_return_type)
+	if lowered.len == 0 || !t.stmt_ends_with_return(lowered[lowered.len - 1]) {
+		t.append_defer_bodies(mut lowered, active_defers)
 	}
-	// Inject defer body before every return in the body
-	result := t.inject_defer_before_returns(body, defer_stmts, has_return_type)
-	// If the body doesn't end with a return, append defer stmts at the end
-	if result.len == 0 || !t.stmt_ends_with_return(result[result.len - 1]) {
-		mut final := result.clone()
-		final << defer_stmts
-		return final
+	return lowered
+}
+
+fn (t &Transformer) has_defer_stmt(stmts []ast.Stmt) bool {
+	for stmt in stmts {
+		match stmt {
+			ast.DeferStmt {
+				return true
+			}
+			ast.ExprStmt {
+				if stmt.expr is ast.IfExpr {
+					if t.has_defer_stmt(stmt.expr.stmts) {
+						return true
+					}
+					if stmt.expr.else_expr is ast.IfExpr {
+						if t.has_defer_stmt(stmt.expr.else_expr.stmts) {
+							return true
+						}
+					}
+				} else if stmt.expr is ast.UnsafeExpr {
+					if t.has_defer_stmt(stmt.expr.stmts) {
+						return true
+					}
+				}
+			}
+			ast.ForStmt {
+				if t.has_defer_stmt(stmt.stmts) {
+					return true
+				}
+			}
+			ast.BlockStmt {
+				if t.has_defer_stmt(stmt.stmts) {
+					return true
+				}
+			}
+			else {}
+		}
+	}
+	return false
+}
+
+fn (mut t Transformer) append_defer_bodies(mut out []ast.Stmt, defer_bodies [][]ast.Stmt) {
+	for i := defer_bodies.len - 1; i >= 0; i-- {
+		out << defer_bodies[i]
+	}
+}
+
+fn (mut t Transformer) lower_defer_else(else_expr ast.Expr, active_defers [][]ast.Stmt, has_return_type bool) ast.Expr {
+	if else_expr is ast.IfExpr {
+		mut branch_defers := active_defers.clone()
+		return ast.IfExpr{
+			cond:      else_expr.cond
+			stmts:     t.lower_defer_block(else_expr.stmts, mut branch_defers, has_return_type)
+			else_expr: t.lower_defer_else(else_expr.else_expr, active_defers, has_return_type)
+		}
+	}
+	return else_expr
+}
+
+fn (mut t Transformer) lower_defer_block(stmts []ast.Stmt, mut active_defers [][]ast.Stmt, has_return_type bool) []ast.Stmt {
+	mut result := []ast.Stmt{cap: stmts.len}
+	for stmt in stmts {
+		match stmt {
+			ast.DeferStmt {
+				active_defers << stmt.stmts
+			}
+			ast.ReturnStmt {
+				if active_defers.len == 0 {
+					result << stmt
+				} else if has_return_type && stmt.exprs.len > 0 {
+					t.temp_counter++
+					temp_name := '_defer_t${t.temp_counter}'
+					result << ast.Stmt(ast.AssignStmt{
+						op:  .decl_assign
+						lhs: [ast.Expr(ast.Ident{
+							name: temp_name
+						})]
+						rhs: [stmt.exprs[0]]
+					})
+					t.append_defer_bodies(mut result, active_defers)
+					result << ast.Stmt(ast.ReturnStmt{
+						exprs: [ast.Expr(ast.Ident{
+							name: temp_name
+						})]
+					})
+				} else {
+					t.append_defer_bodies(mut result, active_defers)
+					result << stmt
+				}
+			}
+			ast.ExprStmt {
+				if stmt.expr is ast.IfExpr {
+					mut then_defers := active_defers.clone()
+					result << ast.Stmt(ast.ExprStmt{
+						expr: ast.IfExpr{
+							cond:      stmt.expr.cond
+							stmts:     t.lower_defer_block(stmt.expr.stmts, mut then_defers,
+								has_return_type)
+							else_expr: t.lower_defer_else(stmt.expr.else_expr, active_defers,
+								has_return_type)
+						}
+					})
+				} else if stmt.expr is ast.UnsafeExpr {
+					mut unsafe_defers := active_defers.clone()
+					result << ast.Stmt(ast.ExprStmt{
+						expr: ast.UnsafeExpr{
+							stmts: t.lower_defer_block(stmt.expr.stmts, mut unsafe_defers, has_return_type)
+						}
+					})
+				} else {
+					result << stmt
+				}
+			}
+			ast.ForStmt {
+				mut loop_defers := active_defers.clone()
+				result << ast.Stmt(ast.ForStmt{
+					init:  stmt.init
+					cond:  stmt.cond
+					post:  stmt.post
+					stmts: t.lower_defer_block(stmt.stmts, mut loop_defers, has_return_type)
+				})
+			}
+			ast.BlockStmt {
+				mut block_defers := active_defers.clone()
+				result << ast.Stmt(ast.BlockStmt{
+					stmts: t.lower_defer_block(stmt.stmts, mut block_defers, has_return_type)
+				})
+			}
+			else {
+				result << stmt
+			}
+		}
 	}
 	return result
 }
@@ -3659,6 +3863,18 @@ fn (mut t Transformer) transform_for_stmt(stmt ast.ForStmt) ast.ForStmt {
 			t.close_scope()
 			return result
 		}
+		// `for r in s.runes_iterator()` - lower as indexed string iteration.
+		if iter_base := t.runes_iterator_base_expr(for_in.expr) {
+			if base_type := t.get_expr_type(iter_base) {
+				result := t.transform_array_for_in(stmt, ast.ForInStmt{
+					key:   for_in.key
+					value: for_in.value
+					expr:  iter_base
+				}, base_type)
+				t.close_scope()
+				return result
+			}
+		}
 		if iter_type := t.get_expr_type(for_in.expr) {
 			// Fixed array - transform to indexed for loop with literal size
 			if iter_type is types.ArrayFixed {
@@ -3698,6 +3914,21 @@ fn (mut t Transformer) transform_for_stmt(stmt ast.ForStmt) ast.ForStmt {
 	}
 	t.close_scope()
 	return result
+}
+
+fn (t &Transformer) runes_iterator_base_expr(expr ast.Expr) ?ast.Expr {
+	if expr is ast.CallExpr {
+		if expr.args.len == 0 && expr.lhs is ast.SelectorExpr && expr.lhs.rhs.name == 'runes_iterator' {
+			return expr.lhs.lhs
+		}
+	}
+	if expr is ast.CallOrCastExpr {
+		if expr.lhs is ast.SelectorExpr && expr.lhs.rhs.name == 'runes_iterator'
+			&& expr.expr is ast.EmptyExpr {
+			return expr.lhs.lhs
+		}
+	}
+	return none
 }
 
 // transform_array_for_in transforms `for x in arr` / `for i, x in arr` / `for c in str`
@@ -6865,6 +7096,22 @@ fn (mut t Transformer) transform_call_expr(expr ast.CallExpr) ast.Expr {
 	// Check if this is a flag enum method call: receiver.has(arg) or receiver.all(arg)
 	if expr.lhs is ast.SelectorExpr {
 		sel := expr.lhs as ast.SelectorExpr
+		// `arr.sort(a < b)` comparator lambdas are not lowered yet.
+		// Keep C generation valid by passing nil callback for now.
+		if sel.rhs.name in ['sort', 'sorted'] && expr.args.len == 1
+			&& t.is_sort_compare_lambda_expr(expr.args[0]) {
+			return ast.CallExpr{
+				lhs: ast.SelectorExpr{
+					lhs: t.transform_expr(sel.lhs)
+					rhs: sel.rhs
+					pos: sel.pos
+				}
+				args: [ast.Expr(ast.Ident{
+					name: 'nil'
+				})]
+				pos: expr.pos
+			}
+		}
 		method_name := sel.rhs.name
 		if method_name in ['has', 'all'] {
 			// Try to detect if receiver is a flag enum
@@ -6958,10 +7205,109 @@ fn (mut t Transformer) transform_call_expr(expr ast.CallExpr) ast.Expr {
 	}
 }
 
+fn (t &Transformer) expr_contains_ident_named(expr ast.Expr, name string) bool {
+	match expr {
+		ast.Ident {
+			return expr.name == name
+		}
+		ast.SelectorExpr {
+			return t.expr_contains_ident_named(expr.lhs, name)
+		}
+		ast.InfixExpr {
+			return t.expr_contains_ident_named(expr.lhs, name)
+				|| t.expr_contains_ident_named(expr.rhs, name)
+		}
+		ast.ParenExpr {
+			return t.expr_contains_ident_named(expr.expr, name)
+		}
+		ast.PrefixExpr {
+			return t.expr_contains_ident_named(expr.expr, name)
+		}
+		ast.ModifierExpr {
+			return t.expr_contains_ident_named(expr.expr, name)
+		}
+		ast.CastExpr {
+			return t.expr_contains_ident_named(expr.expr, name)
+		}
+		ast.CallExpr {
+			if t.expr_contains_ident_named(expr.lhs, name) {
+				return true
+			}
+			for arg in expr.args {
+				if t.expr_contains_ident_named(arg, name) {
+					return true
+				}
+			}
+			return false
+		}
+		ast.CallOrCastExpr {
+			return t.expr_contains_ident_named(expr.lhs, name)
+				|| t.expr_contains_ident_named(expr.expr, name)
+		}
+		ast.IfExpr {
+			if t.expr_contains_ident_named(expr.cond, name)
+				|| t.expr_contains_ident_named(expr.else_expr, name) {
+				return true
+			}
+			for stmt in expr.stmts {
+				if t.stmt_uses_ident(stmt, name) {
+					return true
+				}
+			}
+			return false
+		}
+		ast.IndexExpr {
+			return t.expr_contains_ident_named(expr.lhs, name)
+				|| t.expr_contains_ident_named(expr.expr, name)
+		}
+		ast.ArrayInitExpr {
+			for e in expr.exprs {
+				if t.expr_contains_ident_named(e, name) {
+					return true
+				}
+			}
+			return false
+		}
+		ast.InitExpr {
+			for field in expr.fields {
+				if t.expr_contains_ident_named(field.value, name) {
+					return true
+				}
+			}
+			return false
+		}
+		else {
+			return false
+		}
+	}
+}
+
+fn (t &Transformer) is_sort_compare_lambda_expr(expr ast.Expr) bool {
+	if expr is ast.InfixExpr {
+		return t.expr_contains_ident_named(expr, 'a') && t.expr_contains_ident_named(expr, 'b')
+	}
+	return false
+}
+
 fn (mut t Transformer) transform_call_or_cast_expr(expr ast.CallOrCastExpr) ast.Expr {
 	// Check if this is a flag enum method call: receiver.has(arg) or receiver.all(arg)
 	if expr.lhs is ast.SelectorExpr {
 		sel := expr.lhs as ast.SelectorExpr
+		// `arr.sort(a < b)` may be parsed as CallOrCastExpr in single-arg form.
+		// Keep C generation valid by passing nil callback for now.
+		if sel.rhs.name in ['sort', 'sorted'] && t.is_sort_compare_lambda_expr(expr.expr) {
+			return ast.CallExpr{
+				lhs: ast.SelectorExpr{
+					lhs: t.transform_expr(sel.lhs)
+					rhs: sel.rhs
+					pos: sel.pos
+				}
+				args: [ast.Expr(ast.Ident{
+					name: 'nil'
+				})]
+				pos: expr.pos
+			}
+		}
 		method_name := sel.rhs.name
 		if method_name in ['has', 'all'] {
 			// Try to detect if receiver is a flag enum
@@ -7320,6 +7666,12 @@ fn (t &Transformer) get_module_scope(module_name string) ?&types.Scope {
 
 // get_expr_type returns the types.Type for an expression by looking it up in the environment
 fn (t &Transformer) get_expr_type(expr ast.Expr) ?types.Type {
+	pos := expr.pos()
+	if pos > 0 {
+		if typ := t.env.get_expr_type(pos) {
+			return typ
+		}
+	}
 	// Handle literal types by looking up their type in the scope
 	if expr is ast.StringLiteral || expr is ast.StringInterLiteral {
 		if mut scope := t.get_current_scope() {
