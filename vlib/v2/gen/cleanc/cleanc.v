@@ -170,6 +170,17 @@ pub fn (mut g Gen) gen() string {
 		g.gen_struct_decl(info.decl)
 	}
 
+	// Pass 3.5: Emit constants before function declarations/bodies, so macros are available.
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			if stmt is ast.ConstDecl {
+				g.gen_const_decl(stmt)
+			}
+		}
+	}
+	g.sb.writeln('')
+
 	// Pass 4: Function forward declarations
 	for file in g.files {
 		g.set_file_module(file)
@@ -210,6 +221,7 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('#include <stdint.h>')
 	g.sb.writeln('#include <stddef.h>')
 	g.sb.writeln('#include <string.h>')
+	g.sb.writeln('#include <float.h>')
 	g.sb.writeln('')
 
 	// V primitive type aliases
@@ -238,9 +250,6 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('static const u64 _wyp[4] = {0xa0761d6478bd642full, 0xe7037ed1a0b428dbull, 0x8ebc6af09c88c6e3ull, 0x589965cc75374cc3ull};')
 	g.sb.writeln('static inline u64 wyhash(const void* key, u64 len, u64 seed, const u64* secret) { (void)key; (void)len; (void)seed; (void)secret; return 0; }')
 	g.sb.writeln('static inline u64 wyhash64(u64 a, u64 b) { (void)a; (void)b; return 0; }')
-	g.sb.writeln('#define builtin__new_array_from_c_array_noscan(len, cap, elm_size, ...) new_array_from_c_array((len), (cap), (elm_size), (void*)(__VA_ARGS__))')
-	g.sb.writeln('#define strconv__builtin__new_array_from_c_array_noscan(len, cap, elm_size, ...) builtin__new_array_from_c_array_noscan((len), (cap), (elm_size), (__VA_ARGS__))')
-	g.sb.writeln('#define array__contains_int(a, v) array__contains((a), &((int[]){(v)})[0])')
 	g.sb.writeln('')
 	g.sb.writeln('')
 }
@@ -451,8 +460,9 @@ fn (mut g Gen) set_file_module(file ast.File) {
 fn (mut g Gen) gen_file(file ast.File) {
 	g.set_file_module(file)
 	for stmt in file.stmts {
-		// Skip struct/enum/type/interface decls - already emitted in earlier passes
+		// Skip struct/enum/type/interface/const decls - already emitted in earlier passes
 		if stmt is ast.StructDecl || stmt is ast.EnumDecl || stmt is ast.TypeDecl
+			|| stmt is ast.ConstDecl
 			|| stmt is ast.InterfaceDecl {
 			continue
 		}
@@ -579,20 +589,6 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		} else {
 			g.cur_fn_scope = unsafe { nil }
 		}
-	}
-
-	// Temporary stub: transformer lowering for DenseArray swaps is incomplete.
-	// Keep a no-op body so C generation can proceed to later errors.
-	if fn_name == 'DenseArray__zeros_to_end' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)d;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
 	}
 
 	// Generate function header
@@ -1163,6 +1159,25 @@ fn (g &Gen) is_type_name(name string) bool {
 	return false
 }
 
+fn (mut g Gen) is_module_ident(name string) bool {
+	if g.cur_fn_scope != unsafe { nil } {
+		if obj := g.cur_fn_scope.lookup_parent(name, 0) {
+			return obj is types.Module
+		}
+	}
+	if g.env != unsafe { nil } {
+		mut scope := lock g.env.scopes {
+			g.env.scopes[g.cur_module] or { unsafe { nil } }
+		}
+		if scope != unsafe { nil } {
+			if obj := scope.lookup_parent(name, 0) {
+				return obj is types.Module
+			}
+		}
+	}
+	return false
+}
+
 // Helper to extract FnType from an Expr (handles ast.Type wrapping)
 fn (g Gen) get_fn_type_from_expr(e ast.Expr) ?ast.FnType {
 	if e is ast.Type {
@@ -1180,6 +1195,9 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.sb.write_string('true')
 			} else if node.kind == .key_false {
 				g.sb.write_string('false')
+			} else if node.kind == .char {
+				escaped := node.value.replace('\\', '\\\\').replace("'", "\\'")
+				g.sb.write_string("'${escaped}'")
 			} else {
 				g.sb.write_string(node.value)
 			}
@@ -1305,6 +1323,11 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.sb.write_string(node.rhs.name)
 				return
 			}
+			// module.const / module.var => module__const / module__var
+			if node.lhs is ast.Ident && g.is_module_ident(node.lhs.name) {
+				g.sb.write_string('${node.lhs.name}__${node.rhs.name}')
+				return
+			}
 			// Check if LHS is an enum type name -> emit EnumName__field
 			if node.lhs is ast.Ident && g.is_enum_type(node.lhs.name) {
 				enum_name := g.get_qualified_name(node.lhs.name)
@@ -1321,6 +1344,24 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			}
 		}
 		ast.IfExpr {
+			// If-expression used as a value: cond ? then_expr : else_expr
+			if node.cond !is ast.EmptyExpr && node.stmts.len == 1 && node.stmts[0] is ast.ExprStmt
+				&& node.else_expr is ast.IfExpr {
+				then_stmt := node.stmts[0] as ast.ExprStmt
+				else_if := node.else_expr as ast.IfExpr
+				if else_if.cond is ast.EmptyExpr && else_if.stmts.len == 1
+					&& else_if.stmts[0] is ast.ExprStmt {
+					else_stmt := else_if.stmts[0] as ast.ExprStmt
+					g.sb.write_string('(')
+					g.gen_expr(node.cond)
+					g.sb.write_string(' ? ')
+					g.gen_expr(then_stmt.expr)
+					g.sb.write_string(' : ')
+					g.gen_expr(else_stmt.expr)
+					g.sb.write_string(')')
+					return
+				}
+			}
 			// Skip empty conditions (pure else blocks shouldn't appear at top level)
 			if node.cond is ast.EmptyExpr {
 				return
@@ -1543,6 +1584,40 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 			g.sb.write_string(')')
 			return
 		}
+		// module.fn(...) => module__fn(...)
+		if lhs.lhs is ast.Ident && g.is_module_ident(lhs.lhs.name) {
+			name = '${lhs.lhs.name}__${sanitize_fn_ident(lhs.rhs.name)}'
+		} else {
+			// value.method(args...) => ReceiverType__method(value, args...)
+			receiver_type := g.get_expr_type(lhs.lhs)
+			base_type := if receiver_type.ends_with('*') {
+				receiver_type[..receiver_type.len - 1]
+			} else {
+				receiver_type
+			}
+			method_name := sanitize_fn_ident(lhs.rhs.name)
+			g.sb.write_string('${base_type}__${method_name}(')
+			g.gen_expr(lhs.lhs)
+			for arg in args {
+				g.sb.write_string(', ')
+				g.gen_expr(arg)
+			}
+			g.sb.write_string(')')
+			return
+		}
+	}
+
+	// Transformer helper maps directly to builtin implementation name in vlib.
+	if name == 'builtin__new_array_from_c_array_noscan' {
+		name = 'new_array_from_c_array'
+	}
+	if name == 'array__contains_int' && args.len == 2 {
+		g.sb.write_string('array__contains(')
+		g.gen_expr(args[0])
+		g.sb.write_string(', &((int[]){')
+		g.gen_expr(args[1])
+		g.sb.write_string('})[0])')
+		return
 	}
 
 	// Handle builtin print functions with type-aware argument conversion
@@ -1589,7 +1664,7 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 
 	// Regular function call - mangle name based on module
 	c_name := if name != '' && g.cur_module != '' && g.cur_module != 'main'
-		&& g.cur_module != 'builtin' {
+		&& g.cur_module != 'builtin' && !name.contains('__') {
 		'${g.cur_module}__${name}'
 	} else {
 		name
@@ -2164,14 +2239,25 @@ fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
 		} else {
 			field.name
 		}
+		const_key := 'const_${name}'
+		if const_key in g.emitted_types {
+			continue
+		}
+		g.emitted_types[const_key] = true
 		typ := g.get_expr_type(field.value)
 		if typ == 'string' {
 			// String constants need a global variable
 			g.sb.write_string('string ${name} = ')
 			g.gen_expr(field.value)
 			g.sb.writeln(';')
+		} else if typ in ['bool', 'char', 'rune', 'int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16',
+			'u32', 'u64', 'usize', 'isize', 'f32', 'f64', 'float_literal', 'int_literal'] {
+			// Prefer typed globals over macros to avoid textual replacement collisions.
+			g.sb.write_string('static const ${typ} ${name} = ')
+			g.gen_expr(field.value)
+			g.sb.writeln(';')
 		} else {
-			// Integer/other constants: use #define for TCC compatibility
+			// Fallback for aggregate literals and other complex consts.
 			g.sb.write_string('#define ${name} ')
 			g.gen_expr(field.value)
 			g.sb.writeln('')
