@@ -41,7 +41,7 @@ mut:
 
 struct StructDeclInfo {
 	decl   ast.StructDecl
-	module string
+	mod string
 }
 
 const primitive_types = ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64',
@@ -216,7 +216,7 @@ pub fn (mut g Gen) gen() string {
 				}
 				all_structs << StructDeclInfo{
 					decl:   stmt
-					module: g.cur_module
+					mod: g.cur_module
 				}
 			}
 		}
@@ -226,7 +226,7 @@ pub fn (mut g Gen) gen() string {
 	for _ in 0 .. all_structs.len {
 		mut emitted_any := false
 		for info in all_structs {
-			g.cur_module = info.module
+			g.cur_module = info.mod
 			name := g.get_struct_name(info.decl)
 			if 'body_${name}' in g.emitted_types {
 				continue
@@ -243,7 +243,7 @@ pub fn (mut g Gen) gen() string {
 	}
 	// Emit any remaining structs (circular deps - just emit them)
 	for info in all_structs {
-		g.cur_module = info.module
+		g.cur_module = info.mod
 		g.gen_struct_decl(info.decl)
 	}
 	// Pass 3.25: Tuple aliases (multiple-return lowering support)
