@@ -220,7 +220,6 @@ fn (mut b Builder) gen_native(backend_arch pref.Arch) {
 	stage_start = native_sw.elapsed()
 	insel.select(mut mir_mod, arch)
 	print_time('InsSel', time.Duration(native_sw.elapsed() - stage_start))
-	backend_mod := mir_mod.ssa()
 
 	// Determine output binary name from the last user file
 	output_binary := if b.pref.output_file != '' {
@@ -233,7 +232,7 @@ fn (mut b Builder) gen_native(backend_arch pref.Arch) {
 
 	if arch == .arm64 && os.user_os() == 'macos' {
 		// Use built-in linker for ARM64 macOS
-		mut gen := arm64.Gen.new(backend_mod)
+		mut gen := arm64.Gen.new(&mir_mod)
 		gen.gen()
 		gen.link_executable(output_binary)
 
@@ -245,11 +244,11 @@ fn (mut b Builder) gen_native(backend_arch pref.Arch) {
 		obj_file := 'main.o'
 
 		if arch == .arm64 {
-			mut gen := arm64.Gen.new(backend_mod)
+			mut gen := arm64.Gen.new(&mir_mod)
 			gen.gen()
 			gen.write_file(obj_file)
 		} else {
-			mut gen := x64.Gen.new(backend_mod)
+			mut gen := x64.Gen.new(&mir_mod)
 			gen.gen()
 			gen.write_file(obj_file)
 		}

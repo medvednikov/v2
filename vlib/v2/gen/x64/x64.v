@@ -4,11 +4,12 @@
 
 module x64
 
+import v2.mir
 import v2.ssa
 import encoding.binary
 
 pub struct Gen {
-	mod &ssa.Module
+	mod &mir.Module
 mut:
 	elf &ElfObject
 
@@ -33,7 +34,7 @@ mut:
 	has_call bool
 }
 
-pub fn Gen.new(mod &ssa.Module) &Gen {
+pub fn Gen.new(mod &mir.Module) &Gen {
 	return &Gen{
 		mod: mod
 		elf: ElfObject.new()
@@ -68,7 +69,7 @@ pub fn (mut g Gen) gen() {
 	}
 }
 
-fn (mut g Gen) gen_func(func ssa.Function) {
+fn (mut g Gen) gen_func(func mir.Function) {
 	g.curr_offset = g.elf.text_data.len
 	g.stack_map = map[int]int{}
 	g.alloca_offsets = map[int]int{}
@@ -200,16 +201,17 @@ fn (mut g Gen) gen_func(func ssa.Function) {
 
 fn (mut g Gen) gen_instr(val_id int) {
 	instr := g.mod.instrs[g.mod.values[val_id].index]
+	op := g.selected_opcode(instr)
 
 	// Temps: 0=RAX, 1=RCX
 
-	match instr.op {
+	match op {
 		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt,
 		.le, .ge {
 			g.load_val_to_reg(0, instr.operands[0]) // RAX
 			g.load_val_to_reg(1, instr.operands[1]) // RCX
 
-			match instr.op {
+			match op {
 				.add {
 					asm_add_rax_rcx(mut g)
 				}
@@ -248,7 +250,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				}
 				.eq, .ne, .lt, .gt, .le, .ge {
 					asm_cmp_rax_rcx(mut g)
-					cc := match instr.op {
+					cc := match op {
 						.eq { cc_e }
 						.ne { cc_ne }
 						.lt { cc_l }
@@ -474,8 +476,37 @@ fn (mut g Gen) gen_instr(val_id int) {
 			asm_ud2(mut g)
 		}
 		else {
-			eprintln('x64: unknown op ${instr.op}')
+			eprintln('x64: unknown op ${op} (${instr.selected_op})')
 		}
+	}
+}
+
+fn (g Gen) selected_opcode(instr mir.Instruction) ssa.OpCode {
+	if instr.selected_op == '' {
+		return instr.op
+	}
+	suffix := if instr.selected_op.contains('.') {
+		instr.selected_op.all_after('.')
+	} else {
+		instr.selected_op
+	}
+	return match suffix {
+		'add_rr' { .add }
+		'sub_rr' { .sub }
+		'mul_rr' { .mul }
+		'sdiv_rr' { .sdiv }
+		'and_rr' { .and_ }
+		'or_rr' { .or_ }
+		'xor_rr' { .xor }
+		'load_mr' { .load }
+		'store_rm' { .store }
+		'call' { .call }
+		'ret' { .ret }
+		'br' { .br }
+		'jmp' { .jmp }
+		'switch' { .switch_ }
+		'copy' { .assign }
+		else { instr.op }
 	}
 }
 
@@ -599,7 +630,7 @@ pub fn (mut g Gen) write_file(path string) {
 
 // Register Allocation Logic
 
-fn (mut g Gen) allocate_registers(func ssa.Function) {
+fn (mut g Gen) allocate_registers(func mir.Function) {
 	mut intervals := map[int]&Interval{}
 	mut instr_idx := 0
 

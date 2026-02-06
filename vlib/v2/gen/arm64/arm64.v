@@ -4,12 +4,13 @@
 
 module arm64
 
+import v2.mir
 import v2.ssa
 import v2.types
 import encoding.binary
 
 pub struct Gen {
-	mod &ssa.Module
+	mod &mir.Module
 mut:
 	macho &MachOObject
 pub mut:
@@ -39,7 +40,7 @@ pub mut:
 	x8_save_offset int
 }
 
-pub fn Gen.new(mod &ssa.Module) &Gen {
+pub fn Gen.new(mod &mir.Module) &Gen {
 	return &Gen{
 		mod:   mod
 		macho: MachOObject.new()
@@ -106,7 +107,7 @@ pub fn (mut g Gen) gen() {
 	}
 }
 
-fn (mut g Gen) gen_func(func ssa.Function) {
+fn (mut g Gen) gen_func(func mir.Function) {
 	g.curr_offset = g.macho.text_data.len
 	g.stack_map = map[int]int{}
 	g.alloca_offsets = map[int]int{}
@@ -120,10 +121,10 @@ fn (mut g Gen) gen_func(func ssa.Function) {
 	g.x8_save_offset = 0
 	g.allocate_registers(func)
 
-	// Check if function returns a large struct (> 16 bytes) requiring x8 preservation
+	// Check if function requires indirect return pointer preservation in x8.
 	fn_ret_typ := g.mod.type_store.types[func.typ]
 	fn_ret_size := g.type_size(func.typ)
-	needs_x8_save := fn_ret_typ.kind == .struct_t && fn_ret_size > 16
+	needs_x8_save := func.abi_ret_indirect || (fn_ret_typ.kind == .struct_t && fn_ret_size > 16)
 
 	// Callee-saved registers are pushed at [fp - 8], [fp - 16], etc.
 	// We need to account for this when computing stack offsets
@@ -138,13 +139,14 @@ fn (mut g Gen) gen_func(func ssa.Function) {
 		slot_offset += 8
 	}
 
-	for pid in func.params {
+	for pi, pid in func.params {
 		// For large struct parameters (> 16 bytes), allocate full struct size
 		// On ARM64, these are passed by pointer, and we need to copy the struct locally
 		param_typ := g.mod.values[pid].typ
 		param_type_info := g.mod.type_store.types[param_typ]
 		param_size := g.type_size(param_typ)
-		if param_type_info.kind == .struct_t && param_size > 16 {
+		is_indirect_param := pi < func.abi_param_class.len && func.abi_param_class[pi] == .indirect
+		if is_indirect_param || (param_type_info.kind == .struct_t && param_size > 16) {
 			// Align to 16 bytes and allocate full struct size
 			slot_offset = (slot_offset + 15) & ~0xF
 			slot_offset += param_size
@@ -370,8 +372,9 @@ fn (mut g Gen) gen_func(func ssa.Function) {
 
 fn (mut g Gen) gen_instr(val_id int) {
 	instr := g.mod.instrs[g.mod.values[val_id].index]
+	op := g.selected_opcode(instr)
 
-	match instr.op {
+	match op {
 		.fadd, .fsub, .fmul, .fdiv, .frem {
 			// Float operations using scalar SIMD instructions (d0-d7)
 			dest_reg := if r := g.reg_map[val_id] { r } else { 8 }
@@ -383,7 +386,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.load_float_operand(instr.operands[1], 1) // d1
 
 			// Perform float operation: result in d0
-			match instr.op {
+			match op {
 				.fadd {
 					g.emit(asm_fadd_d0_d0_d1())
 				}
@@ -454,8 +457,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.store_reg_to_val(dest_reg, val_id)
 			}
 		}
-		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt,
-		.le, .ge {
+			.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr, .eq, .ne, .lt, .gt,
+			.le, .ge {
 			// Optimization: Use actual registers if allocated, avoid shuffling to x8/x9
 			// Dest register
 			dest_reg := if r := g.reg_map[val_id] { r } else { 8 }
@@ -469,7 +472,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			mut rhs_reg := 9 // Default scratch for RHS
 
 			op1 := g.mod.values[instr.operands[1]]
-			if op1.kind == .constant && instr.op in [.add, .sub] {
+				if op1.kind == .constant && op in [.add, .sub] {
 				v := g.get_const_int(instr.operands[1])
 				if v >= 0 && v < 4096 {
 					is_imm = true
@@ -483,7 +486,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				rhs_reg = g.get_operand_reg(instr.operands[1], scratch)
 			}
 
-			match instr.op {
+				match op {
 				.add {
 					if is_imm {
 						g.emit(asm_add_imm(Reg(dest_reg), Reg(lhs_reg), u32(imm_val)))
@@ -539,7 +542,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					g.emit(asm_cmp_reg(Reg(lhs_reg), Reg(rhs_reg)))
 
 					// CSET Rd, cond
-					match instr.op {
+						match op {
 						.eq { g.emit(asm_cset_eq(Reg(dest_reg))) }
 						.ne { g.emit(asm_cset_ne(Reg(dest_reg))) }
 						.lt { g.emit(asm_cset_lt(Reg(dest_reg))) }
@@ -1051,9 +1054,38 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.emit_str_reg_offset(8, 29, result_offset + idx * 8)
 		}
 		else {
-			eprintln('arm64: unknown instruction ${instr}')
+			eprintln('arm64: unknown instruction ${op} (${instr.selected_op})')
 			exit(1)
 		}
+	}
+}
+
+fn (g Gen) selected_opcode(instr mir.Instruction) ssa.OpCode {
+	if instr.selected_op == '' {
+		return instr.op
+	}
+	suffix := if instr.selected_op.contains('.') {
+		instr.selected_op.all_after('.')
+	} else {
+		instr.selected_op
+	}
+	return match suffix {
+		'add_rr' { .add }
+		'sub_rr' { .sub }
+		'mul_rr' { .mul }
+		'sdiv_rr' { .sdiv }
+		'and_rr' { .and_ }
+		'or_rr' { .or_ }
+		'xor_rr' { .xor }
+		'load_mr' { .load }
+		'store_rm' { .store }
+		'call' { .call }
+		'ret' { .ret }
+		'br' { .br }
+		'jmp' { .jmp }
+		'switch' { .switch_ }
+		'copy' { .assign }
+		else { instr.op }
 	}
 }
 
@@ -1474,7 +1506,7 @@ fn (g &Gen) lookup_struct_from_env(name string) ?types.Struct {
 	return none
 }
 
-fn (mut g Gen) allocate_registers(func ssa.Function) {
+fn (mut g Gen) allocate_registers(func mir.Function) {
 	mut intervals := map[int]&Interval{}
 	mut call_indices := []int{}
 	mut instr_idx := 0
