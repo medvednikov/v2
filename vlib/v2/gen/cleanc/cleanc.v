@@ -1233,19 +1233,24 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		lhs_tuple := node.lhs[0] as ast.Tuple
 		tuple_lhs = lhs_tuple.exprs.clone()
 	}
-	if tuple_lhs.len > 1 && node.rhs.len == 1 {
-		mut tuple_type := g.get_expr_type(rhs)
-		if tuple_type == 'int' {
-			if rhs is ast.CallExpr {
-				if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
-					tuple_type = ret
-				}
-			} else if rhs is ast.CallOrCastExpr {
-				if ret := g.get_call_return_type(rhs.lhs, 1) {
-					tuple_type = ret
+		if tuple_lhs.len > 1 && node.rhs.len == 1 {
+			mut tuple_type := g.get_expr_type(rhs)
+			if tuple_type == 'int' {
+				if rhs is ast.CallExpr {
+					if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
+						tuple_type = ret
+					}
+				} else if rhs is ast.CallOrCastExpr {
+					if ret := g.get_call_return_type(rhs.lhs, 1) {
+						tuple_type = ret
+					}
+				} else if rhs is ast.CastExpr {
+					cast_type := g.expr_type_to_c(rhs.typ)
+					if cast_type != '' {
+						tuple_type = cast_type
+					}
 				}
 			}
-		}
 		mut wrapped_tuple_type := ''
 		if tuple_type.starts_with('_result_') {
 			base := g.result_value_type(tuple_type)
@@ -2728,6 +2733,31 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.sb.write_string(node.rhs.name)
 				return
 			}
+			if node.lhs is ast.Ident {
+				mut is_known_var := node.lhs.name in g.local_var_types
+				if !is_known_var && g.cur_fn_scope != unsafe { nil } {
+					if obj := g.cur_fn_scope.lookup_parent(node.lhs.name, 0) {
+						if obj !is types.Module {
+							is_known_var = true
+						}
+					}
+				}
+				if !is_known_var && !g.is_module_ident(node.lhs.name) {
+					if enum_name := g.get_expr_type_from_env(node) {
+						if enum_name != '' && g.is_enum_type(enum_name) {
+							g.sb.write_string('${enum_name}__${node.rhs.name}')
+							return
+						}
+					}
+					if node.lhs.name in ['bool', 'string', 'int', 'i8', 'i16', 'i32', 'i64', 'u8',
+						'u16', 'u32', 'u64', 'f32', 'f64', 'byte', 'rune'] {
+						if enum_name := g.enum_value_to_enum[node.rhs.name] {
+							g.sb.write_string('${enum_name}__${node.rhs.name}')
+							return
+						}
+					}
+				}
+			}
 			// If checker already resolved this selector as an enum value, use Enum__field.
 			if raw_type := g.get_raw_type(node) {
 				if raw_type is types.Enum {
@@ -3111,11 +3141,10 @@ fn (mut g Gen) gen_if_expr_ternary(node ast.IfExpr) {
 		stmt := node.stmts[0] as ast.ExprStmt
 		if stmt.expr is ast.IfExpr {
 			nested := stmt.expr as ast.IfExpr
-			if !g.if_expr_can_be_ternary(nested) {
-				g.gen_if_expr_value(nested)
-			} else {
-				g.gen_expr(stmt.expr)
-			}
+			g.gen_if_expr_value(nested)
+		} else if stmt.expr is ast.ParenExpr && stmt.expr.expr is ast.IfExpr {
+			nested := stmt.expr.expr as ast.IfExpr
+			g.gen_if_expr_value(nested)
 		} else {
 			g.gen_expr(stmt.expr)
 		}
@@ -3125,29 +3154,30 @@ fn (mut g Gen) gen_if_expr_ternary(node ast.IfExpr) {
 	g.sb.write_string(' : ')
 	if node.else_expr is ast.IfExpr {
 		else_if := node.else_expr as ast.IfExpr
-		if g.if_expr_can_be_ternary(else_if) {
-			g.gen_if_expr_ternary(else_if)
-		} else {
-			g.gen_if_expr_value(else_if)
-		}
+		g.gen_if_expr_value(else_if)
 	} else if node.else_expr is ast.EmptyExpr {
 		g.sb.write_string('0')
 	} else {
-		g.gen_expr(node.else_expr)
+		if node.else_expr is ast.ParenExpr && node.else_expr.expr is ast.IfExpr {
+			nested := node.else_expr.expr as ast.IfExpr
+			g.gen_if_expr_value(nested)
+		} else {
+			g.gen_expr(node.else_expr)
+		}
 	}
 	g.sb.write_string(')')
 }
 
 fn (mut g Gen) gen_if_expr_value(node ast.IfExpr) {
-	if g.if_expr_can_be_ternary(node) {
+	mut value_type := g.infer_if_expr_type(node)
+	if g.if_expr_can_be_ternary(node) && value_type != '' && value_type != 'void' {
 		g.gen_if_expr_ternary(node)
 		return
 	}
-	mut value_type := g.infer_if_expr_type(node)
 	if value_type == '' || value_type == 'void' {
 		g.sb.write_string('({ ')
 		g.gen_expr(node)
-		g.sb.write_string('0; })')
+		g.sb.write_string('; 0; })')
 		return
 	}
 	if value_type == 'int_literal' {

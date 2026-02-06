@@ -783,8 +783,18 @@ fn (mut t Transformer) transform_assign_stmt(stmt ast.AssignStmt) ast.AssignStmt
 		// Transform LHS expressions (including nested IndexExpr)
 		lhs << t.transform_expr(expr)
 	}
+	is_tuple_lhs := stmt.lhs.len > 1 || (stmt.lhs.len == 1 && stmt.lhs[0] is ast.Tuple)
+	mut rhs_src := stmt.rhs.clone()
+	if is_tuple_lhs && stmt.rhs.len == 1 && stmt.rhs[0] is ast.PostfixExpr {
+		postfix := stmt.rhs[0] as ast.PostfixExpr
+		if postfix.op in [.not, .question] {
+			// For tuple destructuring with `call()!`, keep the raw call expression.
+			// Tuple/result unwrapping is handled later by codegen.
+			rhs_src = [postfix.expr]
+		}
+	}
 	mut rhs := []ast.Expr{cap: stmt.rhs.len}
-	for _, expr in stmt.rhs {
+	for _, expr in rhs_src {
 		// Type information is already in scope from checker, no need to track here
 		rhs << t.transform_expr(expr)
 	}
@@ -4361,15 +4371,29 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 			// result/option expression to the checker-inferred value type.
 			if expr.op in [.not, .question] {
 				inner := t.transform_expr(expr.expr)
-				if typ := t.get_expr_type(expr) {
-					type_name := t.type_to_c_name(typ)
-					if type_name != '' {
-						return ast.CastExpr{
-							typ: ast.Expr(ast.Ident{
-								name: type_name
-							})
-							expr: inner
+				mut type_name := ''
+				if inner_type := t.get_expr_type(expr.expr) {
+					match inner_type {
+						types.ResultType {
+							type_name = t.type_to_c_name(inner_type.base_type)
 						}
+						types.OptionType {
+							type_name = t.type_to_c_name(inner_type.base_type)
+						}
+						else {}
+					}
+				}
+				if type_name == '' {
+					if typ := t.get_expr_type(expr) {
+						type_name = t.type_to_c_name(typ)
+					}
+				}
+				if type_name != '' {
+					return ast.CastExpr{
+						typ: ast.Expr(ast.Ident{
+							name: type_name
+						})
+						expr: inner
 					}
 				}
 				inner
