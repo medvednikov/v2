@@ -17,6 +17,7 @@ mut:
 	sb                     strings.Builder
 	indent                 int
 	cur_fn_scope           &types.Scope = unsafe { nil }
+	cur_fn_param_types     map[string]string // parameter name -> C type, for fn_scope fallback
 	cur_fn_name            string
 	cur_fn_ret_type        string
 	cur_module             string
@@ -1063,6 +1064,25 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 			}
 		} else {
 			g.cur_fn_scope = unsafe { nil }
+		}
+	}
+
+	// Populate parameter type map as fallback when fn_scope is unavailable
+	g.cur_fn_param_types.clear()
+	if node.is_method && node.receiver.name != '' {
+		receiver_c_type := g.expr_type_to_c(node.receiver.typ)
+		if node.receiver.is_mut {
+			g.cur_fn_param_types[node.receiver.name] = '${receiver_c_type}*'
+		} else {
+			g.cur_fn_param_types[node.receiver.name] = receiver_c_type
+		}
+	}
+	for param in node.typ.params {
+		param_c_type := g.expr_type_to_c(param.typ)
+		if param.is_mut {
+			g.cur_fn_param_types[param.name] = '${param_c_type}*'
+		} else {
+			g.cur_fn_param_types[param.name] = param_c_type
 		}
 	}
 
@@ -2780,6 +2800,17 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			}
 			lhs_type := g.get_expr_type(node.lhs)
 			if node.rhs.name == 'data' {
+				if node.lhs is ast.Ident && node.lhs.name.starts_with('_or_t') && lhs_type == 'int' {
+					eprint('DEBUG .data on ${node.lhs.name}: lhs_type="${lhs_type}" cur_fn=${g.cur_fn_name} has_scope=${g.cur_fn_scope != unsafe { nil }} scope_vars: ')
+					if g.cur_fn_scope != unsafe { nil } {
+						for vname, _ in g.cur_fn_scope.objects {
+							if vname.starts_with('_or_t') || vname.starts_with('_or') {
+								eprint('${vname} ')
+							}
+						}
+					}
+					eprintln('')
+				}
 				if lhs_type.starts_with('_result_') && g.result_value_type(lhs_type) != '' {
 					g.gen_unwrapped_value_expr(node.lhs)
 					return
@@ -4212,6 +4243,10 @@ fn (mut g Gen) get_local_var_c_type(name string) ?string {
 			}
 			return g.types_type_to_c(obj.typ())
 		}
+	}
+	// Fallback to parameter types from AST
+	if name in g.cur_fn_param_types {
+		return g.cur_fn_param_types[name]
 	}
 	return none
 }
