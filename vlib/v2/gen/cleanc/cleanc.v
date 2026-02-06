@@ -1049,48 +1049,6 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		}
 	}
 
-	if fn_name in ['u64_to_hex', 'u64_to_hex_no_leading_zeros'] {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('char tmp[65] = {0};')
-		g.write_indent()
-		g.sb.writeln('(void)len;')
-		g.write_indent()
-		g.sb.writeln('snprintf(tmp, sizeof(tmp), "%llx", (unsigned long long)nn);')
-		g.write_indent()
-		g.sb.writeln('return tos_clone((u8*)(tmp));')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	// The lowering for auto-generated Array_* .free methods is currently incomplete.
-	// Emit a conservative container free to keep C generation progressing.
-	if fn_name.starts_with('Array_') && fn_name.ends_with('__free') {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		mut recv_name := 'a'
-		mut recv_is_ptr := false
-		if node.is_method && node.receiver.name != '' {
-			recv_name = node.receiver.name
-			recv_is_ptr = node.receiver.is_mut || g.expr_type_to_c(node.receiver.typ).ends_with('*')
-		} else if node.typ.params.len > 0 {
-			recv_name = node.typ.params[0].name
-			recv_is_ptr = node.typ.params[0].is_mut
-				|| g.expr_type_to_c(node.typ.params[0].typ).ends_with('*')
-		}
-		arg_expr := if recv_is_ptr { recv_name } else { '&${recv_name}' }
-		g.write_indent()
-		g.sb.writeln('array__free((array*)(${arg_expr}));')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-
 	// Generate function header
 	g.gen_fn_head(node)
 	g.sb.writeln(' {')
