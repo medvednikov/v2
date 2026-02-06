@@ -1029,14 +1029,21 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		// (e.g. "[]string__free"), while get_fn_name returns C-style names
 		// (e.g. "Array_string__free"). Use V-style name for scope lookup.
 		scope_fn_name := if node.is_method && node.receiver.name != '' {
-			if raw_type := g.get_raw_type(node.receiver.typ) {
-				base_type := raw_type.base_type()
-				'${base_type.name()}__${node.name}'
+			// Use the receiver type's C representation and convert to V-style scope name.
+			// The checker stores scopes using V-style receiver type names
+			// (e.g. "[]string__free"), while get_fn_name returns C-style names
+			// (e.g. "Array_string__free").
+			receiver_c_type := g.expr_type_to_c(node.receiver.typ)
+			base_c_type := if receiver_c_type.ends_with('*') {
+				receiver_c_type[..receiver_c_type.len - 1]
 			} else {
-				fn_name
+				receiver_c_type
 			}
+			// Convert C-style type name to V-style for scope lookup
+			v_type_name := g.c_type_to_v_name(base_c_type)
+			'${v_type_name}__${node.name}'
 		} else {
-			fn_name
+			node.name
 		}
 		if fn_scope := g.env.get_fn_scope(g.cur_module, scope_fn_name) {
 			g.cur_fn_scope = fn_scope
@@ -4145,6 +4152,16 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 		}
 	}
 	return none
+}
+
+// c_type_to_v_name converts a C-style type name back to V-style for scope lookup.
+// e.g. "Array_string" -> "[]string", "Map_string_int" -> "map[string]int"
+fn (g &Gen) c_type_to_v_name(c_name string) string {
+	if c_name.starts_with('Array_') {
+		elem := c_name[6..] // strip "Array_"
+		return '[]${elem}'
+	}
+	return c_name
 }
 
 // get_local_var_c_type looks up a local variable's C type string from the function scope

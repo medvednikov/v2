@@ -1217,19 +1217,25 @@ fn (mut c Checker) stmt(stmt ast.Stmt) {
 					}
 				}
 				mut value_type := expr_type.value_type()
+				// For iterator structs (e.g. RunesIterator), value_type() returns
+				// the struct itself. The transformer lowers these to direct iteration,
+				// so don't flatten the stale iterator type to fn_root_scope.
+				is_iterator_struct := value_type is Struct
 				if stmt.init.value is ast.ModifierExpr {
 					if stmt.init.value.kind == .key_mut {
 						value_type = value_type.ref()
 					}
 					if stmt.init.value.expr is ast.Ident {
 						c.scope.insert(stmt.init.value.expr.name, value_type)
-						if c.fn_root_scope != unsafe { nil } && c.fn_root_scope != c.scope {
+						if !is_iterator_struct && c.fn_root_scope != unsafe { nil }
+							&& c.fn_root_scope != c.scope {
 							c.fn_root_scope.objects[stmt.init.value.expr.name] = value_type
 						}
 					}
 				} else if stmt.init.value is ast.Ident {
 					c.scope.insert(stmt.init.value.name, value_type)
-					if c.fn_root_scope != unsafe { nil } && c.fn_root_scope != c.scope {
+					if !is_iterator_struct && c.fn_root_scope != unsafe { nil }
+						&& c.fn_root_scope != c.scope {
 						c.fn_root_scope.objects[stmt.init.value.name] = value_type
 					}
 				}
