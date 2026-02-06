@@ -3481,10 +3481,47 @@ fn (mut g Gen) resolve_call_name(lhs ast.Expr, arg_count int) string {
 			name = '${base_type}__${method_name}'
 			if name !in g.fn_return_types && name !in g.fn_param_is_ptr {
 				expected_params := arg_count + 1
-				array_candidate := 'array__${method_name}'
-				if params := g.fn_param_is_ptr[array_candidate] {
-					if params.len == expected_params {
-						name = array_candidate
+				mut is_array_receiver := base_type == 'array' || base_type.starts_with('Array_')
+				if !is_array_receiver {
+					if raw_type := g.get_raw_type(lhs.lhs) {
+						match raw_type {
+							types.Array, types.ArrayFixed {
+								is_array_receiver = true
+							}
+							types.Pointer {
+								match raw_type.base_type {
+									types.Array, types.ArrayFixed {
+										is_array_receiver = true
+									}
+									types.Alias {
+										match raw_type.base_type.base_type {
+											types.Array, types.ArrayFixed {
+												is_array_receiver = true
+											}
+											else {}
+										}
+									}
+									else {}
+								}
+							}
+							types.Alias {
+								match raw_type.base_type {
+									types.Array, types.ArrayFixed {
+										is_array_receiver = true
+									}
+									else {}
+								}
+							}
+							else {}
+						}
+					}
+				}
+				if is_array_receiver {
+					array_candidate := 'array__${method_name}'
+					if params := g.fn_param_is_ptr[array_candidate] {
+						if params.len == expected_params {
+							name = array_candidate
+						}
 					}
 				}
 				if name == '' || (name !in g.fn_return_types && name !in g.fn_param_is_ptr) {
@@ -4235,11 +4272,54 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 					types.ArrayFixed {
 						return g.types_type_to_c(raw_type.elem_type)
 					}
+					types.Alias {
+						match raw_type.base_type {
+							types.Array {
+								return g.types_type_to_c(raw_type.base_type.elem_type)
+							}
+							types.ArrayFixed {
+								return g.types_type_to_c(raw_type.base_type.elem_type)
+							}
+							else {}
+						}
+					}
+					types.Pointer {
+						match raw_type.base_type {
+							types.Array {
+								return g.types_type_to_c(raw_type.base_type.elem_type)
+							}
+							types.ArrayFixed {
+								return g.types_type_to_c(raw_type.base_type.elem_type)
+							}
+							types.Alias {
+								match raw_type.base_type.base_type {
+									types.Array {
+										return g.types_type_to_c(raw_type.base_type.base_type.elem_type)
+									}
+									types.ArrayFixed {
+										return g.types_type_to_c(raw_type.base_type.base_type.elem_type)
+									}
+									else {}
+								}
+							}
+							types.String {
+								return 'u8'
+							}
+							else {}
+						}
+					}
 					types.String {
 						return 'u8'
 					}
 					else {}
 				}
+			}
+			lhs_type := g.get_expr_type(node.lhs)
+			if lhs_type.starts_with('Array_') {
+				return lhs_type['Array_'.len..].trim_right('*')
+			}
+			if lhs_type == 'string*' {
+				return 'u8'
 			}
 			return 'int'
 		}

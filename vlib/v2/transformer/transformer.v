@@ -3986,15 +3986,32 @@ fn (mut t Transformer) transform_for_stmt(stmt ast.ForStmt) ast.ForStmt {
 			}
 		}
 		if iter_type := t.get_expr_type(for_in.expr) {
+			// Normalize pointer/alias wrappers so for-in lowering works for
+			// method receivers like `mut a []T` and aliased array types.
+			mut iter_base := iter_type
+			for {
+				if iter_base is types.Pointer {
+					ptr := iter_base as types.Pointer
+					iter_base = ptr.base_type
+					continue
+				}
+				if iter_base is types.Alias {
+					alias_t := iter_base as types.Alias
+					iter_base = alias_t.base_type
+					continue
+				}
+				break
+			}
 			// Fixed array - transform to indexed for loop with literal size
-			if iter_type is types.ArrayFixed {
-				result := t.transform_fixed_array_for_in(stmt, for_in, iter_type)
+			if iter_base is types.ArrayFixed {
+				arr_fixed := iter_base as types.ArrayFixed
+				result := t.transform_fixed_array_for_in(stmt, for_in, arr_fixed)
 				t.close_scope()
 				return result
 			}
 			// Dynamic array or string - transform to indexed for loop with .len
-			if iter_type is types.Array || iter_type is types.String {
-				result := t.transform_array_for_in(stmt, for_in, iter_type)
+			if iter_base is types.Array || iter_base is types.String {
+				result := t.transform_array_for_in(stmt, for_in, iter_base)
 				t.close_scope()
 				return result
 			}
@@ -4045,11 +4062,16 @@ fn (t &Transformer) runes_iterator_base_expr(expr ast.Expr) ?ast.Expr {
 // into: for (int _idx = 0; _idx < arr.len; _idx++) { T x = arr[_idx]; ... }
 fn (mut t Transformer) transform_array_for_in(stmt ast.ForStmt, for_in ast.ForInStmt, iter_type types.Type) ast.ForStmt {
 	mut value_name := '_elem'
+	mut value_lhs := ast.Expr(ast.Ident{
+		name: value_name
+	})
 	if for_in.value is ast.Ident {
 		value_name = for_in.value.name
+		value_lhs = ast.Expr(for_in.value)
 	} else if for_in.value is ast.ModifierExpr {
 		if for_in.value.expr is ast.Ident {
 			value_name = for_in.value.expr.name
+			value_lhs = ast.Expr(for_in.value.expr)
 		}
 	}
 
@@ -4079,9 +4101,7 @@ fn (mut t Transformer) transform_array_for_in(stmt ast.ForStmt, for_in ast.ForIn
 	// Build: elem := arr[_idx]
 	value_assign := ast.AssignStmt{
 		op:  .decl_assign
-		lhs: [ast.Expr(ast.Ident{
-			name: value_name
-		})]
+		lhs: [value_lhs]
 		rhs: [
 			ast.Expr(ast.IndexExpr{
 				lhs:  transformed_expr

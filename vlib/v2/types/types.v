@@ -270,7 +270,9 @@ pub fn (t Type) base_type() Type {
 // return the key type used with for in loops
 pub fn (t Type) key_type() Type {
 	match t {
+		Alias { return t.base_type.key_type() }
 		Map { return t.key_type }
+		Pointer { return t.base_type.key_type() }
 		// TODO: struct here is 'struct string', need to fix this.
 		// we could use an alias? remove once fixed.
 		// Array, ArrayFixed, String, Struct { return int_ }
@@ -283,6 +285,7 @@ pub fn (t Type) key_type() Type {
 // return the value type used with for in loops
 pub fn (t Type) value_type() Type {
 	match t {
+		Alias { return t.base_type.value_type() }
 		Array, ArrayFixed { return t.elem_type }
 		Channel { return t.elem_type or { Type(t) } } // TODO: ?
 		Map { return t.value_type }
