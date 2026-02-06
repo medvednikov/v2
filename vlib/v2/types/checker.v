@@ -569,6 +569,22 @@ fn (mut c Checker) check_types(exp_type Type, got_type Type) bool {
 	if got_type == exp_type {
 		return true
 	}
+	// unwrap aliases for compatibility checks
+	if exp_type is Alias {
+		return c.check_types(exp_type.base_type, got_type)
+	}
+	if got_type is Alias {
+		return c.check_types(exp_type, got_type.base_type)
+	}
+	// allow nil in expression contexts that expect pointer-like values
+	if got_type is Nil {
+		match exp_type {
+			FnType, Interface, Pointer {
+				return true
+			}
+			else {}
+		}
+	}
 	// number literals
 	if exp_type.is_number() && got_type.is_number_literal() {
 		return true
