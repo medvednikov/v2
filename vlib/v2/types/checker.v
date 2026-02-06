@@ -1585,10 +1585,18 @@ fn (mut c Checker) fn_decl(decl ast.FnDecl) {
 	// so that local variables declared in the body are included
 	fn_scope := c.scope
 	scope_fn_name := if decl.is_method {
-		// Get receiver base type name for method scope key
+		// Get receiver base type name for method scope key.
+		// Strip module prefix since set_fn_scope already prepends the module.
 		mut receiver_type := c.expr(decl.receiver.typ)
 		receiver_base_type := receiver_type.base_type()
-		'${receiver_base_type.name()}__${decl.name}'
+		mut recv_name := receiver_base_type.name()
+		if c.cur_file_module != '' {
+			prefix := '${c.cur_file_module}__'
+			if recv_name.starts_with(prefix) {
+				recv_name = recv_name[prefix.len..]
+			}
+		}
+		'${recv_name}__${decl.name}'
 	} else {
 		decl.name
 	}
@@ -1634,7 +1642,7 @@ fn (mut c Checker) fn_decl(decl ast.FnDecl) {
 					}
 					eprintln('DEBUG: set_fn_scope(${cur_file_module}, ${scope_fn_name}) vars=${var_names}')
 				}
-				c.env.set_fn_scope(cur_file_module, scope_fn_name, fn_scope)
+					c.env.set_fn_scope(cur_file_module, scope_fn_name, fn_scope)
 				c.scope = prev_scope
 			}
 			c.env.cur_generic_types = []

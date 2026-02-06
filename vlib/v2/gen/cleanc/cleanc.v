@@ -1450,6 +1450,36 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		g.sb.writeln(';')
 	} else {
 		// Assignment
+		// Handle result/option .data field write: _t.data = val -> unwrapped value pointer = val
+		if lhs is ast.SelectorExpr && lhs.rhs.name == 'data' {
+			mut lhs_type := g.get_expr_type(lhs.lhs)
+			if lhs.lhs is ast.Ident && lhs.lhs.name.starts_with('_or_') {
+				eprintln('DBG .data write: var=${lhs.lhs.name} type=${lhs_type} scope_nil=${g.cur_fn_scope == unsafe { nil }} fn=${g.cur_fn_name}')
+			}
+			if lhs_type == '' || lhs_type == 'int' {
+				if lhs.lhs is ast.Ident && lhs.lhs.name.starts_with('_or_') {
+					if env_type := g.get_expr_type_from_env(lhs.lhs) {
+						lhs_type = env_type
+					}
+				}
+			}
+			if lhs_type.starts_with('_result_') || lhs_type.starts_with('_option_') {
+				base := if lhs_type.starts_with('_result_') {
+					g.result_value_type(lhs_type)
+				} else {
+					option_value_type(lhs_type)
+				}
+				if base != '' && base != 'void' {
+					g.write_indent()
+					g.sb.write_string('(*(${base}*)(((u8*)(&')
+					g.gen_expr(lhs.lhs)
+					g.sb.write_string('.err)) + sizeof(IError))) = ')
+					g.gen_expr(rhs)
+					g.sb.writeln(';')
+					return
+				}
+			}
+		}
 		mut lhs_needs_deref := false
 		if lhs is ast.Ident {
 			if local_type := g.get_local_var_c_type(lhs.name) {
