@@ -695,6 +695,11 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			g.gen_assign_stmt(node)
 		}
 		ast.ExprStmt {
+			if node.expr is ast.IfExpr {
+				g.write_indent()
+				g.gen_if_expr_stmt(node.expr)
+				return
+			}
 			g.write_indent()
 			g.gen_expr(node.expr)
 			g.sb.writeln(';')
@@ -2086,8 +2091,21 @@ fn (g &Gen) is_enum_type(name string) bool {
 }
 
 fn (g &Gen) get_qualified_name(name string) string {
+	if name.contains('__') {
+		return name
+	}
 	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
 		return '${g.cur_module}__${name}'
+	}
+	return name
+}
+
+fn (g &Gen) normalize_enum_name(name string) string {
+	if g.cur_module != '' {
+		double_prefix := '${g.cur_module}__${g.cur_module}__'
+		if name.starts_with(double_prefix) {
+			return name[g.cur_module.len + 2..]
+		}
 	}
 	return name
 }
@@ -2354,13 +2372,21 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 					g.sb.write_string('${type_id}')
 				} else {
 					if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
+						&& !node.name.contains('__')
 						&& 'const_${g.cur_module}__${node.name}' in g.emitted_types {
 						g.sb.write_string('${g.cur_module}__${node.name}')
 					} else {
-					g.sb.write_string(node.name)
+						mut ident_name := node.name
+						if g.cur_module != '' {
+							double_prefix := '${g.cur_module}__${g.cur_module}__'
+							if ident_name.starts_with(double_prefix) {
+								ident_name = ident_name[g.cur_module.len + 2..]
+							}
+						}
+						g.sb.write_string(ident_name)
+					}
 				}
 			}
-		}
 		ast.ParenExpr {
 			g.sb.write_string('(')
 			g.gen_expr(node.expr)
@@ -2733,6 +2759,13 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.sb.write_string(node.rhs.name)
 				return
 			}
+			if node.lhs is ast.Ident && node.lhs.name in ['bool', 'string', 'int', 'i8', 'i16',
+				'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64', 'byte', 'rune'] {
+				if enum_name := g.enum_value_to_enum[node.rhs.name] {
+					g.sb.write_string('${g.normalize_enum_name(enum_name)}__${node.rhs.name}')
+					return
+				}
+			}
 			if node.lhs is ast.Ident {
 				mut is_known_var := node.lhs.name in g.local_var_types
 				if !is_known_var && g.cur_fn_scope != unsafe { nil } {
@@ -2745,14 +2778,14 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				if !is_known_var && !g.is_module_ident(node.lhs.name) {
 					if enum_name := g.get_expr_type_from_env(node) {
 						if enum_name != '' && g.is_enum_type(enum_name) {
-							g.sb.write_string('${enum_name}__${node.rhs.name}')
+							g.sb.write_string('${g.normalize_enum_name(enum_name)}__${node.rhs.name}')
 							return
 						}
 					}
 					if node.lhs.name in ['bool', 'string', 'int', 'i8', 'i16', 'i32', 'i64', 'u8',
 						'u16', 'u32', 'u64', 'f32', 'f64', 'byte', 'rune'] {
 						if enum_name := g.enum_value_to_enum[node.rhs.name] {
-							g.sb.write_string('${enum_name}__${node.rhs.name}')
+							g.sb.write_string('${g.normalize_enum_name(enum_name)}__${node.rhs.name}')
 							return
 						}
 					}
@@ -2781,7 +2814,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 					}
 					if emit_enum_value {
 						enum_name := g.types_type_to_c(raw_type)
-						g.sb.write_string('${enum_name}__${node.rhs.name}')
+						g.sb.write_string('${g.normalize_enum_name(enum_name)}__${node.rhs.name}')
 						return
 					}
 				}
@@ -2849,24 +2882,28 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			if node.lhs is ast.EmptyExpr {
 				if raw_type := g.get_raw_type(node) {
 					if raw_type is types.Enum {
-						g.sb.write_string('${raw_type.name}__${node.rhs.name}')
+						g.sb.write_string('${g.normalize_enum_name(raw_type.name)}__${node.rhs.name}')
 						return
 					}
 				}
 				if enum_name := g.get_expr_type_from_env(node) {
 					if enum_name != '' && enum_name != 'int' {
-						g.sb.write_string('${enum_name}__${node.rhs.name}')
+						g.sb.write_string('${g.normalize_enum_name(enum_name)}__${node.rhs.name}')
 						return
 					}
 				}
 				if enum_name := g.enum_value_to_enum[node.rhs.name] {
-					g.sb.write_string('${enum_name}__${node.rhs.name}')
+					g.sb.write_string('${g.normalize_enum_name(enum_name)}__${node.rhs.name}')
 					return
 				}
 			}
 			// module.const / module.var => module__const / module__var
 			if node.lhs is ast.Ident && g.is_module_ident(node.lhs.name) {
-				g.sb.write_string('${node.lhs.name}__${node.rhs.name}')
+				if node.rhs.name.starts_with('${node.lhs.name}__') {
+					g.sb.write_string(node.rhs.name)
+				} else {
+					g.sb.write_string('${node.lhs.name}__${node.rhs.name}')
+				}
 				return
 			}
 			// Check if LHS is an enum type name -> emit EnumName__field
@@ -2886,48 +2923,12 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			}
 		}
 		ast.IfExpr {
-			// If-expression used as a value: lower to nested ternary.
-			if g.if_expr_can_be_ternary(node) {
+			// If-expression used as a value: prefer ternary when it has a value type.
+			if g.if_expr_can_be_ternary(node) && g.infer_if_expr_type(node) != 'void' {
 				g.gen_if_expr_ternary(node)
 				return
 			}
-			// Skip empty conditions (pure else blocks shouldn't appear at top level)
-			if node.cond is ast.EmptyExpr {
-				return
-			}
-			g.sb.write_string('if (')
-			g.gen_expr(node.cond)
-			g.sb.writeln(') {')
-			g.indent++
-			g.gen_stmts(node.stmts)
-			g.indent--
-			g.write_indent()
-			g.sb.write_string('}')
-			// Handle else / else-if
-			if node.else_expr !is ast.EmptyExpr {
-				if node.else_expr is ast.IfExpr {
-					else_if := node.else_expr as ast.IfExpr
-					if else_if.cond is ast.EmptyExpr {
-						g.sb.writeln(' else {')
-						g.indent++
-						g.gen_stmts(else_if.stmts)
-						g.indent--
-						g.write_indent()
-						g.sb.write_string('}')
-					} else {
-						g.sb.write_string(' else ')
-						g.gen_expr(node.else_expr)
-					}
-				} else {
-					g.sb.writeln(' else {')
-					g.indent++
-					g.gen_stmts_from_expr(node.else_expr)
-					g.indent--
-					g.write_indent()
-					g.sb.write_string('}')
-				}
-			}
-			g.sb.writeln('')
+			g.gen_if_expr_stmt(node)
 		}
 		ast.PostfixExpr {
 			g.gen_expr(node.expr)
@@ -3124,6 +3125,69 @@ fn (g &Gen) if_expr_can_be_ternary(node ast.IfExpr) bool {
 	return true
 }
 
+fn (g &Gen) extract_if_expr(expr ast.Expr) ?ast.IfExpr {
+	match expr {
+		ast.IfExpr {
+			return expr
+		}
+		ast.ParenExpr {
+			return g.extract_if_expr(expr.expr)
+		}
+		ast.ModifierExpr {
+			return g.extract_if_expr(expr.expr)
+		}
+		ast.UnsafeExpr {
+			if expr.stmts.len == 1 && expr.stmts[0] is ast.ExprStmt {
+				return g.extract_if_expr((expr.stmts[0] as ast.ExprStmt).expr)
+			}
+			return none
+		}
+		else {
+			return none
+		}
+	}
+}
+
+fn (mut g Gen) gen_if_expr_stmt(node ast.IfExpr) {
+	// Skip empty conditions (pure else blocks shouldn't appear at top level)
+	if node.cond is ast.EmptyExpr {
+		return
+	}
+	g.sb.write_string('if (')
+	g.gen_expr(node.cond)
+	g.sb.writeln(') {')
+	g.indent++
+	g.gen_stmts(node.stmts)
+	g.indent--
+	g.write_indent()
+	g.sb.write_string('}')
+	// Handle else / else-if
+	if node.else_expr !is ast.EmptyExpr {
+		if node.else_expr is ast.IfExpr {
+			else_if := node.else_expr as ast.IfExpr
+			if else_if.cond is ast.EmptyExpr {
+				g.sb.writeln(' else {')
+				g.indent++
+				g.gen_stmts(else_if.stmts)
+				g.indent--
+				g.write_indent()
+				g.sb.write_string('}')
+			} else {
+				g.sb.write_string(' else ')
+				g.gen_if_expr_stmt(else_if)
+			}
+		} else {
+			g.sb.writeln(' else {')
+			g.indent++
+			g.gen_stmts_from_expr(node.else_expr)
+			g.indent--
+			g.write_indent()
+			g.sb.write_string('}')
+		}
+	}
+	g.sb.writeln('')
+}
+
 fn (mut g Gen) gen_if_expr_ternary(node ast.IfExpr) {
 	if node.cond is ast.EmptyExpr {
 		if node.stmts.len == 1 && node.stmts[0] is ast.ExprStmt {
@@ -3139,11 +3203,7 @@ fn (mut g Gen) gen_if_expr_ternary(node ast.IfExpr) {
 	g.sb.write_string(' ? ')
 	if node.stmts.len == 1 && node.stmts[0] is ast.ExprStmt {
 		stmt := node.stmts[0] as ast.ExprStmt
-		if stmt.expr is ast.IfExpr {
-			nested := stmt.expr as ast.IfExpr
-			g.gen_if_expr_value(nested)
-		} else if stmt.expr is ast.ParenExpr && stmt.expr.expr is ast.IfExpr {
-			nested := stmt.expr.expr as ast.IfExpr
+		if nested := g.extract_if_expr(stmt.expr) {
 			g.gen_if_expr_value(nested)
 		} else {
 			g.gen_expr(stmt.expr)
@@ -3158,8 +3218,7 @@ fn (mut g Gen) gen_if_expr_ternary(node ast.IfExpr) {
 	} else if node.else_expr is ast.EmptyExpr {
 		g.sb.write_string('0')
 	} else {
-		if node.else_expr is ast.ParenExpr && node.else_expr.expr is ast.IfExpr {
-			nested := node.else_expr.expr as ast.IfExpr
+		if nested := g.extract_if_expr(node.else_expr) {
 			g.gen_if_expr_value(nested)
 		} else {
 			g.gen_expr(node.else_expr)
@@ -3176,7 +3235,7 @@ fn (mut g Gen) gen_if_expr_value(node ast.IfExpr) {
 	}
 	if value_type == '' || value_type == 'void' {
 		g.sb.write_string('({ ')
-		g.gen_expr(node)
+		g.gen_if_expr_stmt(node)
 		g.sb.write_string('; 0; })')
 		return
 	}
@@ -3907,10 +3966,12 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 			arg := call_args[0]
 			arg_type := g.get_expr_type(arg)
 
-			c_name := if g.cur_module == 'builtin' {
-				name
-			} else {
-				'builtin__${name}'
+			mut c_name := name
+			builtin_name := 'builtin__${name}'
+			if builtin_name in g.fn_param_is_ptr || builtin_name in g.fn_return_types {
+				c_name = builtin_name
+			} else if name in g.fn_param_is_ptr || name in g.fn_return_types {
+				c_name = name
 			}
 
 			if arg_type == 'string' {
@@ -4323,6 +4384,12 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 		ast.PrefixExpr {
 			if e.op == .amp {
 				return g.expr_type_to_c(e.expr) + '*'
+			}
+			if e.op == .ellipsis {
+				elem_type := mangle_alias_component(g.expr_type_to_c(e.expr))
+				array_type := 'Array_${elem_type}'
+				g.register_alias_type(array_type)
+				return array_type
 			}
 			return 'void*'
 		}
