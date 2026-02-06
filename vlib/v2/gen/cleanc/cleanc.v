@@ -24,7 +24,7 @@ mut:
 	fn_param_is_ptr        map[string][]bool
 	fn_param_types         map[string][]string
 	fn_return_types        map[string]string
-	local_var_types        map[string]string
+
 	fixed_array_fields     map[string]bool
 	fixed_array_field_elem map[string]string
 	fixed_array_globals    map[string]bool
@@ -127,7 +127,7 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 		fn_param_is_ptr:        map[string][]bool{}
 		fn_param_types:         map[string][]string{}
 		fn_return_types:        map[string]string{}
-		local_var_types:        map[string]string{}
+
 		fixed_array_fields:     map[string]bool{}
 		fixed_array_field_elem: map[string]string{}
 		fixed_array_globals:    map[string]bool{}
@@ -1031,23 +1031,6 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 			g.cur_fn_scope = unsafe { nil }
 		}
 	}
-	g.local_var_types = map[string]string{}
-	if node.is_method && node.receiver.name != '' {
-		receiver_type := g.expr_type_to_c(node.receiver.typ)
-		g.local_var_types[node.receiver.name] = if node.receiver.is_mut {
-			receiver_type + '*'
-		} else {
-			receiver_type
-		}
-	}
-	for param in node.typ.params {
-		param_type := g.expr_type_to_c(param.typ)
-		g.local_var_types[param.name] = if param.is_mut {
-			param_type + '*'
-		} else {
-			param_type
-		}
-	}
 
 	// Generate function header
 	g.gen_fn_head(node)
@@ -1178,9 +1161,6 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			if typ == 'float_literal' {
 				typ = 'f64'
 			}
-			if name != '' {
-				g.local_var_types[name] = typ
-			}
 			g.write_indent()
 			g.sb.write_string('${typ} ${name} = ')
 			g.gen_expr(rhs_expr)
@@ -1259,9 +1239,6 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 						continue
 					}
 					elem_type := if i < field_types.len { field_types[i] } else { 'int' }
-					if name != '' {
-						g.local_var_types[name] = elem_type
-					}
 					g.sb.writeln('${elem_type} ${name} = ${tmp_name}.arg${i};')
 				} else {
 					g.gen_expr(lhs_expr)
@@ -1298,9 +1275,6 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			if array_init.typ is ast.Type && array_init.typ is ast.ArrayFixedType {
 				fixed_typ := array_init.typ as ast.ArrayFixedType
 				elem_type := g.expr_type_to_c(fixed_typ.elem_type)
-				if name != '' {
-					g.local_var_types[name] = '${elem_type}[]'
-				}
 				g.sb.write_string('${elem_type} ${name}[')
 				g.gen_expr(fixed_typ.len)
 				g.sb.write_string('] = ')
@@ -1378,9 +1352,6 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				&& !rhs_type.starts_with('_result_') && !rhs_type.starts_with('_option_') {
 				typ = rhs_type
 			}
-			if name != '' {
-				g.local_var_types[name] = typ
-			}
 		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
 			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
 			g.gen_expr(rhs)
@@ -1447,7 +1418,7 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		// Assignment
 		mut lhs_needs_deref := false
 		if lhs is ast.Ident {
-			if local_type := g.local_var_types[lhs.name] {
+			if local_type := g.get_local_var_c_type(lhs.name) {
 				if local_type.ends_with('*') {
 					rhs_type := g.get_expr_type(rhs)
 					if !rhs_type.ends_with('*') {
@@ -2545,6 +2516,17 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 							g.sb.write_string(']')
 							return
 						}
+						if raw_type := g.get_raw_type(idx.lhs) {
+							if raw_type is types.ArrayFixed {
+								// Fixed arrays: &arr[i]
+								g.sb.write_string('&')
+								g.gen_expr(idx.lhs)
+								g.sb.write_string('[')
+								g.gen_expr(idx.expr)
+								g.sb.write_string(']')
+								return
+							}
+						}
 						lhs_type := g.get_expr_type(idx.lhs)
 						if lhs_type == 'array' || lhs_type.starts_with('Array_') {
 							mut elem_type := g.get_expr_type(idx)
@@ -2725,14 +2707,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				}
 			}
 			if node.lhs is ast.Ident {
-				mut is_known_var := node.lhs.name in g.local_var_types
-				if !is_known_var && g.cur_fn_scope != unsafe { nil } {
-					if obj := g.cur_fn_scope.lookup_parent(node.lhs.name, 0) {
-						if obj !is types.Module {
-							is_known_var = true
-						}
-					}
-				}
+				mut is_known_var := g.get_local_var_c_type(node.lhs.name) != none
 				if !is_known_var && !g.is_module_ident(node.lhs.name) {
 					if enum_name := g.get_expr_type_from_env(node) {
 						if enum_name != '' && g.is_enum_type(enum_name) {
@@ -2759,15 +2734,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 						if g.is_enum_type(node.lhs.name) {
 							emit_enum_value = true
 						} else if !g.is_module_ident(node.lhs.name) {
-							mut is_known_var := node.lhs.name in g.local_var_types
-							if !is_known_var && g.cur_fn_scope != unsafe { nil } {
-								if obj := g.cur_fn_scope.lookup_parent(node.lhs.name, 0) {
-									if obj !is types.Module {
-										is_known_var = true
-									}
-								}
-							}
-							emit_enum_value = !is_known_var
+							emit_enum_value = g.get_local_var_c_type(node.lhs.name) == none
 						}
 					}
 					if emit_enum_value {
@@ -2871,7 +2838,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			} else {
 				mut use_ptr := g.expr_is_pointer(node.lhs)
 				if !use_ptr && node.lhs is ast.Ident {
-					if local_type := g.local_var_types[node.lhs.name] {
+					if local_type := g.get_local_var_c_type(node.lhs.name) {
 						use_ptr = local_type.ends_with('*')
 					}
 				}
@@ -4167,20 +4134,25 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 	return none
 }
 
+// get_local_var_c_type looks up a local variable's C type string from the function scope
+fn (mut g Gen) get_local_var_c_type(name string) ?string {
+	if g.cur_fn_scope != unsafe { nil } {
+		if obj := g.cur_fn_scope.lookup_parent(name, 0) {
+			if obj is types.Module {
+				return none
+			}
+			return g.types_type_to_c(obj.typ())
+		}
+	}
+	return none
+}
+
 // get_expr_type returns the C type string for an expression
 fn (mut g Gen) get_expr_type(node ast.Expr) string {
 	// For identifiers, check function scope first
 	if node is ast.Ident {
-		if local_type := g.local_var_types[node.name] {
+		if local_type := g.get_local_var_c_type(node.name) {
 			return local_type
-		}
-		if g.cur_fn_scope != unsafe { nil } {
-			if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
-				if obj is types.Module {
-					return 'int'
-				}
-				return g.types_type_to_c(obj.typ())
-			}
 		}
 	}
 	// Try environment lookup
@@ -4742,29 +4714,14 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 			}
 		}
 	}
-	if node.lhs is ast.Ident {
-		if local_type := g.local_var_types[node.lhs.name] {
-			if local_type == 'array' || local_type.starts_with('Array_') {
-				mut elem_type := g.get_expr_type(node)
-				if elem_type == '' || elem_type == 'int' {
-					if local_type.starts_with('Array_') {
-						elem_type = local_type['Array_'.len..].trim_right('*')
-					}
-				}
-				if elem_type == '' {
-					elem_type = 'u8'
-				}
-				g.sb.write_string('((${elem_type}*)')
-				g.gen_expr(node.lhs)
-				if local_type.ends_with('*') {
-					g.sb.write_string('->data)[')
-				} else {
-					g.sb.write_string('.data)[')
-				}
-				g.gen_expr(node.expr)
-				g.sb.write_string(']')
-				return
-			}
+	if lhs_raw_type := g.get_raw_type(node.lhs) {
+		if lhs_raw_type is types.ArrayFixed {
+			// Fixed arrays are C arrays: direct indexing
+			g.gen_expr(node.lhs)
+			g.sb.write_string('[')
+			g.gen_expr(node.expr)
+			g.sb.write_string(']')
+			return
 		}
 	}
 	lhs_type := g.get_expr_type(node.lhs)
