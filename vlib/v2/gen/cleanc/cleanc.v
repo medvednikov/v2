@@ -238,6 +238,9 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('static const u64 _wyp[4] = {0xa0761d6478bd642full, 0xe7037ed1a0b428dbull, 0x8ebc6af09c88c6e3ull, 0x589965cc75374cc3ull};')
 	g.sb.writeln('static inline u64 wyhash(const void* key, u64 len, u64 seed, const u64* secret) { (void)key; (void)len; (void)seed; (void)secret; return 0; }')
 	g.sb.writeln('static inline u64 wyhash64(u64 a, u64 b) { (void)a; (void)b; return 0; }')
+	g.sb.writeln('#define builtin__new_array_from_c_array_noscan(len, cap, elm_size, ...) new_array_from_c_array((len), (cap), (elm_size), (void*)(__VA_ARGS__))')
+	g.sb.writeln('#define strconv__builtin__new_array_from_c_array_noscan(len, cap, elm_size, ...) builtin__new_array_from_c_array_noscan((len), (cap), (elm_size), (__VA_ARGS__))')
+	g.sb.writeln('#define array__contains_int(a, v) array__contains((a), &((int[]){(v)})[0])')
 	g.sb.writeln('')
 	g.sb.writeln('')
 }
@@ -576,6 +579,20 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		} else {
 			g.cur_fn_scope = unsafe { nil }
 		}
+	}
+
+	// Temporary stub: transformer lowering for DenseArray swaps is incomplete.
+	// Keep a no-op body so C generation can proceed to later errors.
+	if fn_name == 'DenseArray__zeros_to_end' {
+		g.gen_fn_head(node)
+		g.sb.writeln(' {')
+		g.indent++
+		g.write_indent()
+		g.sb.writeln('(void)d;')
+		g.indent--
+		g.sb.writeln('}')
+		g.sb.writeln('')
+		return
 	}
 
 	// Generate function header
@@ -1228,15 +1245,15 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 					g.sb.write_string('))')
 					return
 				}
-				if node.expr is ast.CallOrCastExpr {
-					if node.expr.lhs is ast.Ident && g.is_type_name(node.expr.lhs.name) {
-						target_type := g.expr_type_to_c(node.expr.lhs)
-						g.sb.write_string('((${target_type}*)(')
-						g.gen_expr(node.expr.expr)
-						g.sb.write_string('))')
-						return
+					if node.expr is ast.CallOrCastExpr {
+						if node.expr.lhs is ast.Ident {
+							target_type := g.expr_type_to_c(node.expr.lhs)
+							g.sb.write_string('((${target_type}*)(')
+							g.gen_expr(node.expr.expr)
+							g.sb.write_string('))')
+							return
+						}
 					}
-				}
 				if node.expr is ast.ParenExpr {
 					if node.expr.expr is ast.CastExpr {
 						target_type := g.expr_type_to_c(node.expr.expr.typ)
@@ -1245,16 +1262,16 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 						g.sb.write_string('))')
 						return
 					}
-					if node.expr.expr is ast.CallOrCastExpr {
-						if node.expr.expr.lhs is ast.Ident && g.is_type_name(node.expr.expr.lhs.name) {
-							target_type := g.expr_type_to_c(node.expr.expr.lhs)
-							g.sb.write_string('((${target_type}*)(')
-							g.gen_expr(node.expr.expr.expr)
-							g.sb.write_string('))')
-							return
+						if node.expr.expr is ast.CallOrCastExpr {
+							if node.expr.expr.lhs is ast.Ident {
+								target_type := g.expr_type_to_c(node.expr.expr.lhs)
+								g.sb.write_string('((${target_type}*)(')
+								g.gen_expr(node.expr.expr.expr)
+								g.sb.write_string('))')
+								return
+							}
 						}
 					}
-				}
 			}
 			op := match node.op {
 				.minus { '-' }
@@ -1293,8 +1310,14 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				enum_name := g.get_qualified_name(node.lhs.name)
 				g.sb.write_string('${enum_name}__${node.rhs.name}')
 			} else {
+				mut selector := '.'
+				if raw_type := g.get_raw_type(node.lhs) {
+					if raw_type is types.Pointer {
+						selector = '->'
+					}
+				}
 				g.gen_expr(node.lhs)
-				g.sb.write_string('.${node.rhs.name}')
+				g.sb.write_string('${selector}${node.rhs.name}')
 			}
 		}
 		ast.IfExpr {
