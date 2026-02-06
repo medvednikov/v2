@@ -21,6 +21,7 @@ mut:
 	cur_module        string
 	emitted_types     map[string]bool
 	fn_param_is_ptr   map[string][]bool
+	local_var_types   map[string]string
 	array_aliases     map[string]bool
 	map_aliases       map[string]bool
 	result_aliases    map[string]bool
@@ -60,6 +61,7 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 		pref:              unsafe { p }
 		sb:                strings.new_builder(4096)
 		fn_param_is_ptr:   map[string][]bool{}
+		local_var_types:   map[string]string{}
 		array_aliases:     map[string]bool{}
 		map_aliases:       map[string]bool{}
 		result_aliases:    map[string]bool{}
@@ -623,6 +625,23 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 			g.cur_fn_scope = unsafe { nil }
 		}
 	}
+	g.local_var_types = map[string]string{}
+	if node.is_method && node.receiver.name != '' {
+		receiver_type := g.expr_type_to_c(node.receiver.typ)
+		g.local_var_types[node.receiver.name] = if node.receiver.is_mut {
+			receiver_type + '*'
+		} else {
+			receiver_type
+		}
+	}
+	for param in node.typ.params {
+		param_type := g.expr_type_to_c(param.typ)
+		g.local_var_types[param.name] = if param.is_mut {
+			param_type + '*'
+		} else {
+			param_type
+		}
+	}
 
 	// Generate function header
 	g.gen_fn_head(node)
@@ -746,6 +765,9 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			}
 		}
 		typ := g.get_expr_type(rhs)
+		if name != '' {
+			g.local_var_types[name] = typ
+		}
 		g.sb.write_string('${typ} ${name} = ')
 		g.gen_expr(rhs)
 		g.sb.writeln(';')
@@ -1303,7 +1325,8 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			if node.op == .amp {
 				if node.expr is ast.CallExpr {
 					if node.expr.lhs is ast.Ident && node.expr.args.len == 1
-						&& g.is_type_name(node.expr.lhs.name) {
+						&& (g.is_type_name(node.expr.lhs.name)
+						|| (node.expr.lhs.name.len > 0 && node.expr.lhs.name[0].is_capital())) {
 						target_type := g.expr_type_to_c(node.expr.lhs)
 						g.sb.write_string('((${target_type}*)(')
 						g.gen_expr(node.expr.args[0])
@@ -1686,6 +1709,27 @@ fn (mut g Gen) gen_call_arg(fn_name string, idx int, arg ast.Expr) {
 	g.gen_expr(arg)
 }
 
+fn (mut g Gen) method_receiver_base_type(expr ast.Expr) string {
+	if raw_type := g.get_raw_type(expr) {
+		match raw_type {
+			types.Pointer {
+				return g.types_type_to_c(raw_type.base_type)
+			}
+			else {
+				return g.types_type_to_c(raw_type)
+			}
+		}
+	}
+	mut receiver_type := g.get_expr_type(expr)
+	if receiver_type.ends_with('*') {
+		receiver_type = receiver_type[..receiver_type.len - 1]
+	}
+	if receiver_type in ['voidptr', 'void*'] {
+		return 'void'
+	}
+	return receiver_type
+}
+
 fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	mut name := ''
 	mut call_args := []ast.Expr{}
@@ -1711,14 +1755,23 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 			name = '${lhs.lhs.name}__${sanitize_fn_ident(lhs.rhs.name)}'
 		} else {
 			// value.method(args...) => ReceiverType__method(value, args...)
-			receiver_type := g.get_expr_type(lhs.lhs)
-			base_type := if receiver_type.ends_with('*') {
-				receiver_type[..receiver_type.len - 1]
-			} else {
-				receiver_type
-			}
 			method_name := sanitize_fn_ident(lhs.rhs.name)
+			base_type := g.method_receiver_base_type(lhs.lhs)
 			name = '${base_type}__${method_name}'
+			if name !in g.fn_param_is_ptr {
+				// Fallback when receiver type inference is incomplete.
+				suffix := '__${method_name}'
+				expected_params := args.len + 1
+				mut candidates := []string{}
+				for fn_name, param_ptr in g.fn_param_is_ptr {
+					if fn_name.ends_with(suffix) && param_ptr.len == expected_params {
+						candidates << fn_name
+					}
+				}
+				if candidates.len == 1 {
+					name = candidates[0]
+				}
+			}
 			call_args = []ast.Expr{cap: args.len + 1}
 			call_args << lhs.lhs
 			call_args << args
@@ -1729,6 +1782,9 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	if name == 'builtin__new_array_from_c_array_noscan' {
 		name = 'new_array_from_c_array'
 	}
+	if name == 'builtin__array_push_noscan' {
+		name = 'array__push'
+	}
 	if name == 'array__contains_int' && call_args.len == 2 {
 		g.sb.write_string('array__contains(')
 		g.gen_expr(call_args[0])
@@ -1736,6 +1792,9 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 		g.gen_expr(call_args[1])
 		g.sb.write_string('})[0])')
 		return
+	}
+	if name == 'voidptr__vbytes' {
+		name = 'void__vbytes'
 	}
 
 	// Handle builtin print functions with type-aware argument conversion
@@ -1924,6 +1983,9 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 fn (mut g Gen) get_expr_type(node ast.Expr) string {
 	// For identifiers, check function scope first
 	if node is ast.Ident {
+		if local_type := g.local_var_types[node.name] {
+			return local_type
+		}
 		if g.cur_fn_scope != unsafe { nil } {
 			if obj := g.cur_fn_scope.lookup_parent(node.name, 0) {
 				if obj is types.Module {
