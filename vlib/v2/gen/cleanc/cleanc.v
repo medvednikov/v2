@@ -70,6 +70,29 @@ fn option_value_type(option_type string) string {
 	return option_type['_option_'.len..]
 }
 
+fn is_none_expr(expr ast.Expr) bool {
+	match expr {
+		ast.Keyword {
+			return expr.tok == .key_none
+		}
+		ast.Ident {
+			return expr.name == 'none'
+		}
+		else {
+			return false
+		}
+	}
+}
+
+fn interface_type_id_for_name(name string) int {
+	match name {
+		'None__' { return 1 }
+		'Error' { return 2 }
+		'MessageError' { return 3 }
+		else { return 0 }
+	}
+}
+
 fn (mut g Gen) is_error_call_expr(expr ast.Expr) bool {
 	match expr {
 		ast.CallExpr {
@@ -266,6 +289,7 @@ pub fn (mut g Gen) gen() string {
 		}
 	}
 	g.sb.writeln('')
+	g.emit_ierror_wrappers()
 
 	// Pass 5: Everything else (function bodies, consts, globals, etc.)
 	for file in g.files {
@@ -284,6 +308,7 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('#include <stddef.h>')
 	g.sb.writeln('#include <string.h>')
 	g.sb.writeln('#include <float.h>')
+	g.sb.writeln('#include <unistd.h>')
 	g.sb.writeln('')
 
 	// V primitive type aliases
@@ -448,6 +473,42 @@ fn (mut g Gen) collect_fn_signatures() {
 				else {}
 			}
 		}
+	}
+}
+
+fn (mut g Gen) emit_ierror_wrappers() {
+	if 'body_IError' !in g.emitted_types && 'body_builtin__IError' !in g.emitted_types {
+		return
+	}
+	mut emitted_any := false
+	if 'Error__msg' in g.fn_return_types && 'Error__code' in g.fn_return_types {
+		g.sb.writeln('static string IError_Error_type_name_wrapper(void* _obj) {')
+		g.sb.writeln('\t(void)_obj;')
+		g.sb.writeln('\treturn (string){"Error", 5};')
+		g.sb.writeln('}')
+		g.sb.writeln('static string IError_Error_msg_wrapper(void* _obj) {')
+		g.sb.writeln('\treturn Error__msg(*(Error*)_obj);')
+		g.sb.writeln('}')
+		g.sb.writeln('static int IError_Error_code_wrapper(void* _obj) {')
+		g.sb.writeln('\treturn Error__code(*(Error*)_obj);')
+		g.sb.writeln('}')
+		emitted_any = true
+	}
+	if 'MessageError__msg' in g.fn_return_types && 'MessageError__code' in g.fn_return_types {
+		g.sb.writeln('static string IError_MessageError_type_name_wrapper(void* _obj) {')
+		g.sb.writeln('\t(void)_obj;')
+		g.sb.writeln('\treturn (string){"MessageError", 12};')
+		g.sb.writeln('}')
+		g.sb.writeln('static string IError_MessageError_msg_wrapper(void* _obj) {')
+		g.sb.writeln('\treturn MessageError__msg(*(MessageError*)_obj);')
+		g.sb.writeln('}')
+		g.sb.writeln('static int IError_MessageError_code_wrapper(void* _obj) {')
+		g.sb.writeln('\treturn MessageError__code(*(MessageError*)_obj);')
+		g.sb.writeln('}')
+		emitted_any = true
+	}
+	if emitted_any {
+		g.sb.writeln('')
 	}
 }
 
@@ -671,6 +732,13 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 				g.sb.writeln('});')
 				return
 			}
+			if node.exprs.len == 1 && node.exprs[0] is ast.IfExpr {
+				if_expr := node.exprs[0] as ast.IfExpr
+				if !g.if_expr_can_be_ternary(if_expr) {
+					g.gen_return_if_expr(if_expr, false)
+					return
+				}
+			}
 			if g.cur_fn_ret_type.starts_with('_option_') {
 				if node.exprs.len == 0 {
 					g.sb.writeln('return (${g.cur_fn_ret_type}){ .state = 2 };')
@@ -678,6 +746,10 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 				}
 				expr := node.exprs[0]
 				if expr is ast.BasicLiteral && expr.value == '0' {
+					g.sb.writeln('return (${g.cur_fn_ret_type}){ .state = 2 };')
+					return
+				}
+				if is_none_expr(expr) {
 					g.sb.writeln('return (${g.cur_fn_ret_type}){ .state = 2 };')
 					return
 				}
@@ -691,6 +763,28 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 				value_type := g.cur_fn_ret_type['_option_'.len..]
 				if value_type == '' || value_type == 'void' {
 					g.sb.writeln('return (${g.cur_fn_ret_type}){ .state = 2 };')
+					return
+				}
+				if value_type in g.tuple_aliases {
+					field_types := g.tuple_aliases[value_type]
+					mut tuple_exprs := node.exprs.clone()
+					if node.exprs.len == 1 && node.exprs[0] is ast.Tuple {
+						tuple_expr := node.exprs[0] as ast.Tuple
+						tuple_exprs = tuple_expr.exprs.clone()
+					}
+					g.sb.write_string('return ({ ${g.cur_fn_ret_type} _opt = (${g.cur_fn_ret_type}){ .state = 2 }; ${value_type} _val = (${value_type}){')
+					for i, field_type in field_types {
+						if i > 0 {
+							g.sb.write_string(', ')
+						}
+						g.sb.write_string('.arg${i} = ')
+						if i < tuple_exprs.len {
+							g.gen_expr(tuple_exprs[i])
+						} else {
+							g.sb.write_string(zero_value_for_type(field_type))
+						}
+					}
+					g.sb.writeln('}; _option_ok(&_val, (_option*)&_opt, sizeof(_val)); _opt; });')
 					return
 				}
 				g.sb.write_string('return ({ ${g.cur_fn_ret_type} _opt = (${g.cur_fn_ret_type}){ .state = 2 }; ${value_type} _val = ')
@@ -1095,6 +1189,45 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 	lhs := node.lhs[0]
 	rhs := node.rhs[0]
 
+	// Multi-declaration with parallel RHS values:
+	// `a, b := x, y` should declare both variables (not just the first one).
+	if node.op == .decl_assign && node.lhs.len > 1 && node.rhs.len == node.lhs.len {
+		for i, lhs_expr in node.lhs {
+			rhs_expr := node.rhs[i]
+			mut name := ''
+			if lhs_expr is ast.Ident {
+				name = lhs_expr.name
+			} else if lhs_expr is ast.ModifierExpr && lhs_expr.expr is ast.Ident {
+				name = lhs_expr.expr.name
+			}
+			if name == '_' {
+				g.write_indent()
+				g.sb.write_string('(void)(')
+				g.gen_expr(rhs_expr)
+				g.sb.writeln(');')
+				continue
+			}
+			mut typ := g.get_expr_type(lhs_expr)
+			if typ == '' || typ == 'int' {
+				typ = g.get_expr_type(rhs_expr)
+			}
+			if typ == '' || typ == 'int_literal' {
+				typ = 'int'
+			}
+			if typ == 'float_literal' {
+				typ = 'f64'
+			}
+			if name != '' {
+				g.local_var_types[name] = typ
+			}
+			g.write_indent()
+			g.sb.write_string('${typ} ${name} = ')
+			g.gen_expr(rhs_expr)
+			g.sb.writeln(';')
+		}
+		return
+	}
+
 	mut tuple_lhs := []ast.Expr{}
 	if node.lhs.len > 1 {
 		tuple_lhs = node.lhs.clone()
@@ -1250,20 +1383,24 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			}
 		}
 		mut rhs_type := g.get_expr_type(rhs)
-		if rhs_type == 'int' {
-			if rhs is ast.CallExpr {
-				if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
-					rhs_type = ret
-				}
-			} else if rhs is ast.CallOrCastExpr {
-				if ret := g.get_call_return_type(rhs.lhs, 1) {
-					rhs_type = ret
+			if rhs_type == 'int' {
+				if rhs is ast.CallExpr {
+					if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
+						rhs_type = ret
+					}
+				} else if rhs is ast.CallOrCastExpr {
+					if ret := g.get_call_return_type(rhs.lhs, 1) {
+						rhs_type = ret
+					}
 				}
 			}
-		}
-		if name != '' {
-			g.local_var_types[name] = typ
-		}
+			if (typ == '' || typ == 'int' || typ == 'int_literal') && rhs_type != ''
+				&& rhs_type !in ['int', 'int_literal', 'float_literal'] {
+				typ = rhs_type
+			}
+			if name != '' {
+				g.local_var_types[name] = typ
+			}
 		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
 			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
 			g.gen_expr(rhs)
@@ -1290,6 +1427,12 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				g.sb.writeln('));')
 				return
 			}
+			if rhs.expr is ast.CastExpr {
+				g.sb.write_string('${typ} ${name} = ((${typ})(')
+				g.gen_expr(rhs.expr.expr)
+				g.sb.writeln('));')
+				return
+			}
 			if rhs.expr is ast.CallOrCastExpr {
 				g.sb.write_string('${typ} ${name} = ((${typ})(')
 				g.gen_expr(rhs.expr.expr)
@@ -1304,6 +1447,12 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 					return
 				}
 				if rhs.expr.expr is ast.CallOrCastExpr {
+					g.sb.write_string('${typ} ${name} = ((${typ})(')
+					g.gen_expr(rhs.expr.expr.expr)
+					g.sb.writeln('));')
+					return
+				}
+				if rhs.expr.expr is ast.CastExpr {
 					g.sb.write_string('${typ} ${name} = ((${typ})(')
 					g.gen_expr(rhs.expr.expr.expr)
 					g.sb.writeln('));')
@@ -1410,6 +1559,77 @@ fn (mut g Gen) gen_decl_if_expr(name string, if_expr ast.IfExpr) {
 		g.indent++
 		g.write_indent()
 		g.sb.write_string('${name} = ')
+		g.gen_expr(if_expr.else_expr)
+		g.sb.writeln(';')
+		g.indent--
+		g.write_indent()
+		g.sb.writeln('}')
+	} else {
+		g.sb.writeln('')
+	}
+}
+
+fn (mut g Gen) gen_return_if_branch(stmts []ast.Stmt) {
+	if stmts.len == 0 {
+		return
+	}
+	for i, stmt in stmts {
+		if i == stmts.len - 1 && stmt is ast.ExprStmt {
+			if stmt.expr is ast.IfExpr {
+				nested_if := stmt.expr as ast.IfExpr
+				if !g.if_expr_can_be_ternary(nested_if) && nested_if.else_expr !is ast.EmptyExpr {
+					g.gen_return_if_expr(nested_if, true)
+					continue
+				}
+			}
+			g.write_indent()
+			g.sb.write_string('return ')
+			g.gen_expr(stmt.expr)
+			g.sb.writeln(';')
+		} else {
+			g.gen_stmt(stmt)
+		}
+	}
+}
+
+fn (mut g Gen) gen_return_if_expr(if_expr ast.IfExpr, emit_indent bool) {
+	if if_expr.cond is ast.EmptyExpr {
+		g.gen_return_if_branch(if_expr.stmts)
+		return
+	}
+	if emit_indent {
+		g.write_indent()
+	}
+	g.sb.write_string('if (')
+	g.gen_expr(if_expr.cond)
+	g.sb.writeln(') {')
+	g.indent++
+	g.gen_return_if_branch(if_expr.stmts)
+	g.indent--
+	g.write_indent()
+	g.sb.write_string('}')
+	if if_expr.else_expr is ast.IfExpr {
+		else_if := if_expr.else_expr as ast.IfExpr
+		if else_if.cond is ast.EmptyExpr {
+			g.sb.writeln(' else {')
+			g.indent++
+			g.gen_return_if_branch(else_if.stmts)
+			g.indent--
+			g.write_indent()
+			g.sb.writeln('}')
+		} else {
+			g.sb.writeln(' else {')
+			g.indent++
+			g.gen_return_if_expr(else_if, true)
+			g.indent--
+			g.write_indent()
+			g.sb.writeln('}')
+		}
+	} else if if_expr.else_expr !is ast.EmptyExpr {
+		g.sb.writeln(' else {')
+		g.indent++
+		g.write_indent()
+		g.sb.write_string('return ')
 		g.gen_expr(if_expr.else_expr)
 		g.sb.writeln(';')
 		g.indent--
@@ -1787,6 +2007,16 @@ fn (mut g Gen) gen_interface_decl(node ast.InterfaceDecl) {
 	g.sb.writeln('struct ${name} {')
 	g.sb.writeln('\tvoid* _object;')
 	g.sb.writeln('\tint _type_id;')
+	mut has_type_name := false
+	for field in node.fields {
+		if field.name == 'type_name' {
+			has_type_name = true
+			break
+		}
+	}
+	if !has_type_name {
+		g.sb.writeln('\tstring (*type_name)(void*);')
+	}
 	// Generate function pointers for each method
 	for field in node.fields {
 		if fn_type := g.get_fn_type_from_expr(field.typ) {
@@ -2055,24 +2285,33 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				g.sb.write_string('(string){"${escaped}", ${val.len}}')
 			}
 		}
-		ast.Ident {
-			if node.name == 'nil' {
-				g.sb.write_string('NULL')
-			} else if node.name == '@FN' || node.name == '@METHOD' || node.name == '@FUNCTION' {
-				fn_name := g.cur_fn_name
-				g.sb.write_string('(string){"${fn_name}", ${fn_name.len}}')
-			} else if node.name == '@MOD' {
-				mod_name := g.cur_module
-				g.sb.write_string('(string){"${mod_name}", ${mod_name.len}}')
-			} else if node.name == '@FILE' {
-				g.sb.write_string('(string){__FILE__, sizeof(__FILE__)-1}')
-			} else if node.name == '@LINE' {
-				g.sb.write_string('__LINE__')
-			} else {
-				if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
-					&& 'const_${g.cur_module}__${node.name}' in g.emitted_types {
-					g.sb.write_string('${g.cur_module}__${node.name}')
+			ast.Ident {
+				if node.name == 'nil' {
+					g.sb.write_string('NULL')
+				} else if node.name == '@FN' || node.name == '@METHOD' || node.name == '@FUNCTION' {
+					fn_name := g.cur_fn_name
+					g.sb.write_string('(string){"${fn_name}", ${fn_name.len}}')
+				} else if node.name == '@MOD' {
+					mod_name := g.cur_module
+					g.sb.write_string('(string){"${mod_name}", ${mod_name.len}}')
+				} else if node.name == '@FILE' {
+					g.sb.write_string('(string){__FILE__, sizeof(__FILE__)-1}')
+				} else if node.name == '@LINE' {
+					g.sb.write_string('__LINE__')
+				} else if node.name == '@VCURRENTHASH' || node.name == '@VHASH' {
+					hash_name := if node.name == '@VHASH' { 'VHASH' } else { 'VCURRENTHASH' }
+					g.sb.write_string('(string){"${hash_name}", ${hash_name.len}}')
+				} else if node.name == '@VEXE' {
+					g.sb.write_string('(string){"", 0}')
+				} else if node.name.starts_with('__type_id_') {
+					type_name := node.name['__type_id_'.len..]
+					type_id := interface_type_id_for_name(type_name)
+					g.sb.write_string('${type_id}')
 				} else {
+					if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
+						&& 'const_${g.cur_module}__${node.name}' in g.emitted_types {
+						g.sb.write_string('${g.cur_module}__${node.name}')
+					} else {
 					g.sb.write_string(node.name)
 				}
 			}
@@ -2085,6 +2324,31 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 		ast.InfixExpr {
 			lhs_type := g.get_expr_type(node.lhs)
 			rhs_type := g.get_expr_type(node.rhs)
+			if node.op in [.key_is, .not_is] {
+				if raw_type := g.get_raw_type(node.lhs) {
+					is_iface := raw_type is types.Interface
+						|| (raw_type is types.Pointer && raw_type.base_type is types.Interface)
+					if is_iface {
+						mut rhs_name := ''
+						if node.rhs is ast.Ident {
+							rhs_name = node.rhs.name
+						} else if node.rhs is ast.SelectorExpr {
+							rhs_name = node.rhs.rhs.name
+						}
+						type_id := interface_type_id_for_name(rhs_name)
+						if type_id <= 0 {
+							g.sb.write_string(if node.op == .key_is { 'false' } else { 'true' })
+							return
+						}
+						sep := if g.expr_is_pointer(node.lhs) { '->' } else { '.' }
+						g.sb.write_string('((')
+						g.gen_expr(node.lhs)
+						op := if node.op == .key_is { '==' } else { '!=' }
+						g.sb.write_string('${sep}_type_id ${op} ${type_id})')
+						return
+					}
+				}
+			}
 			if node.op in [.key_in, .not_in] {
 				if node.rhs is ast.ArrayInitExpr {
 					join_op := if node.op == .key_in { ' || ' } else { ' && ' }
@@ -2222,6 +2486,25 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			// &T(x) in unsafe contexts is used as a pointer cast in V stdlib code.
 			// Emit it as (T*)(x) so `*unsafe { &T(p) }` becomes `*((T*)p)`.
 			if node.op == .amp {
+				// &&T(x) is a pointer-to-pointer cast pattern used in builtin code.
+				// Lower it directly to (T**)(x) instead of taking address of a cast rvalue.
+				if node.expr is ast.PrefixExpr && node.expr.op == .amp {
+					inner := node.expr as ast.PrefixExpr
+					if inner.expr is ast.CallOrCastExpr {
+						target_type := g.expr_type_to_c(inner.expr.lhs)
+						g.sb.write_string('((${target_type}**)(')
+						g.gen_expr(inner.expr.expr)
+						g.sb.write_string('))')
+						return
+					}
+					if inner.expr is ast.CastExpr {
+						target_type := g.expr_type_to_c(inner.expr.typ)
+						g.sb.write_string('((${target_type}**)(')
+						g.gen_expr(inner.expr.expr)
+						g.sb.write_string('))')
+						return
+					}
+				}
 				if node.expr is ast.IndexExpr {
 					idx := node.expr as ast.IndexExpr
 					if idx.lhs is ast.Ident {
@@ -2619,7 +2902,9 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string('})')
 		}
 		ast.FieldInit {
-			g.sb.write_string('/* [TODO] FieldInit */ 0')
+			// FieldInit should be grouped into InitExpr by call argument lowering.
+			// Fallback to value expression to keep C output valid.
+			g.gen_expr(node.value)
 		}
 		ast.IfGuardExpr {
 			panic('bug in v2 compiler: IfGuardExpr should have been expanded in v2.transformer')
@@ -3116,6 +3401,106 @@ fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
 	return none
 }
 
+fn (mut g Gen) normalize_named_call_args(fn_name string, call_args []ast.Expr) []ast.Expr {
+	mut first_field_idx := -1
+	for i, arg in call_args {
+		if arg is ast.FieldInit {
+			first_field_idx = i
+			break
+		}
+	}
+	if first_field_idx < 0 {
+		return call_args
+	}
+	mut param_types := g.fn_param_types[fn_name] or { []string{} }
+	if param_types.len == 0 && fn_name != '' && !fn_name.contains('__') && g.cur_module != ''
+		&& g.cur_module != 'main' && g.cur_module != 'builtin' {
+		qualified := '${g.cur_module}__${fn_name}'
+		param_types = g.fn_param_types[qualified] or { []string{} }
+	}
+	if param_types.len == 0 {
+		return call_args
+	}
+	if first_field_idx >= param_types.len {
+		return call_args
+	}
+	param_type := param_types[first_field_idx]
+	if param_type == '' {
+		return call_args
+	}
+	mut fields := []ast.FieldInit{}
+	mut trailing_args := []ast.Expr{}
+	for i in first_field_idx .. call_args.len {
+		arg := call_args[i]
+		if arg is ast.FieldInit {
+			fields << arg
+		} else {
+			trailing_args << arg
+		}
+	}
+	if fields.len == 0 {
+		return call_args
+	}
+	mut init_type := param_type.trim_right('*')
+	if init_type == '' {
+		init_type = param_type
+	}
+	mut grouped_arg := ast.Expr(ast.InitExpr{
+		typ: ast.Expr(ast.Ident{
+			name: init_type
+		})
+		fields: fields
+	})
+	if param_type.ends_with('*') {
+		grouped_arg = ast.Expr(ast.PrefixExpr{
+			op:   .amp
+			expr: grouped_arg
+		})
+	}
+	mut out := []ast.Expr{cap: first_field_idx + 1 + trailing_args.len}
+	for i in 0 .. first_field_idx {
+		out << call_args[i]
+	}
+	out << grouped_arg
+	out << trailing_args
+	return out
+}
+
+fn (mut g Gen) infer_array_contains_elem_type(name string, call_args []ast.Expr) string {
+	arr_type := if call_args.len > 0 { g.get_expr_type(call_args[0]) } else { '' }
+	if arr_type.starts_with('Array_') {
+		return arr_type['Array_'.len..]
+	}
+	mut suffix := ''
+	if name.starts_with('array__contains_') {
+		suffix = name['array__contains_'.len..]
+	}
+	if suffix != '' && suffix != 'void' {
+		return suffix
+	}
+	if call_args.len > 1 {
+		rhs_type := g.get_expr_type(call_args[1])
+		if rhs_type != '' && rhs_type != 'int_literal' && rhs_type != 'float_literal'
+			&& rhs_type != 'void' {
+			return rhs_type.trim_right('*')
+		}
+	}
+	return 'int'
+}
+
+fn (mut g Gen) gen_array_contains_call(name string, call_args []ast.Expr) bool {
+	if !name.starts_with('array__contains_') || call_args.len != 2 {
+		return false
+	}
+	elem_type := g.infer_array_contains_elem_type(name, call_args)
+	g.sb.write_string('array__contains(')
+	g.gen_expr(call_args[0])
+	g.sb.write_string(', ')
+	g.gen_addr_of_expr(call_args[1], elem_type)
+	g.sb.write_string(')')
+	return true
+}
+
 fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	if lhs is ast.SelectorExpr && g.is_fn_pointer_expr(lhs) {
 		mut should_emit_fnptr_call := true
@@ -3202,12 +3587,8 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 			name = array_name
 		}
 	}
-	if name == 'array__contains_int' && call_args.len == 2 {
-		g.sb.write_string('array__contains(')
-		g.gen_expr(call_args[0])
-		g.sb.write_string(', &((int[]){')
-		g.gen_expr(call_args[1])
-		g.sb.write_string('})[0])')
+	call_args = g.normalize_named_call_args(name, call_args)
+	if g.gen_array_contains_call(name, call_args) {
 		return
 	}
 	if name == 'array__eq' && call_args.len == 2 {
@@ -3373,6 +3754,7 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 			c_name = qualified
 		}
 	}
+	call_args = g.normalize_named_call_args(c_name, call_args)
 	g.sb.write_string('${c_name}(')
 	mut total_args := call_args.len
 	if params := g.fn_param_is_ptr[c_name] {

@@ -655,6 +655,14 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 				}
 				continue
 			}
+			// Check for if-expression assignment: x = if cond { a } else { b }
+			// Transform to a statement-form if that assigns in each branch.
+			if expanded := t.try_expand_if_expr_assign_stmts(stmt) {
+				for exp_stmt in expanded {
+					result << t.transform_stmt(exp_stmt)
+				}
+				continue
+			}
 		}
 		// Expand compile-time $if at the statement level
 		if stmt is ast.ExprStmt {
@@ -2526,6 +2534,98 @@ fn (mut t Transformer) expand_return_if_expr(ie ast.IfExpr) []ast.Stmt {
 		else_expr: else_expr
 	}
 	// Wrap in ExprStmt to make it a valid statement
+	return [ast.Stmt(ast.ExprStmt{
+		expr: transformed_if
+	})]
+}
+
+// try_expand_if_expr_assign_stmts handles assignment with IfExpr RHS.
+// Transforms: lhs = if cond { a } else { b }
+// Into: if cond { lhs = a } else { lhs = b }
+fn (mut t Transformer) try_expand_if_expr_assign_stmts(stmt ast.AssignStmt) ?[]ast.Stmt {
+	// Only handle simple assignment for now.
+	if stmt.op != .assign || stmt.lhs.len != 1 || stmt.rhs.len != 1 {
+		return none
+	}
+	rhs := stmt.rhs[0]
+	if rhs !is ast.IfExpr {
+		return none
+	}
+	ie := rhs as ast.IfExpr
+	// Expression-form if must have else branch.
+	if ie.else_expr is ast.EmptyExpr {
+		return none
+	}
+	return t.expand_assign_if_expr(stmt.lhs[0], ie)
+}
+
+// expand_assign_if_expr recursively expands an if-expression into if-statements
+// that perform assignment in each branch.
+fn (mut t Transformer) expand_assign_if_expr(lhs ast.Expr, ie ast.IfExpr) []ast.Stmt {
+	mut then_stmts := []ast.Stmt{}
+	for i, s in ie.stmts {
+		if i == ie.stmts.len - 1 && s is ast.ExprStmt {
+			then_stmts << ast.AssignStmt{
+				op:  .assign
+				lhs: [lhs]
+				rhs: [s.expr]
+			}
+		} else {
+			then_stmts << s
+		}
+	}
+
+	mut else_expr := ast.empty_expr
+	if ie.else_expr is ast.IfExpr {
+		else_ie := ie.else_expr as ast.IfExpr
+		// else { ... }
+		if else_ie.cond is ast.EmptyExpr {
+			mut else_stmts := []ast.Stmt{}
+			for i, s in else_ie.stmts {
+				if i == else_ie.stmts.len - 1 && s is ast.ExprStmt {
+					else_stmts << ast.AssignStmt{
+						op:  .assign
+						lhs: [lhs]
+						rhs: [s.expr]
+					}
+				} else {
+					else_stmts << s
+				}
+			}
+			else_expr = ast.IfExpr{
+				cond:      ast.empty_expr
+				stmts:     else_stmts
+				else_expr: ast.empty_expr
+			}
+		} else {
+			expanded_else := t.expand_assign_if_expr(lhs, else_ie)
+			if expanded_else.len > 0 && expanded_else[0] is ast.ExprStmt {
+				else_expr = (expanded_else[0] as ast.ExprStmt).expr
+			} else {
+				else_expr = ast.IfExpr{
+					cond:      ast.empty_expr
+					stmts:     expanded_else
+					else_expr: ast.empty_expr
+				}
+			}
+		}
+	} else {
+		else_expr = ast.IfExpr{
+			cond: ast.empty_expr
+			stmts: [ast.Stmt(ast.AssignStmt{
+				op:  .assign
+				lhs: [lhs]
+				rhs: [ie.else_expr]
+			})]
+			else_expr: ast.empty_expr
+		}
+	}
+
+	transformed_if := ast.IfExpr{
+		cond:      ie.cond
+		stmts:     then_stmts
+		else_expr: else_expr
+	}
 	return [ast.Stmt(ast.ExprStmt{
 		expr: transformed_if
 	})]
