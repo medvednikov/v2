@@ -734,10 +734,8 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 			}
 			if node.exprs.len == 1 && node.exprs[0] is ast.IfExpr {
 				if_expr := node.exprs[0] as ast.IfExpr
-				if !g.if_expr_can_be_ternary(if_expr) {
-					g.gen_return_if_expr(if_expr, false)
-					return
-				}
+				g.gen_return_if_expr(if_expr, false)
+				return
 			}
 			if g.cur_fn_ret_type.starts_with('_option_') {
 				if node.exprs.len == 0 {
@@ -1354,8 +1352,8 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				return
 			}
 		}
-		mut typ := g.get_expr_type(rhs)
-		mut rhs_has_explicit_call_ret := false
+			mut typ := g.get_expr_type(rhs)
+			mut rhs_has_explicit_call_ret := false
 		if rhs is ast.CallExpr {
 			if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
 				if ret != '' && ret != 'int' {
@@ -1363,14 +1361,17 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 					rhs_has_explicit_call_ret = true
 				}
 			}
-		} else if rhs is ast.CallOrCastExpr {
-			if ret := g.get_call_return_type(rhs.lhs, 1) {
-				if ret != '' && ret != 'int' {
-					typ = ret
-					rhs_has_explicit_call_ret = true
+			} else if rhs is ast.CallOrCastExpr {
+				if ret := g.get_call_return_type(rhs.lhs, 1) {
+					if ret != '' && ret != 'int' {
+						typ = ret
+						rhs_has_explicit_call_ret = true
+					}
 				}
 			}
-		}
+			if rhs is ast.KeywordOperator && rhs.op in [.key_sizeof, .key_offsetof] {
+				typ = 'usize'
+			}
 		if name != '' && g.cur_fn_scope != unsafe { nil } {
 			if obj := g.cur_fn_scope.lookup_parent(name, 0) {
 				if obj !is types.Module {
@@ -1391,6 +1392,25 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				} else if rhs is ast.CallOrCastExpr {
 					if ret := g.get_call_return_type(rhs.lhs, 1) {
 						rhs_type = ret
+					}
+				}
+			}
+			if rhs is ast.SelectorExpr && rhs.rhs.name == 'err' {
+				container_type := g.get_expr_type(rhs.lhs)
+				if container_type.starts_with('_result_') || container_type.starts_with('_option_') {
+					rhs_type = 'IError'
+				}
+			}
+			if rhs is ast.CallExpr {
+				if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
+					if ret != '' {
+						typ = ret
+					}
+				}
+			} else if rhs is ast.CallOrCastExpr {
+				if ret := g.get_call_return_type(rhs.lhs, 1) {
+					if ret != '' {
+						typ = ret
 					}
 				}
 			}
