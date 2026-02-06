@@ -245,7 +245,10 @@ pub fn (mut g Gen) gen() string {
 		g.set_file_module(file)
 		for stmt in file.stmts {
 			if stmt is ast.FnDecl {
-				if stmt.language != .v {
+				if stmt.language == .js {
+					continue
+				}
+				if stmt.language == .c && stmt.stmts.len == 0 {
 					continue
 				}
 				fn_name := g.get_fn_name(stmt)
@@ -401,7 +404,10 @@ fn (mut g Gen) collect_fn_signatures() {
 		for stmt in file.stmts {
 			match stmt {
 				ast.FnDecl {
-					if stmt.language != .v {
+					if stmt.language == .js {
+						continue
+					}
+					if stmt.language == .c && stmt.stmts.len == 0 {
 						continue
 					}
 					fn_name := g.get_fn_name(stmt)
@@ -519,7 +525,10 @@ fn (mut g Gen) collect_decl_type_aliases_from_stmt(stmt ast.Stmt) {
 			}
 		}
 		ast.FnDecl {
-			if stmt.language == .c {
+			if stmt.language == .js {
+				return
+			}
+			if stmt.language == .c && stmt.stmts.len == 0 {
 				return
 			}
 			if stmt.is_method && stmt.receiver.typ !is ast.EmptyExpr {
@@ -892,8 +901,11 @@ fn (mut g Gen) gen_global_decl(node ast.GlobalDecl) {
 }
 
 fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
-	// Only generate V functions for the clean C backend.
-	if node.language != .v {
+	// Generate V and .c.v function bodies, but skip JS and C extern declarations.
+	if node.language == .js {
+		return
+	}
+	if node.language == .c && node.stmts.len == 0 {
 		return
 	}
 	fn_name := g.get_fn_name(node)
@@ -4006,9 +4018,11 @@ fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
 			}
 		}
 	}
-	fn_ptr_ret := g.fn_pointer_return_type(lhs)
-	if fn_ptr_ret != '' {
-		return fn_ptr_ret
+	if lhs !is ast.Ident {
+		fn_ptr_ret := g.fn_pointer_return_type(lhs)
+		if fn_ptr_ret != '' {
+			return fn_ptr_ret
+		}
 	}
 	c_name := g.resolve_call_name(lhs, arg_count)
 	if c_name == '' {
@@ -4459,6 +4473,24 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 				if ret := g.get_call_return_type(node.lhs, 1) {
 					if ret != '' {
 						return ret
+					}
+				}
+			}
+			ast.InfixExpr {
+				if node.op in [.plus, .minus, .mul, .div, .mod, .amp, .pipe, .xor, .left_shift,
+					.right_shift] {
+					lhs_t := g.get_expr_type(node.lhs)
+					rhs_t := g.get_expr_type(node.rhs)
+					if t.ends_with('Fn') || lhs_t.ends_with('Fn') || rhs_t.ends_with('Fn') {
+						return 'u64'
+					}
+					if t == '' || t == 'int' {
+						if lhs_t != '' && lhs_t != 'int' {
+							return lhs_t
+						}
+						if rhs_t != '' && rhs_t != 'int' {
+							return rhs_t
+						}
 					}
 				}
 			}
