@@ -343,23 +343,43 @@ fn (t &Transformer) get_method_return_type(expr ast.Expr) ?types.Type {
 			sel := expr.lhs as ast.SelectorExpr
 			method_name := sel.rhs.name
 			// Get the receiver type from the checker's stored types
-			receiver_pos := sel.lhs.pos()
-			if receiver_pos > 0 {
-				if receiver_type := t.env.get_expr_type(receiver_pos) {
-					// Get the type name for method lookup
-					type_name := receiver_type.name()
-					// Strip pointer prefix if present
-					clean_name := if type_name.starts_with('&') {
-						type_name[1..]
-					} else {
-						type_name
-					}
-					// Look up the method using the environment's lookup_method
-					if fn_type := t.env.lookup_method(clean_name, method_name) {
-						return fn_type.get_return_type()
-					}
+			if receiver_type := t.resolve_expr_type(sel.lhs) {
+				// Get the type name for method lookup
+				type_name := receiver_type.name()
+				// Strip pointer prefix if present
+				clean_name := if type_name.starts_with('&') {
+					type_name[1..]
+				} else {
+					type_name
+				}
+				// Look up the method using the environment's lookup_method
+				if fn_type := t.env.lookup_method(clean_name, method_name) {
+					return fn_type.get_return_type()
 				}
 			}
+		}
+	}
+	return none
+}
+
+// resolve_expr_type resolves the type of an expression, falling back to scope
+// lookup when the checker didn't store a type at the expression's position.
+fn (t &Transformer) resolve_expr_type(expr ast.Expr) ?types.Type {
+	// First try the environment (checker stored type)
+	pos := expr.pos()
+	if pos > 0 {
+		if typ := t.env.get_expr_type(pos) {
+			return typ
+		}
+	}
+	// Fallback: resolve based on expression structure
+	if expr is ast.Ident {
+		return t.lookup_var_type(expr.name)
+	}
+	if expr is ast.IndexExpr {
+		// For slices (a[x..y]), the result type is the same as the container
+		if expr.expr is ast.RangeExpr {
+			return t.resolve_expr_type(expr.lhs)
 		}
 	}
 	return none
@@ -2895,6 +2915,23 @@ fn (mut t Transformer) expand_single_or_expr(or_expr ast.OrExpr, mut prefix_stmt
 				}
 				types.OptionType {
 					base_type = call_type.base_type.name()
+				}
+				else {}
+			}
+		}
+	} else if ret_type := t.get_method_return_type(call_expr) {
+		// Fallback: get_expr_type may fail for method calls on complex expressions
+		// (e.g. slices) where the checker didn't store a type at the call position.
+		// Use get_method_return_type which resolves the receiver type and looks up
+		// the method in the environment.
+		t.register_temp_var(temp_name, ret_type)
+		if base_type == '' {
+			match ret_type {
+				types.ResultType {
+					base_type = ret_type.base_type.name()
+				}
+				types.OptionType {
+					base_type = ret_type.base_type.name()
 				}
 				else {}
 			}
