@@ -843,7 +843,17 @@ fn (mut c Checker) expr_impl(expr ast.Expr) Type {
 			// if lhs_type is Enum {
 			// 	c.expected_type = lhs_type
 			// }
-			c.expr(expr.rhs)
+			if expr.op == .and {
+				// In `a is T && a.field ...`, RHS is evaluated only when the smart-cast is true.
+				// Type-check RHS in a nested scope with casts from LHS applied.
+				c.open_scope()
+				sc_names, sc_types := c.extract_smartcasts(expr.lhs)
+				c.apply_smartcasts(sc_names, sc_types)
+				c.expr(expr.rhs)
+				c.close_scope()
+			} else {
+				c.expr(expr.rhs)
+			}
 			// c.expected_type = expected_type
 			if expr.op.is_comparison() {
 				return bool_
@@ -2547,6 +2557,11 @@ fn (mut c Checker) find_field_or_method(t Type, name string) !Type {
 				if field.name == name {
 					return t
 					// return int_
+				}
+			}
+			if name == 'str' {
+				return FnType{
+					return_type: string_
 				}
 			}
 			// flags - compiler magic (currently)
