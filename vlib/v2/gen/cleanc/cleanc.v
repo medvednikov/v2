@@ -20,6 +20,7 @@ mut:
 	cur_fn_name       string
 	cur_module        string
 	emitted_types     map[string]bool
+	fn_param_is_ptr   map[string][]bool
 	array_aliases     map[string]bool
 	map_aliases       map[string]bool
 	result_aliases    map[string]bool
@@ -58,6 +59,7 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 		env:               unsafe { env }
 		pref:              unsafe { p }
 		sb:                strings.new_builder(4096)
+		fn_param_is_ptr:   map[string][]bool{}
 		array_aliases:     map[string]bool{}
 		map_aliases:       map[string]bool{}
 		result_aliases:    map[string]bool{}
@@ -70,6 +72,7 @@ pub fn (mut g Gen) gen() string {
 	g.write_preamble()
 	g.collect_module_type_names()
 	g.collect_runtime_aliases()
+	g.collect_fn_signatures()
 
 	// Pass 1: Forward declarations for all structs/unions/sumtypes/interfaces (needed for mutual references)
 	for file in g.files {
@@ -306,6 +309,36 @@ fn (mut g Gen) collect_runtime_aliases() {
 	if g.env != unsafe { nil } {
 		for _, typ in g.env.expr_types {
 			g.collect_aliases_from_type(typ)
+		}
+	}
+}
+
+fn (mut g Gen) collect_fn_signatures() {
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			match stmt {
+				ast.FnDecl {
+					if stmt.language == .c {
+						continue
+					}
+					fn_name := g.get_fn_name(stmt)
+					if fn_name == '' {
+						continue
+					}
+					mut params := []bool{}
+					if stmt.is_method && stmt.receiver.name != '' {
+						recv_type := g.expr_type_to_c(stmt.receiver.typ)
+						params << (stmt.receiver.is_mut || recv_type.ends_with('*'))
+					}
+					for param in stmt.typ.params {
+						param_type := g.expr_type_to_c(param.typ)
+						params << (param.is_mut || param_type.ends_with('*'))
+					}
+					g.fn_param_is_ptr[fn_name] = params
+				}
+				else {}
+			}
 		}
 	}
 }
@@ -1178,6 +1211,13 @@ fn (mut g Gen) is_module_ident(name string) bool {
 	return false
 }
 
+fn sanitize_c_number_literal(lit string) string {
+	if lit.contains('_') {
+		return lit.replace('_', '')
+	}
+	return lit
+}
+
 // Helper to extract FnType from an Expr (handles ast.Type wrapping)
 fn (g Gen) get_fn_type_from_expr(e ast.Expr) ?ast.FnType {
 	if e is ast.Type {
@@ -1199,7 +1239,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				escaped := node.value.replace('\\', '\\\\').replace("'", "\\'")
 				g.sb.write_string("'${escaped}'")
 			} else {
-				g.sb.write_string(node.value)
+				g.sb.write_string(sanitize_c_number_literal(node.value))
 			}
 		}
 		ast.StringLiteral {
@@ -1216,7 +1256,12 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			if node.name == 'nil' {
 				g.sb.write_string('NULL')
 			} else {
-				g.sb.write_string(node.name)
+				if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
+					&& 'const_${g.cur_module}__${node.name}' in g.emitted_types {
+					g.sb.write_string('${g.cur_module}__${node.name}')
+				} else {
+					g.sb.write_string(node.name)
+				}
 			}
 		}
 		ast.ParenExpr {
@@ -1256,6 +1301,16 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			// &T(x) in unsafe contexts is used as a pointer cast in V stdlib code.
 			// Emit it as (T*)(x) so `*unsafe { &T(p) }` becomes `*((T*)p)`.
 			if node.op == .amp {
+				if node.expr is ast.CallExpr {
+					if node.expr.lhs is ast.Ident && node.expr.args.len == 1
+						&& g.is_type_name(node.expr.lhs.name) {
+						target_type := g.expr_type_to_c(node.expr.lhs)
+						g.sb.write_string('((${target_type}*)(')
+						g.gen_expr(node.expr.args[0])
+						g.sb.write_string('))')
+						return
+					}
+				}
 				if node.expr is ast.CastExpr {
 					target_type := g.expr_type_to_c(node.expr.typ)
 					g.sb.write_string('((${target_type}*)(')
@@ -1566,8 +1621,75 @@ fn (mut g Gen) gen_stmts_from_expr(e ast.Expr) {
 	}
 }
 
+fn (mut g Gen) expr_is_pointer(arg ast.Expr) bool {
+	if raw_type := g.get_raw_type(arg) {
+		if raw_type is types.Pointer || raw_type is types.Nil {
+			return true
+		}
+	}
+	match arg {
+		ast.PrefixExpr {
+			return arg.op == .amp
+		}
+		ast.Ident {
+			return arg.name == 'nil'
+		}
+		else {}
+	}
+	return g.get_expr_type(arg).ends_with('*')
+}
+
+fn (mut g Gen) can_take_address(arg ast.Expr) bool {
+	match arg {
+		ast.Ident, ast.SelectorExpr, ast.IndexExpr {
+			return true
+		}
+		else {
+			return false
+		}
+	}
+}
+
+fn (mut g Gen) should_auto_deref(arg ast.Expr) bool {
+	if raw_type := g.get_raw_type(arg) {
+		if raw_type is types.Pointer {
+			match raw_type.base_type {
+				types.Array, types.Map, types.Struct, types.Interface, types.Alias {
+					return true
+				}
+				else {}
+			}
+		}
+	}
+	t := g.get_expr_type(arg)
+	return t.ends_with('*') && t !in ['void*', 'char*', 'byteptr', 'charptr']
+}
+
+fn (mut g Gen) gen_call_arg(fn_name string, idx int, arg ast.Expr) {
+	if ptr_params := g.fn_param_is_ptr[fn_name] {
+		if idx < ptr_params.len {
+			want_ptr := ptr_params[idx]
+			got_ptr := g.expr_is_pointer(arg)
+			if want_ptr && !got_ptr && g.can_take_address(arg) {
+				g.sb.write_string('&')
+				g.gen_expr(arg)
+				return
+			}
+			if !want_ptr && got_ptr && g.should_auto_deref(arg) {
+				g.sb.write_string('(*')
+				g.gen_expr(arg)
+				g.sb.write_string(')')
+				return
+			}
+		}
+	}
+	g.gen_expr(arg)
+}
+
 fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	mut name := ''
+	mut call_args := []ast.Expr{}
+	call_args << args
 	if lhs is ast.Ident {
 		name = sanitize_fn_ident(lhs.name)
 	} else if lhs is ast.SelectorExpr {
@@ -1596,14 +1718,10 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 				receiver_type
 			}
 			method_name := sanitize_fn_ident(lhs.rhs.name)
-			g.sb.write_string('${base_type}__${method_name}(')
-			g.gen_expr(lhs.lhs)
-			for arg in args {
-				g.sb.write_string(', ')
-				g.gen_expr(arg)
-			}
-			g.sb.write_string(')')
-			return
+			name = '${base_type}__${method_name}'
+			call_args = []ast.Expr{cap: args.len + 1}
+			call_args << lhs.lhs
+			call_args << args
 		}
 	}
 
@@ -1611,19 +1729,19 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	if name == 'builtin__new_array_from_c_array_noscan' {
 		name = 'new_array_from_c_array'
 	}
-	if name == 'array__contains_int' && args.len == 2 {
+	if name == 'array__contains_int' && call_args.len == 2 {
 		g.sb.write_string('array__contains(')
-		g.gen_expr(args[0])
+		g.gen_expr(call_args[0])
 		g.sb.write_string(', &((int[]){')
-		g.gen_expr(args[1])
+		g.gen_expr(call_args[1])
 		g.sb.write_string('})[0])')
 		return
 	}
 
 	// Handle builtin print functions with type-aware argument conversion
 	if name in ['println', 'eprintln', 'print', 'eprint'] {
-		if args.len == 1 {
-			arg := args[0]
+		if call_args.len == 1 {
+			arg := call_args[0]
 			arg_type := g.get_expr_type(arg)
 
 			c_name := if g.cur_module == 'builtin' {
@@ -1670,11 +1788,11 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 		name
 	}
 	g.sb.write_string('${c_name}(')
-	for i, arg in args {
+	for i, arg in call_args {
 		if i > 0 {
 			g.sb.write_string(', ')
 		}
-		g.gen_expr(arg)
+		g.gen_call_arg(c_name, i, arg)
 	}
 	g.sb.write_string(')')
 }
