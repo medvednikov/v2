@@ -1212,6 +1212,9 @@ fn (mut c Checker) stmt(stmt ast.Stmt) {
 					}
 					key_type := expr_type.key_type()
 					c.scope.insert(stmt.init.key.name, key_type)
+					if c.fn_root_scope != unsafe { nil } && c.fn_root_scope != c.scope {
+						c.fn_root_scope.objects[stmt.init.key.name] = key_type
+					}
 				}
 				mut value_type := expr_type.value_type()
 				if stmt.init.value is ast.ModifierExpr {
@@ -1220,9 +1223,15 @@ fn (mut c Checker) stmt(stmt ast.Stmt) {
 					}
 					if stmt.init.value.expr is ast.Ident {
 						c.scope.insert(stmt.init.value.expr.name, value_type)
+						if c.fn_root_scope != unsafe { nil } && c.fn_root_scope != c.scope {
+							c.fn_root_scope.objects[stmt.init.value.expr.name] = value_type
+						}
 					}
 				} else if stmt.init.value is ast.Ident {
 					c.scope.insert(stmt.init.value.name, value_type)
+					if c.fn_root_scope != unsafe { nil } && c.fn_root_scope != c.scope {
+						c.fn_root_scope.objects[stmt.init.value.name] = value_type
+					}
 				}
 			} else {
 				if stmt.cond !is ast.EmptyExpr {

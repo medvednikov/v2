@@ -1025,7 +1025,20 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		'void'
 	}
 	if g.env != unsafe { nil } {
-		if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
+		// For methods, the checker stores scopes using V-style receiver type names
+		// (e.g. "[]string__free"), while get_fn_name returns C-style names
+		// (e.g. "Array_string__free"). Use V-style name for scope lookup.
+		scope_fn_name := if node.is_method && node.receiver.name != '' {
+			if raw_type := g.get_raw_type(node.receiver.typ) {
+				base_type := raw_type.base_type()
+				'${base_type.name()}__${node.name}'
+			} else {
+				fn_name
+			}
+		} else {
+			fn_name
+		}
+		if fn_scope := g.env.get_fn_scope(g.cur_module, scope_fn_name) {
 			g.cur_fn_scope = fn_scope
 		} else {
 			g.cur_fn_scope = unsafe { nil }
