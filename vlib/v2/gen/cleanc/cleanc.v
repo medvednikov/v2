@@ -14,12 +14,17 @@ pub struct Gen {
 	env   &types.Environment = unsafe { nil }
 	pref  &pref.Preferences  = unsafe { nil }
 mut:
-	sb            strings.Builder
-	indent        int
-	cur_fn_scope  &types.Scope = unsafe { nil }
-	cur_fn_name   string
-	cur_module    string
-	emitted_types map[string]bool
+	sb                strings.Builder
+	indent            int
+	cur_fn_scope      &types.Scope = unsafe { nil }
+	cur_fn_name       string
+	cur_module        string
+	emitted_types     map[string]bool
+	array_aliases     map[string]bool
+	map_aliases       map[string]bool
+	result_aliases    map[string]bool
+	option_aliases    map[string]bool
+	module_type_names map[string]bool
 }
 
 struct StructDeclInfo {
@@ -49,15 +54,22 @@ pub fn Gen.new_with_env(files []ast.File, env &types.Environment) &Gen {
 
 pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pref.Preferences) &Gen {
 	return &Gen{
-		files: files
-		env:   unsafe { env }
-		pref:  unsafe { p }
-		sb:    strings.new_builder(4096)
+		files:             files
+		env:               unsafe { env }
+		pref:              unsafe { p }
+		sb:                strings.new_builder(4096)
+		array_aliases:     map[string]bool{}
+		map_aliases:       map[string]bool{}
+		result_aliases:    map[string]bool{}
+		option_aliases:    map[string]bool{}
+		module_type_names: map[string]bool{}
 	}
 }
 
 pub fn (mut g Gen) gen() string {
 	g.write_preamble()
+	g.collect_module_type_names()
+	g.collect_runtime_aliases()
 
 	// Pass 1: Forward declarations for all structs/unions/sumtypes/interfaces (needed for mutual references)
 	for file in g.files {
@@ -92,6 +104,8 @@ pub fn (mut g Gen) gen() string {
 			}
 		}
 	}
+	g.sb.writeln('')
+	g.emit_runtime_aliases()
 	g.sb.writeln('')
 
 	// Pass 2: Enum declarations, type aliases, interface structs, and sum type structs
@@ -218,6 +232,198 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('typedef int64_t int_literal;')
 	g.sb.writeln('')
 	g.sb.writeln('')
+}
+
+fn is_c_identifier_like(name string) bool {
+	if name.len == 0 {
+		return false
+	}
+	for ch in name {
+		if !(ch.is_letter() || ch.is_digit() || ch == `_`) {
+			return false
+		}
+	}
+	return true
+}
+
+fn (mut g Gen) collect_module_type_names() {
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			match stmt {
+				ast.StructDecl {
+					if stmt.language == .c {
+						continue
+					}
+					g.module_type_names['${g.cur_module}::${stmt.name}'] = true
+				}
+				ast.EnumDecl {
+					g.module_type_names['${g.cur_module}::${stmt.name}'] = true
+				}
+				ast.TypeDecl {
+					if stmt.language == .c {
+						continue
+					}
+					g.module_type_names['${g.cur_module}::${stmt.name}'] = true
+				}
+				ast.InterfaceDecl {
+					g.module_type_names['${g.cur_module}::${stmt.name}'] = true
+				}
+				else {}
+			}
+		}
+	}
+}
+
+fn (mut g Gen) collect_runtime_aliases() {
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			g.collect_decl_type_aliases_from_stmt(stmt)
+		}
+	}
+	// Also use type-checker output so aliases used only in expressions are captured.
+	if g.env != unsafe { nil } {
+		for _, typ in g.env.expr_types {
+			g.collect_aliases_from_type(typ)
+		}
+	}
+}
+
+fn (mut g Gen) collect_aliases_from_type(t types.Type) {
+	match t {
+		types.Array {
+			g.collect_aliases_from_type(t.elem_type)
+			g.register_alias_type('Array_${g.types_type_to_c(t.elem_type)}')
+		}
+		types.ArrayFixed {
+			g.collect_aliases_from_type(t.elem_type)
+			g.register_alias_type('Array_${g.types_type_to_c(t.elem_type)}')
+		}
+		types.Map {
+			g.collect_aliases_from_type(t.key_type)
+			g.collect_aliases_from_type(t.value_type)
+			g.register_alias_type('Map_${g.types_type_to_c(t.key_type)}_${g.types_type_to_c(t.value_type)}')
+		}
+		types.OptionType {
+			g.collect_aliases_from_type(t.base_type)
+			g.register_alias_type('_option_${g.types_type_to_c(t.base_type)}')
+		}
+		types.ResultType {
+			g.collect_aliases_from_type(t.base_type)
+			g.register_alias_type('_result_${g.types_type_to_c(t.base_type)}')
+		}
+		types.Alias {
+			g.collect_aliases_from_type(t.base_type)
+			g.register_alias_type(t.name)
+		}
+		types.Pointer {
+			g.collect_aliases_from_type(t.base_type)
+		}
+		else {}
+	}
+}
+
+fn (mut g Gen) collect_decl_type_aliases_from_stmt(stmt ast.Stmt) {
+	match stmt {
+		ast.StructDecl {
+			if stmt.language == .c {
+				return
+			}
+			for emb in stmt.embedded {
+				_ = g.expr_type_to_c(emb)
+			}
+			for field in stmt.fields {
+				if field.typ !is ast.EmptyExpr {
+					_ = g.expr_type_to_c(field.typ)
+				}
+			}
+		}
+		ast.InterfaceDecl {
+			for field in stmt.fields {
+				if field.typ !is ast.EmptyExpr {
+					_ = g.expr_type_to_c(field.typ)
+				}
+			}
+		}
+		ast.TypeDecl {
+			if stmt.language == .c {
+				return
+			}
+			if stmt.base_type !is ast.EmptyExpr {
+				_ = g.expr_type_to_c(stmt.base_type)
+			}
+			for variant in stmt.variants {
+				_ = g.expr_type_to_c(variant)
+			}
+		}
+		ast.FnDecl {
+			if stmt.language == .c {
+				return
+			}
+			if stmt.is_method && stmt.receiver.typ !is ast.EmptyExpr {
+				_ = g.expr_type_to_c(stmt.receiver.typ)
+			}
+			for param in stmt.typ.params {
+				_ = g.expr_type_to_c(param.typ)
+			}
+			if stmt.typ.return_type !is ast.EmptyExpr {
+				_ = g.expr_type_to_c(stmt.typ.return_type)
+			}
+		}
+		ast.GlobalDecl {
+			for field in stmt.fields {
+				if field.typ !is ast.EmptyExpr {
+					_ = g.expr_type_to_c(field.typ)
+				}
+			}
+		}
+		else {}
+	}
+}
+
+fn (mut g Gen) register_alias_type(name string) {
+	if !is_c_identifier_like(name) {
+		return
+	}
+	if name.starts_with('Array_') || name.starts_with('Array_fixed_') {
+		g.array_aliases[name] = true
+		return
+	}
+	if name.starts_with('Map_') {
+		g.map_aliases[name] = true
+		return
+	}
+	if name.starts_with('_result_') {
+		g.result_aliases[name] = true
+		return
+	}
+	if name.starts_with('_option_') {
+		g.option_aliases[name] = true
+	}
+}
+
+fn (mut g Gen) emit_runtime_aliases() {
+	mut array_names := g.array_aliases.keys()
+	array_names.sort()
+	for name in array_names {
+		g.sb.writeln('typedef array ${name};')
+	}
+	mut map_names := g.map_aliases.keys()
+	map_names.sort()
+	for name in map_names {
+		g.sb.writeln('typedef map ${name};')
+	}
+	mut option_names := g.option_aliases.keys()
+	option_names.sort()
+	for name in option_names {
+		g.sb.writeln('typedef _option ${name};')
+	}
+	mut result_names := g.result_aliases.keys()
+	result_names.sort()
+	for name in result_names {
+		g.sb.writeln('typedef _result ${name};')
+	}
 }
 
 fn (mut g Gen) set_file_module(file ast.File) {
@@ -612,6 +818,9 @@ fn (g &Gen) struct_fields_resolved(node ast.StructDecl) bool {
 fn (g &Gen) field_type_name(e ast.Expr) string {
 	match e {
 		ast.Ident {
+			if g.is_module_local_type(e.name) {
+				return '${g.cur_module}__${e.name}'
+			}
 			return e.name
 		}
 		ast.SelectorExpr {
@@ -721,6 +930,10 @@ fn (mut g Gen) get_type_decl_name(node ast.TypeDecl) string {
 
 fn (mut g Gen) gen_type_alias(node ast.TypeDecl) {
 	name := g.get_type_decl_name(node)
+	// System-provided typedefs should not be redefined by generated builtin aliases.
+	if name in ['intptr_t', 'uintptr_t'] {
+		return
+	}
 	alias_key := 'alias_${name}'
 	if alias_key in g.emitted_types {
 		return
@@ -1541,6 +1754,10 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			if name == 'charptr' {
 				return 'char*'
 			}
+			if g.is_module_local_type(name) {
+				return '${g.cur_module}__${name}'
+			}
+			g.register_alias_type(name)
 			return name
 		}
 		ast.PrefixExpr {
@@ -1561,20 +1778,28 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 		ast.Type {
 			if e is ast.ArrayType {
 				elem_type := g.expr_type_to_c(e.elem_type)
-				return 'Array_${elem_type}'
+				array_type := 'Array_${elem_type}'
+				g.register_alias_type(array_type)
+				return array_type
 			}
 			if e is ast.MapType {
 				key_type := g.expr_type_to_c(e.key_type)
 				value_type := g.expr_type_to_c(e.value_type)
-				return 'Map_${key_type}_${value_type}'
+				map_type := 'Map_${key_type}_${value_type}'
+				g.register_alias_type(map_type)
+				return map_type
 			}
 			if e is ast.OptionType {
 				base_type := g.expr_type_to_c(e.base_type)
-				return '_option_${base_type}'
+				option_type := '_option_${base_type}'
+				g.register_alias_type(option_type)
+				return option_type
 			}
 			if e is ast.ResultType {
 				base_type := g.expr_type_to_c(e.base_type)
-				return '_result_${base_type}'
+				result_type := '_result_${base_type}'
+				g.register_alias_type(result_type)
+				return result_type
 			}
 			if e is ast.FnType {
 				return 'void*'
@@ -1585,6 +1810,23 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			return 'int'
 		}
 	}
+}
+
+fn (g &Gen) is_module_local_type(name string) bool {
+	if g.cur_module == '' || g.cur_module == 'main' || g.cur_module == 'builtin' {
+		return false
+	}
+	if name in primitive_types {
+		return false
+	}
+	if name in ['bool', 'string', 'voidptr', 'charptr', 'byteptr'] {
+		return false
+	}
+	if name.contains('__') || name.starts_with('Array_') || name.starts_with('Array_fixed_')
+		|| name.starts_with('Map_') || name.starts_with('_result_') || name.starts_with('_option_') {
+		return false
+	}
+	return '${g.cur_module}::${name}' in g.module_type_names
 }
 
 // get_raw_type returns the raw types.Type for an expression from the Environment
