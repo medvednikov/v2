@@ -174,16 +174,19 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
-			if stmt is ast.FnDecl {
-				if stmt.language == .c {
-					continue
-				}
-				if g.env != unsafe { nil } {
-					fn_name := g.get_fn_name(stmt)
-					if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
-						g.cur_fn_scope = fn_scope
+				if stmt is ast.FnDecl {
+					if stmt.language == .c {
+						continue
 					}
-				}
+					fn_name := g.get_fn_name(stmt)
+					if fn_name == '' {
+						continue
+					}
+					if g.env != unsafe { nil } {
+						if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
+							g.cur_fn_scope = fn_scope
+						}
+					}
 				g.gen_fn_head(stmt)
 				g.sb.writeln(';')
 			}
@@ -228,8 +231,13 @@ fn (mut g Gen) write_preamble() {
 	g.sb.writeln('typedef char* byteptr;')
 	g.sb.writeln('typedef char* charptr;')
 	g.sb.writeln('typedef void* voidptr;')
+	g.sb.writeln('typedef void* chan;')
 	g.sb.writeln('typedef double float_literal;')
 	g.sb.writeln('typedef int64_t int_literal;')
+	// Minimal wyhash symbols used by builtin/map and hash modules.
+	g.sb.writeln('static const u64 _wyp[4] = {0xa0761d6478bd642full, 0xe7037ed1a0b428dbull, 0x8ebc6af09c88c6e3ull, 0x589965cc75374cc3ull};')
+	g.sb.writeln('static inline u64 wyhash(const void* key, u64 len, u64 seed, const u64* secret) { (void)key; (void)len; (void)seed; (void)secret; return 0; }')
+	g.sb.writeln('static inline u64 wyhash64(u64 a, u64 b) { (void)a; (void)b; return 0; }')
 	g.sb.writeln('')
 	g.sb.writeln('')
 }
@@ -555,11 +563,14 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 	if node.language == .c {
 		return
 	}
+	fn_name := g.get_fn_name(node)
+	if fn_name == '' {
+		return
+	}
 
 	// Set function scope for type lookups
 	g.cur_fn_name = node.name
 	if g.env != unsafe { nil } {
-		fn_name := g.get_fn_name(node)
 		if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
 			g.cur_fn_scope = fn_scope
 		} else {
@@ -641,6 +652,12 @@ fn (mut g Gen) get_fn_name(node ast.FnDecl) string {
 	if node.name == 'main' {
 		return 'main'
 	}
+	// Prevent collisions with libc symbols from builtin wrappers.
+	if !node.is_method && node.name in c_stdlib_fns
+		&& (g.cur_module == '' || g.cur_module == 'main' || g.cur_module == 'builtin') {
+		return ''
+	}
+	name := sanitize_fn_ident(node.name)
 	// Methods: ReceiverType__method_name
 	if node.is_method && node.receiver.name != '' {
 		receiver_type := g.expr_type_to_c(node.receiver.typ)
@@ -650,12 +667,12 @@ fn (mut g Gen) get_fn_name(node ast.FnDecl) string {
 		} else {
 			receiver_type
 		}
-		return '${base_type}__${node.name}'
+		return '${base_type}__${name}'
 	}
 	if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
-		return '${g.cur_module}__${node.name}'
+		return '${g.cur_module}__${name}'
 	}
-	return node.name
+	return name
 }
 
 fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
@@ -784,11 +801,33 @@ const c_keywords = ['auto', 'break', 'case', 'char', 'const', 'continue', 'defau
 	'restrict', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef',
 	'union', 'unsigned', 'void', 'volatile', 'while', '_Bool', '_Complex', '_Imaginary']
 
+const c_stdlib_fns = ['malloc', 'calloc', 'realloc', 'free', 'atoi', 'atof', 'atol', 'memcpy',
+	'memset', 'memmove', 'strlen', 'strcpy', 'strcat', 'strcmp', 'memcmp']
+
 fn escape_c_keyword(name string) string {
 	if name in c_keywords {
 		return '_${name}'
 	}
 	return name
+}
+
+fn sanitize_fn_ident(name string) string {
+	return match name {
+		'+' { 'plus' }
+		'-' { 'minus' }
+		'*' { 'mul' }
+		'/' { 'div' }
+		'%' { 'mod' }
+		'==' { 'eq' }
+		'!=' { 'ne' }
+		'<' { 'lt' }
+		'>' { 'gt' }
+		'<=' { 'le' }
+		'>=' { 'ge' }
+		'|' { 'pipe' }
+		'^' { 'xor' }
+		else { name }
+	}
 }
 
 // Check if all non-pointer field types of a struct are already defined
@@ -1179,6 +1218,44 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			g.sb.write_string(')')
 		}
 		ast.PrefixExpr {
+			// &T(x) in unsafe contexts is used as a pointer cast in V stdlib code.
+			// Emit it as (T*)(x) so `*unsafe { &T(p) }` becomes `*((T*)p)`.
+			if node.op == .amp {
+				if node.expr is ast.CastExpr {
+					target_type := g.expr_type_to_c(node.expr.typ)
+					g.sb.write_string('((${target_type}*)(')
+					g.gen_expr(node.expr.expr)
+					g.sb.write_string('))')
+					return
+				}
+				if node.expr is ast.CallOrCastExpr {
+					if node.expr.lhs is ast.Ident && g.is_type_name(node.expr.lhs.name) {
+						target_type := g.expr_type_to_c(node.expr.lhs)
+						g.sb.write_string('((${target_type}*)(')
+						g.gen_expr(node.expr.expr)
+						g.sb.write_string('))')
+						return
+					}
+				}
+				if node.expr is ast.ParenExpr {
+					if node.expr.expr is ast.CastExpr {
+						target_type := g.expr_type_to_c(node.expr.expr.typ)
+						g.sb.write_string('((${target_type}*)(')
+						g.gen_expr(node.expr.expr.expr)
+						g.sb.write_string('))')
+						return
+					}
+					if node.expr.expr is ast.CallOrCastExpr {
+						if node.expr.expr.lhs is ast.Ident && g.is_type_name(node.expr.expr.lhs.name) {
+							target_type := g.expr_type_to_c(node.expr.expr.lhs)
+							g.sb.write_string('((${target_type}*)(')
+							g.gen_expr(node.expr.expr.expr)
+							g.sb.write_string('))')
+							return
+						}
+					}
+				}
+			}
 			op := match node.op {
 				.minus { '-' }
 				.not { '!' }
@@ -1206,6 +1283,11 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			}
 		}
 		ast.SelectorExpr {
+			// C.<ident> references C macros/constants directly (e.g. C.EOF -> EOF).
+			if node.lhs is ast.Ident && node.lhs.name == 'C' {
+				g.sb.write_string(node.rhs.name)
+				return
+			}
 			// Check if LHS is an enum type name -> emit EnumName__field
 			if node.lhs is ast.Ident && g.is_enum_type(node.lhs.name) {
 				enum_name := g.get_qualified_name(node.lhs.name)
@@ -1423,7 +1505,7 @@ fn (mut g Gen) gen_stmts_from_expr(e ast.Expr) {
 fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	mut name := ''
 	if lhs is ast.Ident {
-		name = lhs.name
+		name = sanitize_fn_ident(lhs.name)
 	} else if lhs is ast.SelectorExpr {
 		// Handle C.puts, C.putchar etc.
 		if lhs.lhs is ast.Ident && lhs.lhs.name == 'C' {
