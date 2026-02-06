@@ -4303,7 +4303,7 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 								}
 							}
 							types.String {
-								return 'u8'
+								return 'string'
 							}
 							else {}
 						}
@@ -4317,9 +4317,6 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			lhs_type := g.get_expr_type(node.lhs)
 			if lhs_type.starts_with('Array_') {
 				return lhs_type['Array_'.len..].trim_right('*')
-			}
-			if lhs_type == 'string*' {
-				return 'u8'
 			}
 			return 'int'
 		}
