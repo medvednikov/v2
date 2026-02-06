@@ -4355,6 +4355,32 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 				pos:  expr.pos
 			})
 		}
+		ast.PostfixExpr {
+			// `expr!`/`expr?` should be lowered earlier.
+			// Keep codegen valid by converting them to a cast of the underlying
+			// result/option expression to the checker-inferred value type.
+			if expr.op in [.not, .question] {
+				inner := t.transform_expr(expr.expr)
+				if typ := t.get_expr_type(expr) {
+					type_name := t.type_to_c_name(typ)
+					if type_name != '' {
+						return ast.CastExpr{
+							typ: ast.Expr(ast.Ident{
+								name: type_name
+							})
+							expr: inner
+						}
+					}
+				}
+				inner
+			} else {
+				ast.Expr(ast.PostfixExpr{
+					op:   expr.op
+					expr: t.transform_expr(expr.expr)
+					pos:  expr.pos
+				})
+			}
+		}
 		ast.CastExpr {
 			ast.Expr(ast.CastExpr{
 				typ:  expr.typ
