@@ -268,6 +268,16 @@ fn (mut g Gen) gen_func(func mir.Function) {
 					g.stack_map[val_id] = -slot_offset
 					continue
 				}
+			} else if instr.op == .call_sret {
+				// call_sret returns an aggregate indirectly into the destination slot.
+				result_typ := g.mod.type_store.types[val.typ]
+				if result_typ.kind == .struct_t {
+					result_size := g.type_size(val.typ)
+					slot_offset = (slot_offset + 15) & ~0xF
+					slot_offset += result_size
+					g.stack_map[val_id] = -slot_offset
+					continue
+				}
 			}
 
 			if val_id in g.reg_map {
@@ -312,10 +322,11 @@ fn (mut g Gen) gen_func(func mir.Function) {
 			param_typ := g.mod.values[pid].typ
 			param_type_info := g.mod.type_store.types[param_typ]
 			param_size := g.type_size(param_typ)
+			is_indirect_param := i < func.abi_param_class.len && func.abi_param_class[i] == .indirect
 
 			// For large struct parameters (> 16 bytes), the register contains a pointer
 			// We need to copy the struct from that pointer to local storage
-			if param_type_info.kind == .struct_t && param_size > 16 {
+			if is_indirect_param || (param_type_info.kind == .struct_t && param_size > 16) {
 				// xi contains pointer to struct, copy struct to local storage
 				// Use x9 to hold the source pointer (don't clobber argument registers)
 				g.emit_mov_reg(9, i)
@@ -659,7 +670,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					// Store variadic arguments to stack (in order)
 					for i := 0; i < num_variadic; i++ {
 						arg_idx := num_fixed_args + 1 + i // +1 because operands[0] is the function
-						g.load_val_to_reg(9, instr.operands[arg_idx]) // Use x9 to avoid clobbering x8
+						g.load_call_arg_to_reg(9, instr.operands[arg_idx], arg_idx - 1, instr) // Use x9 to avoid clobbering x8
 						// STR x9, [sp, #offset]
 						offset := i * 8
 						imm12 := u32(offset / 8)
@@ -668,7 +679,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 					// Load fixed arguments to registers (in reverse order to avoid clobbering)
 					for i := num_fixed_args; i >= 1; i-- {
-						g.load_val_to_reg(i - 1, instr.operands[i])
+						g.load_call_arg_to_reg(i - 1, instr.operands[i], i - 1, instr)
 					}
 
 					// Call function
@@ -691,7 +702,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					// Load arguments in reverse order to avoid clobbering
 					for i := num_args; i >= 1; i-- {
 						if i - 1 < 8 {
-							g.load_val_to_reg(i - 1, instr.operands[i])
+							g.load_call_arg_to_reg(i - 1, instr.operands[i], i - 1, instr)
 						}
 					}
 
@@ -729,7 +740,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			// Load arguments in reverse order to avoid clobbering
 			for i := num_args; i >= 1; i-- {
 				if i - 1 < 8 {
-					g.load_val_to_reg(i - 1, instr.operands[i])
+					g.load_call_arg_to_reg(i - 1, instr.operands[i], i - 1, instr)
 				}
 			}
 
@@ -744,41 +755,32 @@ fn (mut g Gen) gen_instr(val_id int) {
 			}
 		}
 		.call_sret {
-			// Call with struct return - uses x8 for indirect return destination
-			// operands: [fn, arg1, arg2, ..., dest_ptr]
-			// Last operand is the destination pointer for struct return
+			// Call with struct return lowered by ABI pass.
+			// operands: [fn, arg1, arg2, ...], destination is val_id's stack slot.
+			num_args := instr.operands.len - 1
+
+			// Set x8 to destination address for indirect return.
+			result_offset := g.stack_map[val_id]
+			g.emit_add_fp_imm(8, result_offset)
+
+			// Load arguments in reverse order.
+			for i := num_args; i >= 1; i-- {
+				if i - 1 < 8 {
+					g.load_call_arg_to_reg(i - 1, instr.operands[i], i - 1, instr)
+				}
+			}
+
 			fn_val := g.mod.values[instr.operands[0]]
-			fn_name := fn_val.name
-
-			if fn_name != '' {
-				num_operands := instr.operands.len
-				dest_ptr_id := instr.operands[num_operands - 1]
-				num_args := num_operands - 2 // exclude fn and dest_ptr
-
-				// Set x8 to the destination address (sret pointer)
-				if dest_offset := g.alloca_offsets[dest_ptr_id] {
-					g.emit_add_fp_imm(8, dest_offset)
-				} else {
-					// Load the destination pointer value
-					g.load_val_to_reg(8, dest_ptr_id)
-				}
-
-				// Load arguments in reverse order (excluding dest_ptr)
-				for i := num_args; i >= 1; i-- {
-					if i - 1 < 8 {
-						g.load_val_to_reg(i - 1, instr.operands[i])
-					}
-				}
-
-				// Call function
-				sym_idx := g.macho.add_undefined('_' + fn_name)
+			if fn_val.name != '' && fn_val.kind in [.unknown, .func_ref] {
+				// Direct call by symbol.
+				sym_idx := g.macho.add_undefined('_' + fn_val.name)
 				g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_branch26,
 					true)
 				g.emit(asm_bl_reloc())
-
-				// Store x8 (dest addr) as the result value
-				// On ARM64 AAPCS, x8 is preserved across calls when used for sret
-				g.store_reg_to_val(8, val_id)
+			} else {
+				// Indirect call through function pointer value.
+				g.load_val_to_reg(9, instr.operands[0])
+				g.emit(asm_blr(Reg(9)))
 			}
 		}
 		.ret {
@@ -1080,6 +1082,8 @@ fn (g Gen) selected_opcode(instr mir.Instruction) ssa.OpCode {
 		'load_mr' { .load }
 		'store_rm' { .store }
 		'call' { .call }
+		'call_indirect' { .call_indirect }
+		'call_sret' { .call_sret }
 		'ret' { .ret }
 		'br' { .br }
 		'jmp' { .jmp }
@@ -1097,6 +1101,25 @@ fn (mut g Gen) get_operand_reg(val_id int, fallback int) int {
 	// Otherwise load it into fallback
 	g.load_val_to_reg(fallback, val_id)
 	return fallback
+}
+
+fn (mut g Gen) load_call_arg_to_reg(reg int, val_id int, arg_idx int, instr mir.Instruction) {
+	is_indirect := arg_idx >= 0 && arg_idx < instr.abi_arg_class.len
+		&& instr.abi_arg_class[arg_idx] == .indirect
+	if is_indirect {
+		g.load_address_of_val_to_reg(reg, val_id)
+		return
+	}
+	g.load_val_to_reg(reg, val_id)
+}
+
+fn (mut g Gen) load_address_of_val_to_reg(reg int, val_id int) {
+	if offset := g.stack_map[val_id] {
+		g.emit_add_fp_imm(reg, offset)
+		return
+	}
+	// Value already represents or contains a pointer.
+	g.load_val_to_reg(reg, val_id)
 }
 
 // load_float_operand loads a value into a float register (d0-d7).
@@ -1534,7 +1557,7 @@ fn (mut g Gen) allocate_registers(func mir.Function) {
 				mut skip_interval := false
 				if val.kind == .instruction {
 					instr := g.mod.instrs[val.index]
-					if instr.op == .call {
+					if instr.op in [.call, .call_sret] {
 						result_typ := g.mod.type_store.types[val.typ]
 						if result_typ.kind == .struct_t {
 							result_size := g.type_size(val.typ)
@@ -1555,7 +1578,7 @@ fn (mut g Gen) allocate_registers(func mir.Function) {
 			}
 
 			instr := g.mod.instrs[val.index]
-			if instr.op == .call {
+			if instr.op in [.call, .call_sret] {
 				call_indices << instr_idx
 			}
 
