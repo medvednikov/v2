@@ -1029,24 +1029,38 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		// (e.g. "[]string__free"), while get_fn_name returns C-style names
 		// (e.g. "Array_string__free"). Use V-style name for scope lookup.
 		scope_fn_name := if node.is_method && node.receiver.name != '' {
-			// Use the receiver type's C representation and convert to V-style scope name.
 			// The checker stores scopes using V-style receiver type names
-			// (e.g. "[]string__free"), while get_fn_name returns C-style names
-			// (e.g. "Array_string__free").
-			receiver_c_type := g.expr_type_to_c(node.receiver.typ)
-			base_c_type := if receiver_c_type.ends_with('*') {
-				receiver_c_type[..receiver_c_type.len - 1]
+			// (e.g. "[]string__free", "Builder__go_back"). Convert the AST
+			// receiver type expression to match.
+			v_type_name := g.receiver_type_to_scope_name(node.receiver.typ)
+			if v_type_name != '' {
+				'${v_type_name}__${node.name}'
 			} else {
-				receiver_c_type
+				fn_name
 			}
-			// Convert C-style type name to V-style for scope lookup
-			v_type_name := g.c_type_to_v_name(base_c_type)
-			'${v_type_name}__${node.name}'
 		} else {
 			node.name
 		}
 		if fn_scope := g.env.get_fn_scope(g.cur_module, scope_fn_name) {
 			g.cur_fn_scope = fn_scope
+		} else if node.is_method && node.receiver.name != '' {
+			// Fallback: for type aliases (e.g. Builder = []u8), the checker resolves
+			// the alias and uses the underlying type name. Try env-based resolution.
+			receiver_pos := node.receiver.typ.pos()
+			mut found := false
+			if receiver_pos != 0 {
+				if recv_type := g.env.get_expr_type(receiver_pos) {
+					base_type := recv_type.base_type()
+					alt_scope_name := '${base_type.name()}__${node.name}'
+					if fn_scope2 := g.env.get_fn_scope(g.cur_module, alt_scope_name) {
+						g.cur_fn_scope = fn_scope2
+						found = true
+					}
+				}
+			}
+			if !found {
+				g.cur_fn_scope = unsafe { nil }
+			}
 		} else {
 			g.cur_fn_scope = unsafe { nil }
 		}
@@ -4154,14 +4168,39 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 	return none
 }
 
-// c_type_to_v_name converts a C-style type name back to V-style for scope lookup.
-// e.g. "Array_string" -> "[]string", "Map_string_int" -> "map[string]int"
-fn (g &Gen) c_type_to_v_name(c_name string) string {
-	if c_name.starts_with('Array_') {
-		elem := c_name[6..] // strip "Array_"
-		return '[]${elem}'
+// receiver_type_to_scope_name converts a receiver type AST expression to
+// the V-style name used by the checker for scope keys.
+// This must match what the checker computes: receiver_type.base_type().name()
+fn (g &Gen) receiver_type_to_scope_name(typ ast.Expr) string {
+	// Strip pointer/reference prefix (e.g. &[]string -> []string)
+	if typ is ast.PrefixExpr {
+		if typ.op == .amp {
+			return g.receiver_type_to_scope_name(typ.expr)
+		}
 	}
-	return c_name
+	if typ is ast.Type {
+		// Array type: []T -> "[]T"
+		if typ is ast.ArrayType {
+			elem := g.receiver_type_to_scope_name(typ.elem_type)
+			return '[]${elem}'
+		}
+		// Map type: map[K]V -> "map[K]V"
+		if typ is ast.MapType {
+			key := g.receiver_type_to_scope_name(typ.key_type)
+			val := g.receiver_type_to_scope_name(typ.value_type)
+			return 'map[${key}]${val}'
+		}
+	}
+	// Ident: bare type name (e.g. "Builder", "string")
+	if typ is ast.Ident {
+		return typ.name
+	}
+	// Selector: module.Type -> just use Type
+	if typ is ast.SelectorExpr {
+		return typ.rhs.name
+	}
+	// Fallback
+	return ''
 }
 
 // get_local_var_c_type looks up a local variable's C type string from the function scope

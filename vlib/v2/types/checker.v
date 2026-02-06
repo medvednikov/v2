@@ -954,24 +954,12 @@ fn (mut c Checker) expr_impl(expr ast.Expr) Type {
 			return c.expr(expr.expr)
 		}
 		ast.PostfixExpr {
-			// TODO:
-			// typ := c.expr(expr.expr)
-			// if typ is FnType {
-			// 	if rt := typ.return_type {
-			// 		if rt in [OptionType, ResultType] { return typ }
-			// 	}
-			// 	if expr.op == .not {
-			// 		return_type := OptionType{base_type: typ.return_type or { void_ }}
-			// 		return FnType{...typ, return_type: return_type}
-			// 	}
-			// 	else if expr.op == .question {
-			// 		return_type := ResultType{base_type: typ.return_type or { void_ }}
-			// 		return FnType{...typ, return_type: return_type}
-			// 	}
-			// }
-			// return typ
-
-			return c.expr(expr.expr)
+			typ := c.expr(expr.expr)
+			// The `!` operator (error propagation) unwraps result/option types
+			if expr.op == .not {
+				return typ.unwrap()
+			}
+			return typ
 		}
 		ast.PrefixExpr {
 			expr_type := c.expr(expr.expr)
@@ -1222,6 +1210,9 @@ fn (mut c Checker) stmt(stmt ast.Stmt) {
 				// so don't flatten the stale iterator type to fn_root_scope.
 				is_iterator_struct := value_type is Struct
 				if stmt.init.value is ast.ModifierExpr {
+					// Store the non-ref type for fn_root_scope because the transformer
+					// lowers mutable for-in loops to indexed access with value copies.
+					non_ref_value_type := value_type
 					if stmt.init.value.kind == .key_mut {
 						value_type = value_type.ref()
 					}
@@ -1229,7 +1220,7 @@ fn (mut c Checker) stmt(stmt ast.Stmt) {
 						c.scope.insert(stmt.init.value.expr.name, value_type)
 						if !is_iterator_struct && c.fn_root_scope != unsafe { nil }
 							&& c.fn_root_scope != c.scope {
-							c.fn_root_scope.objects[stmt.init.value.expr.name] = value_type
+							c.fn_root_scope.objects[stmt.init.value.expr.name] = non_ref_value_type
 						}
 					}
 				} else if stmt.init.value is ast.Ident {
