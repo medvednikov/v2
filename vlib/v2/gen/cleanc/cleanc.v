@@ -1406,6 +1406,10 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				&& !rhs_type.starts_with('_result_') && !rhs_type.starts_with('_option_') {
 				typ = rhs_type
 			}
+		// Store the declared type for later lookup (fallback when fn_scope is unavailable)
+		if name != '' && typ != '' && typ != 'int' {
+			g.cur_fn_param_types[name] = typ
+		}
 		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
 			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
 			g.gen_expr(rhs)
@@ -2800,17 +2804,6 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			}
 			lhs_type := g.get_expr_type(node.lhs)
 			if node.rhs.name == 'data' {
-				if node.lhs is ast.Ident && node.lhs.name.starts_with('_or_t') && lhs_type == 'int' {
-					eprint('DEBUG .data on ${node.lhs.name}: lhs_type="${lhs_type}" cur_fn=${g.cur_fn_name} has_scope=${g.cur_fn_scope != unsafe { nil }} scope_vars: ')
-					if g.cur_fn_scope != unsafe { nil } {
-						for vname, _ in g.cur_fn_scope.objects {
-							if vname.starts_with('_or_t') || vname.starts_with('_or') {
-								eprint('${vname} ')
-							}
-						}
-					}
-					eprintln('')
-				}
 				if lhs_type.starts_with('_result_') && g.result_value_type(lhs_type) != '' {
 					g.gen_unwrapped_value_expr(node.lhs)
 					return
