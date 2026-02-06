@@ -14,29 +14,29 @@ pub struct Gen {
 	env   &types.Environment = unsafe { nil }
 	pref  &pref.Preferences  = unsafe { nil }
 mut:
-	sb                strings.Builder
-	indent            int
-	cur_fn_scope      &types.Scope = unsafe { nil }
-	cur_fn_name       string
-	cur_fn_ret_type   string
-	cur_module        string
-	emitted_types     map[string]bool
-	fn_param_is_ptr   map[string][]bool
-	fn_param_types    map[string][]string
-	fn_return_types   map[string]string
-	local_var_types   map[string]string
-	fixed_array_fields map[string]bool
+	sb                     strings.Builder
+	indent                 int
+	cur_fn_scope           &types.Scope = unsafe { nil }
+	cur_fn_name            string
+	cur_fn_ret_type        string
+	cur_module             string
+	emitted_types          map[string]bool
+	fn_param_is_ptr        map[string][]bool
+	fn_param_types         map[string][]string
+	fn_return_types        map[string]string
+	local_var_types        map[string]string
+	fixed_array_fields     map[string]bool
 	fixed_array_field_elem map[string]string
-	fixed_array_globals map[string]bool
-	tuple_aliases map[string][]string
-	struct_field_types map[string]string
-	enum_value_to_enum map[string]string
-	array_aliases     map[string]bool
-	map_aliases       map[string]bool
-	result_aliases    map[string]bool
-	option_aliases    map[string]bool
-	module_type_names map[string]bool
-	tmp_counter       int
+	fixed_array_globals    map[string]bool
+	tuple_aliases          map[string][]string
+	struct_field_types     map[string]string
+	enum_value_to_enum     map[string]string
+	array_aliases          map[string]bool
+	map_aliases            map[string]bool
+	result_aliases         map[string]bool
+	option_aliases         map[string]bool
+	module_type_names      map[string]bool
+	tmp_counter            int
 }
 
 struct StructDeclInfo {
@@ -97,25 +97,25 @@ pub fn Gen.new_with_env(files []ast.File, env &types.Environment) &Gen {
 
 pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pref.Preferences) &Gen {
 	return &Gen{
-		files:             files
-		env:               unsafe { env }
-		pref:              unsafe { p }
-		sb:                strings.new_builder(4096)
-		fn_param_is_ptr:   map[string][]bool{}
-		fn_param_types:    map[string][]string{}
-		fn_return_types:   map[string]string{}
-			local_var_types:   map[string]string{}
-			fixed_array_fields: map[string]bool{}
-			fixed_array_field_elem: map[string]string{}
-			fixed_array_globals: map[string]bool{}
-			tuple_aliases: map[string][]string{}
-			struct_field_types: map[string]string{}
-			enum_value_to_enum: map[string]string{}
-		array_aliases:     map[string]bool{}
-		map_aliases:       map[string]bool{}
-		result_aliases:    map[string]bool{}
-		option_aliases:    map[string]bool{}
-		module_type_names: map[string]bool{}
+		files:                  files
+		env:                    unsafe { env }
+		pref:                   unsafe { p }
+		sb:                     strings.new_builder(4096)
+		fn_param_is_ptr:        map[string][]bool{}
+		fn_param_types:         map[string][]string{}
+		fn_return_types:        map[string]string{}
+		local_var_types:        map[string]string{}
+		fixed_array_fields:     map[string]bool{}
+		fixed_array_field_elem: map[string]string{}
+		fixed_array_globals:    map[string]bool{}
+		tuple_aliases:          map[string][]string{}
+		struct_field_types:     map[string]string{}
+		enum_value_to_enum:     map[string]string{}
+		array_aliases:          map[string]bool{}
+		map_aliases:            map[string]bool{}
+		result_aliases:         map[string]bool{}
+		option_aliases:         map[string]bool{}
+		module_type_names:      map[string]bool{}
 	}
 }
 
@@ -244,19 +244,19 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
-				if stmt is ast.FnDecl {
-					if stmt.language != .v {
-						continue
+			if stmt is ast.FnDecl {
+				if stmt.language != .v {
+					continue
+				}
+				fn_name := g.get_fn_name(stmt)
+				if fn_name == '' {
+					continue
+				}
+				if g.env != unsafe { nil } {
+					if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
+						g.cur_fn_scope = fn_scope
 					}
-					fn_name := g.get_fn_name(stmt)
-					if fn_name == '' {
-						continue
-					}
-					if g.env != unsafe { nil } {
-						if fn_scope := g.env.get_fn_scope(g.cur_module, fn_name) {
-							g.cur_fn_scope = fn_scope
-						}
-					}
+				}
 				g.gen_fn_head(stmt)
 				g.sb.writeln(';')
 			}
@@ -326,9 +326,9 @@ fn is_c_identifier_like(name string) bool {
 }
 
 fn is_c_runtime_function(name string) bool {
-	return name in ['free', 'malloc', 'realloc', 'calloc', 'memcmp', 'memcpy', 'memmove',
-		'memset', 'strlen', 'strcmp', 'strncmp', 'snprintf', 'sprintf', 'printf', 'fprintf',
-		'asprintf', 'atoi', 'atoll', 'atof']
+	return name in ['free', 'malloc', 'realloc', 'calloc', 'memcmp', 'memcpy', 'memmove', 'memset',
+		'strlen', 'strcmp', 'strncmp', 'snprintf', 'sprintf', 'printf', 'fprintf', 'asprintf',
+		'atoi', 'atoll', 'atof']
 }
 
 fn (mut g Gen) collect_module_type_names() {
@@ -399,11 +399,11 @@ fn (mut g Gen) collect_fn_signatures() {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
-				match stmt {
-					ast.FnDecl {
-						if stmt.language != .v {
-							continue
-						}
+			match stmt {
+				ast.FnDecl {
+					if stmt.language != .v {
+						continue
+					}
 					fn_name := g.get_fn_name(stmt)
 					if fn_name == '' {
 						continue
@@ -603,8 +603,7 @@ fn (mut g Gen) gen_file(file ast.File) {
 	for stmt in file.stmts {
 		// Skip struct/enum/type/interface/const decls - already emitted in earlier passes
 		if stmt is ast.StructDecl || stmt is ast.EnumDecl || stmt is ast.TypeDecl
-			|| stmt is ast.ConstDecl
-			|| stmt is ast.InterfaceDecl {
+			|| stmt is ast.ConstDecl || stmt is ast.InterfaceDecl {
 			continue
 		}
 		g.gen_stmt(stmt)
@@ -701,28 +700,28 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					g.gen_expr(expr)
 					g.sb.writeln(' };')
 					return
-					}
-					value_type := g.result_value_type(g.cur_fn_ret_type)
-					if value_type in g.tuple_aliases && node.exprs.len > 1 {
-						field_types := g.tuple_aliases[value_type]
-						g.sb.write_string('return ({ ${g.cur_fn_ret_type} _res = (${g.cur_fn_ret_type}){0}; ${value_type} _val = (${value_type}){')
-						for i, field_type in field_types {
-							if i > 0 {
-								g.sb.write_string(', ')
-							}
-							g.sb.write_string('.arg${i} = ')
-							if i < node.exprs.len {
-								g.gen_expr(node.exprs[i])
-							} else {
-								g.sb.write_string(zero_value_for_type(field_type))
-							}
+				}
+				value_type := g.result_value_type(g.cur_fn_ret_type)
+				if value_type in g.tuple_aliases && node.exprs.len > 1 {
+					field_types := g.tuple_aliases[value_type]
+					g.sb.write_string('return ({ ${g.cur_fn_ret_type} _res = (${g.cur_fn_ret_type}){0}; ${value_type} _val = (${value_type}){')
+					for i, field_type in field_types {
+						if i > 0 {
+							g.sb.write_string(', ')
 						}
-						g.sb.writeln('}; _result_ok(&_val, (_result*)&_res, sizeof(_val)); _res; });')
-						return
+						g.sb.write_string('.arg${i} = ')
+						if i < node.exprs.len {
+							g.gen_expr(node.exprs[i])
+						} else {
+							g.sb.write_string(zero_value_for_type(field_type))
+						}
 					}
-					// `return T(x)` in `!T` functions can be an unlowered propagate path where `x` is already `_result_T`.
-					// In that case return `x` directly, instead of casting to `T` and re-wrapping.
-					if value_type != '' && expr is ast.CallOrCastExpr {
+					g.sb.writeln('}; _result_ok(&_val, (_result*)&_res, sizeof(_val)); _res; });')
+					return
+				}
+				// `return T(x)` in `!T` functions can be an unlowered propagate path where `x` is already `_result_T`.
+				// In that case return `x` directly, instead of casting to `T` and re-wrapping.
+				if value_type != '' && expr is ast.CallOrCastExpr {
 					if expr.lhs is ast.Ident && g.is_type_name(expr.lhs.name)
 						&& g.expr_type_to_c(expr.lhs) == value_type {
 						inner_type := g.get_expr_type(expr.expr)
@@ -742,7 +741,8 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 						}
 					}
 				}
-				if value_type != '' && expr is ast.CastExpr && g.expr_type_to_c(expr.typ) == value_type {
+				if value_type != '' && expr is ast.CastExpr
+					&& g.expr_type_to_c(expr.typ) == value_type {
 					inner_type := g.get_expr_type(expr.expr)
 					if inner_type == g.cur_fn_ret_type {
 						g.sb.write_string('return ')
@@ -1442,30 +1442,6 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		g.sb.writeln('')
 		return
 	}
-	if fn_name == 'map__key_to_index' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)pkey;')
-		g.write_indent()
-		g.sb.writeln('return ${zero_value_for_type(g.cur_fn_ret_type)};')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__set' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)key; (void)value;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
 	if fn_name == 'strconv__atoi_common' {
 		g.gen_fn_head(node)
 		g.sb.writeln(' {')
@@ -1899,123 +1875,6 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		g.sb.writeln('')
 		return
 	}
-	if fn_name in ['map__reserve', 'map__cached_rehash'] {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		if fn_name == 'map__reserve' {
-			g.write_indent()
-			g.sb.writeln('(void)m; (void)meta_bytes;')
-		} else {
-			g.write_indent()
-			g.sb.writeln('(void)m; (void)old_cap;')
-		}
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__get_and_set' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)key;')
-		g.write_indent()
-		g.sb.writeln('return zero;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__get' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)key;')
-		g.write_indent()
-		g.sb.writeln('return zero;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__get_check' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)key;')
-		g.write_indent()
-		g.sb.writeln('return 0;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__exists' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)key;')
-		g.write_indent()
-		g.sb.writeln('return false;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__delete' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m; (void)key;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__keys' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('if (m == 0) { return __new_array_with_default_noscan(0, 0, sizeof(void*), 0); }')
-		g.write_indent()
-		g.sb.writeln('return __new_array_with_default_noscan(0, 0, m->key_bytes, 0);')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__clone' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m;')
-		g.write_indent()
-		g.sb.writeln('return (map){0};')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-	if fn_name == 'map__free' {
-		g.gen_fn_head(node)
-		g.sb.writeln(' {')
-		g.indent++
-		g.write_indent()
-		g.sb.writeln('(void)m;')
-		g.indent--
-		g.sb.writeln('}')
-		g.sb.writeln('')
-		return
-	}
-
 	// The lowering for auto-generated Array_* .free methods is currently incomplete.
 	// Emit a conservative container free to keep C generation progressing.
 	if fn_name.starts_with('Array_') && fn_name.ends_with('__free') {
@@ -2230,90 +2089,107 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 	}
 
 	g.write_indent()
-		if node.op == .decl_assign {
-			// Variable declaration: type name = expr
-			mut name := ''
-			if lhs is ast.Ident {
-				name = lhs.name
+	if node.op == .decl_assign {
+		// Variable declaration: type name = expr
+		mut name := ''
+		if lhs is ast.Ident {
+			name = lhs.name
 		} else if lhs is ast.ModifierExpr {
 			if lhs.expr is ast.Ident {
 				name = lhs.expr.name
 			}
 		}
-			// Keep fixed-size arrays as C arrays in local declarations.
-			if rhs is ast.ArrayInitExpr {
-				array_init := rhs as ast.ArrayInitExpr
-				if array_init.typ is ast.Type && array_init.typ is ast.ArrayFixedType {
-					fixed_typ := array_init.typ as ast.ArrayFixedType
-					elem_type := g.expr_type_to_c(fixed_typ.elem_type)
-					if name != '' {
-						g.local_var_types[name] = '${elem_type}[]'
-					}
-					g.sb.write_string('${elem_type} ${name}[')
-					g.gen_expr(fixed_typ.len)
-					g.sb.write_string('] = ')
-					if array_init.exprs.len == 0 {
-						g.sb.write_string('{0}')
-					} else {
-						g.sb.write_string('{')
-						for i, expr in array_init.exprs {
-							if i > 0 {
-								g.sb.write_string(', ')
-							}
-							g.gen_expr(expr)
-						}
-						g.sb.write_string('}')
-					}
-					g.sb.writeln(';')
-					return
-				}
-			}
-				mut typ := g.get_expr_type(rhs)
-				if name != '' && g.cur_fn_scope != unsafe { nil } {
-					if obj := g.cur_fn_scope.lookup_parent(name, 0) {
-						if obj !is types.Module {
-							scoped_type := g.types_type_to_c(obj.typ())
-							if scoped_type != '' && scoped_type != 'int' {
-								typ = scoped_type
-							}
-						}
-					}
-				}
-				mut rhs_type := g.get_expr_type(rhs)
-				if rhs_type == 'int' {
-					if rhs is ast.CallExpr {
-						if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
-							rhs_type = ret
-						}
-					} else if rhs is ast.CallOrCastExpr {
-						if ret := g.get_call_return_type(rhs.lhs, 1) {
-							rhs_type = ret
-						}
-					}
-				}
+		// Keep fixed-size arrays as C arrays in local declarations.
+		if rhs is ast.ArrayInitExpr {
+			array_init := rhs as ast.ArrayInitExpr
+			if array_init.typ is ast.Type && array_init.typ is ast.ArrayFixedType {
+				fixed_typ := array_init.typ as ast.ArrayFixedType
+				elem_type := g.expr_type_to_c(fixed_typ.elem_type)
 				if name != '' {
-					g.local_var_types[name] = typ
+					g.local_var_types[name] = '${elem_type}[]'
 				}
-				if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
-					g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
-					g.gen_expr(rhs)
-					g.sb.writeln('; (*(${typ}*)(((u8*)(&_tmp.err)) + sizeof(IError))); });')
-					return
+				g.sb.write_string('${elem_type} ${name}[')
+				g.gen_expr(fixed_typ.len)
+				g.sb.write_string('] = ')
+				if array_init.exprs.len == 0 {
+					g.sb.write_string('{0}')
+				} else {
+					g.sb.write_string('{')
+					for i, expr in array_init.exprs {
+						if i > 0 {
+							g.sb.write_string(', ')
+						}
+						g.gen_expr(expr)
+					}
+					g.sb.write_string('}')
 				}
-				if name != '' && rhs_type.starts_with('_option_') && !typ.starts_with('_option_') {
-					g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
-					g.gen_expr(rhs)
-					g.sb.writeln('; (*(${typ}*)(((u8*)(&_tmp.err)) + sizeof(IError))); });')
-					return
-				}
-				if rhs is ast.IfExpr {
-					if !g.if_expr_can_be_ternary(rhs) && rhs.else_expr !is ast.EmptyExpr {
-						g.sb.writeln('${typ} ${name};')
-					g.gen_decl_if_expr(name, rhs)
-					return
+				g.sb.writeln(';')
+				return
+			}
+		}
+		mut typ := g.get_expr_type(rhs)
+		mut rhs_has_explicit_call_ret := false
+		if rhs is ast.CallExpr {
+			if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
+				if ret != '' && ret != 'int' {
+					typ = ret
+					rhs_has_explicit_call_ret = true
 				}
 			}
-			if typ.ends_with('*') && rhs is ast.PrefixExpr && rhs.op == .amp {
+		} else if rhs is ast.CallOrCastExpr {
+			if ret := g.get_call_return_type(rhs.lhs, 1) {
+				if ret != '' && ret != 'int' {
+					typ = ret
+					rhs_has_explicit_call_ret = true
+				}
+			}
+		}
+		if name != '' && g.cur_fn_scope != unsafe { nil } {
+			if obj := g.cur_fn_scope.lookup_parent(name, 0) {
+				if obj !is types.Module {
+					scoped_type := g.types_type_to_c(obj.typ())
+					if scoped_type != '' && scoped_type != 'int' && !rhs_has_explicit_call_ret
+						&& (typ == '' || typ == 'int') {
+						typ = scoped_type
+					}
+				}
+			}
+		}
+		mut rhs_type := g.get_expr_type(rhs)
+		if rhs_type == 'int' {
+			if rhs is ast.CallExpr {
+				if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
+					rhs_type = ret
+				}
+			} else if rhs is ast.CallOrCastExpr {
+				if ret := g.get_call_return_type(rhs.lhs, 1) {
+					rhs_type = ret
+				}
+			}
+		}
+		if name != '' {
+			g.local_var_types[name] = typ
+		}
+		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
+			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
+			g.gen_expr(rhs)
+			g.sb.writeln('; (*(${typ}*)(((u8*)(&_tmp.err)) + sizeof(IError))); });')
+			return
+		}
+		if name != '' && rhs_type.starts_with('_option_') && !typ.starts_with('_option_') {
+			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
+			g.gen_expr(rhs)
+			g.sb.writeln('; (*(${typ}*)(((u8*)(&_tmp.err)) + sizeof(IError))); });')
+			return
+		}
+		if rhs is ast.IfExpr {
+			if !g.if_expr_can_be_ternary(rhs) && rhs.else_expr !is ast.EmptyExpr {
+				g.sb.writeln('${typ} ${name};')
+				g.gen_decl_if_expr(name, rhs)
+				return
+			}
+		}
+		if typ.ends_with('*') && rhs is ast.PrefixExpr && rhs.op == .amp {
 			if rhs.expr is ast.CallExpr && rhs.expr.args.len == 1 {
 				g.sb.write_string('${typ} ${name} = ((${typ})(')
 				g.gen_expr(rhs.expr.args[0])
@@ -3252,19 +3128,19 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 			// &T(x) in unsafe contexts is used as a pointer cast in V stdlib code.
 			// Emit it as (T*)(x) so `*unsafe { &T(p) }` becomes `*((T*)p)`.
 			if node.op == .amp {
-					if node.expr is ast.IndexExpr {
-						idx := node.expr as ast.IndexExpr
-						if idx.lhs is ast.Ident {
-							if idx.lhs.name in g.fixed_array_globals || idx.lhs.name == 'rune_maps' {
-								g.sb.write_string('&')
-								g.gen_expr(idx.lhs)
-								g.sb.write_string('[')
-								g.gen_expr(idx.expr)
-								g.sb.write_string(']')
-								return
-							}
-							lhs_type := g.get_expr_type(idx.lhs)
-							if lhs_type == 'array' || lhs_type.starts_with('Array_') {
+				if node.expr is ast.IndexExpr {
+					idx := node.expr as ast.IndexExpr
+					if idx.lhs is ast.Ident {
+						if idx.lhs.name in g.fixed_array_globals || idx.lhs.name == 'rune_maps' {
+							g.sb.write_string('&')
+							g.gen_expr(idx.lhs)
+							g.sb.write_string('[')
+							g.gen_expr(idx.expr)
+							g.sb.write_string(']')
+							return
+						}
+						lhs_type := g.get_expr_type(idx.lhs)
+						if lhs_type == 'array' || lhs_type.starts_with('Array_') {
 							mut elem_type := g.get_expr_type(idx)
 							if elem_type == '' || elem_type == 'int' {
 								if lhs_type.starts_with('Array_') {
@@ -3305,21 +3181,21 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 					g.sb.write_string('))')
 					return
 				}
-					if node.expr is ast.CallOrCastExpr {
-						if node.expr.lhs is ast.Ident {
-							target_type := g.expr_type_to_c(node.expr.lhs)
-							g.sb.write_string('((${target_type}*)(')
-							g.gen_expr(node.expr.expr)
-							g.sb.write_string('))')
-							return
-						} else if node.expr.lhs is ast.Type {
-							target_type := g.expr_type_to_c(node.expr.lhs)
-							g.sb.write_string('((${target_type}*)(')
-							g.gen_expr(node.expr.expr)
-							g.sb.write_string('))')
-							return
-						}
+				if node.expr is ast.CallOrCastExpr {
+					if node.expr.lhs is ast.Ident {
+						target_type := g.expr_type_to_c(node.expr.lhs)
+						g.sb.write_string('((${target_type}*)(')
+						g.gen_expr(node.expr.expr)
+						g.sb.write_string('))')
+						return
+					} else if node.expr.lhs is ast.Type {
+						target_type := g.expr_type_to_c(node.expr.lhs)
+						g.sb.write_string('((${target_type}*)(')
+						g.gen_expr(node.expr.expr)
+						g.sb.write_string('))')
+						return
 					}
+				}
 				if node.expr is ast.ParenExpr {
 					if node.expr.expr is ast.CastExpr {
 						target_type := g.expr_type_to_c(node.expr.expr.typ)
@@ -3337,22 +3213,22 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 							return
 						}
 					}
-						if node.expr.expr is ast.CallOrCastExpr {
-							if node.expr.expr.lhs is ast.Ident {
-								target_type := g.expr_type_to_c(node.expr.expr.lhs)
-								g.sb.write_string('((${target_type}*)(')
-								g.gen_expr(node.expr.expr.expr)
-								g.sb.write_string('))')
-								return
-							} else if node.expr.expr.lhs is ast.Type {
-								target_type := g.expr_type_to_c(node.expr.expr.lhs)
-								g.sb.write_string('((${target_type}*)(')
-								g.gen_expr(node.expr.expr.expr)
-								g.sb.write_string('))')
-								return
-							}
+					if node.expr.expr is ast.CallOrCastExpr {
+						if node.expr.expr.lhs is ast.Ident {
+							target_type := g.expr_type_to_c(node.expr.expr.lhs)
+							g.sb.write_string('((${target_type}*)(')
+							g.gen_expr(node.expr.expr.expr)
+							g.sb.write_string('))')
+							return
+						} else if node.expr.expr.lhs is ast.Type {
+							target_type := g.expr_type_to_c(node.expr.expr.lhs)
+							g.sb.write_string('((${target_type}*)(')
+							g.gen_expr(node.expr.expr.expr)
+							g.sb.write_string('))')
+							return
 						}
 					}
+				}
 			}
 			op := match node.op {
 				.minus { '-' }
@@ -3438,7 +3314,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 					}
 					if fixed_name in g.fixed_array_globals
 						|| ('const_${fixed_name}' in g.emitted_types
-							&& g.get_expr_type(node.lhs).starts_with('Array_')) {
+						&& g.get_expr_type(node.lhs).starts_with('Array_')) {
 						g.sb.write_string('((int)(sizeof(${fixed_name}) / sizeof(${fixed_name}[0])))')
 						return
 					}
@@ -3463,7 +3339,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 					g.sb.write_string(') / sizeof((')
 					g.gen_expr(node.lhs)
 					g.sb.write_string(')[0])))')
-						return
+					return
 				}
 				if raw_type := g.get_raw_type(node.lhs) {
 					if raw_type is types.ArrayFixed {
@@ -3501,21 +3377,21 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 				return
 			}
 			// Check if LHS is an enum type name -> emit EnumName__field
-				if node.lhs is ast.Ident && g.is_enum_type(node.lhs.name) {
-					enum_name := g.get_qualified_name(node.lhs.name)
-					g.sb.write_string('${enum_name}__${node.rhs.name}')
-				} else {
-					mut use_ptr := g.expr_is_pointer(node.lhs)
-					if !use_ptr && node.lhs is ast.Ident {
-						if local_type := g.local_var_types[node.lhs.name] {
-							use_ptr = local_type.ends_with('*')
-						}
+			if node.lhs is ast.Ident && g.is_enum_type(node.lhs.name) {
+				enum_name := g.get_qualified_name(node.lhs.name)
+				g.sb.write_string('${enum_name}__${node.rhs.name}')
+			} else {
+				mut use_ptr := g.expr_is_pointer(node.lhs)
+				if !use_ptr && node.lhs is ast.Ident {
+					if local_type := g.local_var_types[node.lhs.name] {
+						use_ptr = local_type.ends_with('*')
 					}
-					selector := if use_ptr { '->' } else { '.' }
-					g.gen_expr(node.lhs)
-					g.sb.write_string('${selector}${node.rhs.name}')
 				}
+				selector := if use_ptr { '->' } else { '.' }
+				g.gen_expr(node.lhs)
+				g.sb.write_string('${selector}${node.rhs.name}')
 			}
+		}
 		ast.IfExpr {
 			// If-expression used as a value: lower to nested ternary.
 			if g.if_expr_can_be_ternary(node) {
@@ -3854,6 +3730,47 @@ fn (mut g Gen) gen_addr_of_expr(arg ast.Expr, typ string) {
 	g.sb.write_string('}')
 }
 
+fn (mut g Gen) fn_pointer_return_type(expr ast.Expr) string {
+	if raw_type := g.get_raw_type(expr) {
+		match raw_type {
+			types.FnType {
+				if rt := raw_type.get_return_type() {
+					return g.types_type_to_c(rt)
+				}
+				return 'void'
+			}
+			types.Alias {
+				if raw_type.base_type is types.FnType {
+					if rt := raw_type.base_type.get_return_type() {
+						return g.types_type_to_c(rt)
+					}
+					return 'void'
+				}
+			}
+			types.Pointer {
+				if raw_type.base_type is types.FnType {
+					if rt := raw_type.base_type.get_return_type() {
+						return g.types_type_to_c(rt)
+					}
+					return 'void'
+				}
+				if raw_type.base_type is types.Alias && raw_type.base_type.base_type is types.FnType {
+					if rt := raw_type.base_type.base_type.get_return_type() {
+						return g.types_type_to_c(rt)
+					}
+					return 'void'
+				}
+			}
+			else {}
+		}
+	}
+	return ''
+}
+
+fn (mut g Gen) is_fn_pointer_expr(expr ast.Expr) bool {
+	return g.fn_pointer_return_type(expr) != ''
+}
+
 fn (mut g Gen) should_auto_deref(arg ast.Expr) bool {
 	if raw_type := g.get_raw_type(arg) {
 		if raw_type is types.Pointer {
@@ -4023,7 +3940,8 @@ fn (mut g Gen) resolve_call_name(lhs ast.Expr, arg_count int) string {
 					}
 				}
 				if name == '' || (name !in g.fn_return_types && name !in g.fn_param_is_ptr) {
-					fallback := g.resolve_container_method_name(lhs.lhs, method_name, expected_params)
+					fallback := g.resolve_container_method_name(lhs.lhs, method_name,
+						expected_params)
 					if fallback != '' {
 						name = fallback
 					}
@@ -4076,6 +3994,22 @@ fn (mut g Gen) resolve_call_name(lhs ast.Expr, arg_count int) string {
 }
 
 fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
+	if lhs is ast.SelectorExpr {
+		if lhs.rhs.name in ['hash_fn', 'key_eq_fn', 'clone_fn', 'free_fn'] {
+			base_type := g.method_receiver_base_type(lhs.lhs)
+			if base_type == 'map' || base_type.starts_with('Map_') {
+				return match lhs.rhs.name {
+					'hash_fn' { 'u64' }
+					'key_eq_fn' { 'bool' }
+					else { 'void' }
+				}
+			}
+		}
+	}
+	fn_ptr_ret := g.fn_pointer_return_type(lhs)
+	if fn_ptr_ret != '' {
+		return fn_ptr_ret
+	}
 	c_name := g.resolve_call_name(lhs, arg_count)
 	if c_name == '' {
 		return none
@@ -4087,12 +4021,46 @@ fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
 }
 
 fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
+	if lhs is ast.SelectorExpr && g.is_fn_pointer_expr(lhs) {
+		mut should_emit_fnptr_call := true
+		resolved := g.resolve_call_name(lhs, args.len)
+		if resolved != '' && (resolved in g.fn_param_is_ptr || resolved in g.fn_return_types) {
+			should_emit_fnptr_call = false
+		}
+		if should_emit_fnptr_call {
+			g.gen_expr(lhs)
+			g.sb.write_string('(')
+			for i, arg in args {
+				if i > 0 {
+					g.sb.write_string(', ')
+				}
+				g.gen_expr(arg)
+			}
+			g.sb.write_string(')')
+			return
+		}
+	}
 	mut name := ''
 	mut call_args := []ast.Expr{}
 	call_args << args
 	if lhs is ast.Ident {
 		name = sanitize_fn_ident(lhs.name)
 	} else if lhs is ast.SelectorExpr {
+		if lhs.rhs.name in ['hash_fn', 'key_eq_fn', 'clone_fn', 'free_fn'] {
+			base_type := g.method_receiver_base_type(lhs.lhs)
+			if base_type == 'map' || base_type.starts_with('Map_') {
+				g.gen_expr(lhs)
+				g.sb.write_string('(')
+				for i, arg in args {
+					if i > 0 {
+						g.sb.write_string(', ')
+					}
+					g.gen_expr(arg)
+				}
+				g.sb.write_string(')')
+				return
+			}
+		}
 		// Handle C.puts, C.putchar etc.
 		if lhs.lhs is ast.Ident && lhs.lhs.name == 'C' {
 			name = lhs.rhs.name
@@ -4298,8 +4266,8 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	mut c_name := name
 	if is_c_runtime_function(name) {
 		c_name = name
-	} else if name != '' && g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
-		&& !name.contains('__') {
+	} else if name != '' && g.cur_module != '' && g.cur_module != 'main'
+		&& g.cur_module != 'builtin' && !name.contains('__') {
 		qualified := '${g.cur_module}__${name}'
 		if qualified in g.fn_param_is_ptr || qualified in g.fn_return_types {
 			c_name = qualified
@@ -4479,24 +4447,22 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 	}
 	// Try environment lookup
 	if t := g.get_expr_type_from_env(node) {
-		if t == 'int' {
-			match node {
-				ast.CallExpr {
-					if ret := g.get_call_return_type(node.lhs, node.args.len) {
-						if ret != '' && ret != 'int' {
-							return ret
-						}
+		match node {
+			ast.CallExpr {
+				if ret := g.get_call_return_type(node.lhs, node.args.len) {
+					if ret != '' {
+						return ret
 					}
 				}
-				ast.CallOrCastExpr {
-					if ret := g.get_call_return_type(node.lhs, 1) {
-						if ret != '' && ret != 'int' {
-							return ret
-						}
-					}
-				}
-				else {}
 			}
+			ast.CallOrCastExpr {
+				if ret := g.get_call_return_type(node.lhs, 1) {
+					if ret != '' {
+						return ret
+					}
+				}
+			}
+			else {}
 		}
 		return t
 	}
@@ -4522,7 +4488,15 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .and, .logical_or] {
 				return 'bool'
 			}
-			return g.get_expr_type(node.lhs)
+			lhs_t := g.get_expr_type(node.lhs)
+			rhs_t := g.get_expr_type(node.rhs)
+			if node.op in [.plus, .minus, .mul, .div, .mod, .amp, .pipe, .xor, .left_shift,
+				.right_shift] {
+				if lhs_t.ends_with('Fn') || rhs_t.ends_with('Fn') {
+					return 'u64'
+				}
+			}
+			return lhs_t
 		}
 		ast.ParenExpr {
 			return g.get_expr_type(node.expr)
