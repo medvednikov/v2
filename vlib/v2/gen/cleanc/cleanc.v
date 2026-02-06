@@ -2324,7 +2324,7 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 		ast.InfixExpr {
 			lhs_type := g.get_expr_type(node.lhs)
 			rhs_type := g.get_expr_type(node.rhs)
-			if node.op in [.key_is, .not_is] {
+			if node.op in [.key_is, .not_is, .eq, .ne] {
 				if raw_type := g.get_raw_type(node.lhs) {
 					is_iface := raw_type is types.Interface
 						|| (raw_type is types.Pointer && raw_type.base_type is types.Interface)
@@ -2337,13 +2337,13 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 						}
 						type_id := interface_type_id_for_name(rhs_name)
 						if type_id <= 0 {
-							g.sb.write_string(if node.op == .key_is { 'false' } else { 'true' })
+							g.sb.write_string(if node.op in [.key_is, .eq] { 'false' } else { 'true' })
 							return
 						}
 						sep := if g.expr_is_pointer(node.lhs) { '->' } else { '.' }
 						g.sb.write_string('((')
 						g.gen_expr(node.lhs)
-						op := if node.op == .key_is { '==' } else { '!=' }
+						op := if node.op in [.key_is, .eq] { '==' } else { '!=' }
 						g.sb.write_string('${sep}_type_id ${op} ${type_id})')
 						return
 					}
@@ -2602,6 +2602,24 @@ fn (mut g Gen) gen_expr(node ast.Expr) {
 							g.sb.write_string('((${target_type}*)(')
 							g.gen_expr(node.expr.expr.expr)
 							g.sb.write_string('))')
+							return
+						}
+					}
+				}
+			}
+			if node.op == .mul {
+				if raw_type := g.get_raw_type(node.expr) {
+					is_iface := raw_type is types.Interface
+						|| (raw_type is types.Pointer && raw_type.base_type is types.Interface)
+					if is_iface {
+						target_type := g.get_expr_type(node)
+						if target_type != '' && target_type != 'int' {
+							sep := if g.expr_is_pointer(node.expr) { '->' } else { '.' }
+							g.sb.write_string('(*((')
+							g.sb.write_string(target_type)
+							g.sb.write_string('*)(')
+							g.gen_expr(node.expr)
+							g.sb.write_string('${sep}_object)))')
 							return
 						}
 					}
@@ -3501,6 +3519,55 @@ fn (mut g Gen) gen_array_contains_call(name string, call_args []ast.Expr) bool {
 	return true
 }
 
+fn (mut g Gen) is_interface_receiver_for(receiver ast.Expr, iface_name string) bool {
+	if raw_type := g.get_raw_type(receiver) {
+		match raw_type {
+			types.Interface {
+				recv_name := g.types_type_to_c(raw_type)
+				return recv_name == iface_name || recv_name.all_after_last('__') == iface_name.all_after_last('__')
+			}
+			types.Pointer {
+				if raw_type.base_type is types.Interface {
+					recv_name := g.types_type_to_c(raw_type.base_type)
+					return recv_name == iface_name
+						|| recv_name.all_after_last('__') == iface_name.all_after_last('__')
+				}
+			}
+			else {}
+		}
+	}
+	return false
+}
+
+fn (mut g Gen) gen_interface_method_dispatch(name string, call_args []ast.Expr) bool {
+	idx := name.last_index('__') or { return false }
+	iface_name := name[..idx]
+	method_name := name[idx + 2..]
+	if call_args.len == 0 || method_name == '' {
+		return false
+	}
+	receiver := call_args[0]
+	if !g.is_interface_receiver_for(receiver, iface_name) {
+		return false
+	}
+	sep := if g.expr_is_pointer(receiver) { '->' } else { '.' }
+	g.gen_expr(receiver)
+	g.sb.write_string('${sep}${method_name}(')
+	if call_args.len == 1 {
+		g.gen_expr(receiver)
+		g.sb.write_string('${sep}_object')
+	} else {
+		for i in 1 .. call_args.len {
+			if i > 1 {
+				g.sb.write_string(', ')
+			}
+			g.gen_expr(call_args[i])
+		}
+	}
+	g.sb.write_string(')')
+	return true
+}
+
 fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 	if lhs is ast.SelectorExpr && g.is_fn_pointer_expr(lhs) {
 		mut should_emit_fnptr_call := true
@@ -3588,6 +3655,9 @@ fn (mut g Gen) gen_call_expr(lhs ast.Expr, args []ast.Expr) {
 		}
 	}
 	call_args = g.normalize_named_call_args(name, call_args)
+	if g.gen_interface_method_dispatch(name, call_args) {
+		return
+	}
 	if g.gen_array_contains_call(name, call_args) {
 		return
 	}
@@ -4820,8 +4890,20 @@ fn (mut g Gen) gen_keyword_operator(node ast.KeywordOperator) {
 }
 
 fn (mut g Gen) gen_as_cast_expr(node ast.AsCastExpr) {
-	// a as Cat => (*((main__Cat*)a._data._Cat))
 	type_name := g.expr_type_to_c(node.typ)
+	// Interface cast: `iface as T` => `*((T*)iface._object)`
+	if raw_type := g.get_raw_type(node.expr) {
+		is_iface := raw_type is types.Interface
+			|| (raw_type is types.Pointer && raw_type.base_type is types.Interface)
+		if is_iface {
+			sep := if g.expr_is_pointer(node.expr) { '->' } else { '.' }
+			g.sb.write_string('(*((${type_name}*)(')
+			g.gen_expr(node.expr)
+			g.sb.write_string('${sep}_object)))')
+			return
+		}
+	}
+	// Sum type cast: a as Cat => (*((main__Cat*)a._data._Cat))
 	// Short variant name for _data._ accessor (strip module prefix)
 	short_name := if type_name.contains('__') {
 		type_name.all_after_last('__')
