@@ -17,7 +17,6 @@ mut:
 	sb                     strings.Builder
 	indent                 int
 	cur_fn_scope           &types.Scope = unsafe { nil }
-	cur_fn_param_types     map[string]string // parameter name -> C type, for fn_scope fallback
 	cur_fn_name            string
 	cur_fn_ret_type        string
 	cur_module             string
@@ -1067,25 +1066,6 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		}
 	}
 
-	// Populate parameter type map as fallback when fn_scope is unavailable
-	g.cur_fn_param_types.clear()
-	if node.is_method && node.receiver.name != '' {
-		receiver_c_type := g.expr_type_to_c(node.receiver.typ)
-		if node.receiver.is_mut {
-			g.cur_fn_param_types[node.receiver.name] = '${receiver_c_type}*'
-		} else {
-			g.cur_fn_param_types[node.receiver.name] = receiver_c_type
-		}
-	}
-	for param in node.typ.params {
-		param_c_type := g.expr_type_to_c(param.typ)
-		if param.is_mut {
-			g.cur_fn_param_types[param.name] = '${param_c_type}*'
-		} else {
-			g.cur_fn_param_types[param.name] = param_c_type
-		}
-	}
-
 	// Generate function header
 	g.gen_fn_head(node)
 	g.sb.writeln(' {')
@@ -1406,10 +1386,6 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				&& !rhs_type.starts_with('_result_') && !rhs_type.starts_with('_option_') {
 				typ = rhs_type
 			}
-		// Store the declared type for later lookup (fallback when fn_scope is unavailable)
-		if name != '' && typ != '' && typ != 'int' {
-			g.cur_fn_param_types[name] = typ
-		}
 		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
 			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
 			g.gen_expr(rhs)
@@ -4236,10 +4212,6 @@ fn (mut g Gen) get_local_var_c_type(name string) ?string {
 			}
 			return g.types_type_to_c(obj.typ())
 		}
-	}
-	// Fallback to parameter types from AST
-	if name in g.cur_fn_param_types {
-		return g.cur_fn_param_types[name]
 	}
 	return none
 }
