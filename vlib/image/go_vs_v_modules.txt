@@ -1,0 +1,87 @@
+Go vs V Standard Library Comparison
+
+  Go Packages Missing from V (No Equivalent)
+
+  Core/Runtime:
+  - reflect - V has very limited reflection
+  - syscall - Low-level syscall interface not exposed
+  - plugin - Dynamic plugin loading
+  - arena - Memory arena allocation (Go 1.15+)
+  - cmp, iter, structs, unique, weak - Newer Go packages (1.21-1.22)
+
+  Encoding/Data:
+  - encoding/asn1 - ASN.1 encoding
+  - encoding/gob - Go's binary serialization format
+
+  Compression:
+  - compress/bzip2
+  - compress/lzw
+
+  Hashing:
+  - hash/adler32
+  - hash/crc64
+  - hash/maphash
+
+  Image (mostly missing - V only has basic stbi wrapper):
+  - image, image/color, image/draw
+  - Full PNG/JPEG/GIF codecs (V has basic loading only)
+
+  Crypto:
+  - crypto/rsa - RSA encryption
+  - crypto/x509 - X.509 certificates
+  - crypto/tls - TLS/SSL
+  - crypto/dsa, crypto/ecdh, crypto/elliptic (limited)
+
+  Network/Protocol:
+  - mime - MIME type database
+  - net/mail - Email parsing
+  - net/rpc - RPC framework
+  - net/textproto - Text protocol utilities
+
+  Debug (entire suite missing):
+  - debug/dwarf, debug/elf, debug/macho, debug/pe, debug/gosym, etc.
+
+  Text Processing:
+  - text/tabwriter
+  - text/scanner (public API)
+
+  Misc:
+  - expvar - Exported variables for monitoring
+  - index/suffixarray - Suffix array for fast substring search
+  - log/slog - Structured logging (Go 1.21+)
+
+  Go Packages with V Equivalents (different names/locations)
+  ┌───────────────┬───────────────────┐
+  │      Go       │         V         │
+  ├───────────────┼───────────────────┤
+  │ bufio         │ io                │
+  ├───────────────┼───────────────────┤
+  │ bytes         │ strings (partial) │
+  ├───────────────┼───────────────────┤
+  │ container/*   │ datatypes         │
+  ├───────────────┼───────────────────┤
+  │ database/sql  │ db (ORM-style)    │
+  ├───────────────┼───────────────────┤
+  │ math/cmplx    │ math/complex      │
+  ├───────────────┼───────────────────┤
+  │ math/rand     │ rand              │
+  ├───────────────┼───────────────────┤
+  │ net/url       │ net/urllib        │
+  ├───────────────┼───────────────────┤
+  │ path/filepath │ os                │
+  ├───────────────┼───────────────────┤
+  │ regexp        │ regex             │
+  ├───────────────┼───────────────────┤
+  │ slices        │ arrays            │
+  ├───────────────┼───────────────────┤
+  │ sort          │ builtin + arrays  │
+  ├───────────────┼───────────────────┤
+  │ html/template │ x/templating      │
+  └───────────────┴───────────────────┘
+  Summary
+
+  ~30-40 Go packages have no V equivalent. The biggest gaps are:
+  1. Image processing - Full codec support
+  2. Crypto - RSA, TLS, X.509
+  3. Debug/introspection - Symbol parsing, reflection
+  4. Newer Go features - arena, iterators, structured logging
