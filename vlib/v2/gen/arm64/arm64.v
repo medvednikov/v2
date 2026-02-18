@@ -1512,20 +1512,10 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 			if off := g.block_offsets[true_blk] {
 				rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
-				if rel >= -262144 && rel < 262144 {
-					g.emit(asm_cbnz(Reg(8), rel))
-				} else {
-					// Branch target too far for CBNZ (19-bit range).
-					// Use trampoline: CBZ skip; B target; skip:
-					g.emit(asm_cbz(Reg(8), 2)) // skip over next B instruction
-					g.emit(asm_b(rel - 1)) // adjust for the extra CBZ instruction
-				}
+				g.emit(asm_cbnz(Reg(8), rel))
 			} else {
-				// Forward reference: use trampoline pattern to avoid 19-bit overflow.
-				// CBZ x8, skip; B target; skip:
-				g.emit(asm_cbz(Reg(8), 2)) // skip over next B instruction
 				g.record_pending_label(true_blk)
-				g.emit(asm_b(0))
+				g.emit(asm_cbnz(Reg(8), 0))
 			}
 
 			if false_blk == g.next_blk {
@@ -1555,18 +1545,10 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 				if off := g.block_offsets[target_blk_idx] {
 					rel := (off - (g.macho.text_data.len - g.curr_offset)) / 4
-					if rel >= -262144 && rel < 262144 {
-						g.emit(asm_b_cond(cond_eq, rel))
-					} else {
-						// Trampoline: b.ne skip; B target; skip:
-						g.emit(asm_b_cond(cond_ne, 2)) // skip over next B
-						g.emit(asm_b(rel - 1))
-					}
+					g.emit(asm_b_cond(cond_eq, rel))
 				} else {
-					// Forward reference: use trampoline for safety
-					g.emit(asm_b_cond(cond_ne, 2)) // skip over next B
 					g.record_pending_label(target_blk_idx)
-					g.emit(asm_b(0))
+					g.emit(asm_b_cond(cond_eq, 0))
 				}
 			}
 

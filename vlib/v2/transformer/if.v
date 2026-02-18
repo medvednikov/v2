@@ -168,79 +168,11 @@ fn (mut t Transformer) try_expand_if_guard_stmt(stmt ast.ExprStmt) ?[]ast.Stmt {
 		is_result = fn_name != '' && t.fn_returns_result(fn_name)
 		is_option = fn_name != '' && t.fn_returns_option(fn_name)
 	}
-	// DEBUG: print info about if-guard expansion
-	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
-		eprintln('[DEBUG if-guard] is_result=${is_result} is_option=${is_option} rhs_type=${rhs.type_name()} fn_name=${t.get_call_fn_name(rhs)}')
-		if is_option || is_result {
-			mut bt := t.get_expr_base_type(rhs)
-			if bt == '' {
-				fn2 := t.get_call_fn_name(rhs)
-				if fn2 != '' {
-					bt = t.get_fn_return_base_type(fn2)
-				}
-			}
-			eprintln('[DEBUG if-guard] base_type=${bt} is_sum=${bt != '' && t.is_sum_type(bt)}')
-		}
-	}
 
 	// Native backends (arm64/x64) don't use Option/Result structs -
 	// functions return raw values (0 for none). Skip struct-based
 	// expansion and fall through to simple truthiness check.
 	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
-		// For ?SumType returns: use _data field check instead of raw truthiness.
-		// Sumtypes are {_tag, _data} structs - the first variant has _tag=0,
-		// which would be indistinguishable from none (all zeros) when checking
-		// the first word. Check _data (the pointer field) instead.
-		if is_option || is_result {
-			mut base_type := t.get_expr_base_type(rhs)
-			if base_type == '' {
-				fn_name := t.get_call_fn_name(rhs)
-				if fn_name != '' {
-					base_type = t.get_fn_return_base_type(fn_name)
-				}
-			}
-			if base_type != '' && t.is_sum_type(base_type) {
-				temp_name := t.gen_temp_name()
-				temp_ident := ast.Ident{
-					name: temp_name
-					pos:  synth_pos
-				}
-				mut stmts := []ast.Stmt{}
-				// 1. _tmp := call()
-				stmts << ast.AssignStmt{
-					op:  .decl_assign
-					lhs: [ast.Expr(temp_ident)]
-					rhs: [t.transform_expr(rhs)]
-					pos: synth_pos
-				}
-				// 2. Condition: _tmp._data (second field of sumtype struct)
-				data_check := t.synth_selector(temp_ident, '_data', types.Type(types.voidptr_))
-				// 3. Build if body: guard_var := _tmp; original_body
-				mut if_stmts := []ast.Stmt{}
-				if_stmts << ast.AssignStmt{
-					op:  .decl_assign
-					lhs: guard.stmt.lhs
-					rhs: [ast.Expr(temp_ident)]
-					pos: guard.stmt.pos
-				}
-				for s in if_expr.stmts {
-					if_stmts << s
-				}
-				modified_if := ast.IfExpr{
-					cond:      data_check
-					stmts:     t.transform_stmts(if_stmts)
-					else_expr: t.transform_expr(if_expr.else_expr)
-					pos:       synth_pos
-				}
-				if orig_type := t.get_expr_type(ast.Expr(if_expr)) {
-					t.register_synth_type(synth_pos, orig_type)
-				}
-				stmts << ast.ExprStmt{
-					expr: modified_if
-				}
-				return stmts
-			}
-		}
 		is_result = false
 		is_option = false
 	}

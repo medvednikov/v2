@@ -1291,38 +1291,6 @@ fn (mut t Transformer) expand_direct_or_expr_assign(stmt ast.AssignStmt, or_expr
 		temp_ident := ast.Ident{
 			name: temp_name
 		}
-		// For ?SumType returns, use _data field check instead of raw truthiness.
-		// Sumtypes are {_tag, _data} structs - the first variant has _tag=0,
-		// which would be indistinguishable from none (all zeros).
-		mut base_type_name := t.get_expr_base_type(call_expr)
-		if base_type_name == '' {
-			fn_name2 := t.get_call_fn_name(call_expr)
-			if fn_name2 != '' {
-				base_type_name = t.get_fn_return_base_type(fn_name2)
-			}
-		}
-		is_sumtype_return := base_type_name != '' && t.is_sum_type(base_type_name)
-		// Condition expression: _t for simple types, _t._data for sumtypes
-		synth_pos2 := t.next_synth_pos()
-		cond_expr := if is_sumtype_return {
-			t.synth_selector(temp_ident, '_data', types.Type(types.voidptr_))
-		} else {
-			ast.Expr(temp_ident)
-		}
-		not_cond_expr := if is_sumtype_return {
-			ast.Expr(ast.PrefixExpr{
-				op:   .not
-				expr: t.synth_selector(ast.Ident{
-					name: temp_name
-					pos:  synth_pos2
-				}, '_data', types.Type(types.voidptr_))
-			})
-		} else {
-			ast.Expr(ast.PrefixExpr{
-				op:   .not
-				expr: temp_ident
-			})
-		}
 		mut stmts := []ast.Stmt{}
 		// 1. _t := call_expr
 		stmts << ast.AssignStmt{
@@ -1331,21 +1299,10 @@ fn (mut t Transformer) expand_direct_or_expr_assign(stmt ast.AssignStmt, or_expr
 			rhs: [t.transform_expr(call_expr)]
 			pos: stmt.pos
 		}
-		// 2. Run or-block side effects in else path, then assign
-		or_side_effect_stmts, or_value := t.get_or_block_stmts_and_value(or_expr.stmts)
-		// If there are side-effect statements (e.g., print_str('error')),
-		// wrap them in: if !_t { side_effects... }
-		if or_side_effect_stmts.len > 0 {
-			stmts << ast.ExprStmt{
-				expr: ast.IfExpr{
-					cond:  not_cond_expr
-					stmts: or_side_effect_stmts
-				}
-			}
-		}
-		// 3. a := if _t { _t } else { or_value }
+		// 2. a := if _t { _t } else { or_block_value }
+		_, or_value := t.get_or_block_stmts_and_value(or_expr.stmts)
 		modified_if := ast.IfExpr{
-			cond:      cond_expr
+			cond:      temp_ident
 			stmts:     [ast.Stmt(ast.ExprStmt{
 				expr: temp_ident
 			})]
@@ -2191,51 +2148,14 @@ fn (mut t Transformer) expand_single_or_expr(or_expr ast.OrExpr, mut prefix_stmt
 		temp_ident := ast.Ident{
 			name: temp_name
 		}
-		// For ?SumType returns, use _data field check instead of raw truthiness.
-		mut base_type_name2 := t.get_expr_base_type(call_expr)
-		if base_type_name2 == '' {
-			if fn_name != '' {
-				base_type_name2 = t.get_fn_return_base_type(fn_name)
-			}
-		}
-		is_sumtype_return2 := base_type_name2 != '' && t.is_sum_type(base_type_name2)
-		synth_pos3 := t.next_synth_pos()
-		cond_expr2 := if is_sumtype_return2 {
-			t.synth_selector(temp_ident, '_data', types.Type(types.voidptr_))
-		} else {
-			ast.Expr(temp_ident)
-		}
-		not_cond_expr2 := if is_sumtype_return2 {
-			ast.Expr(ast.PrefixExpr{
-				op:   .not
-				expr: t.synth_selector(ast.Ident{
-					name: temp_name
-					pos:  synth_pos3
-				}, '_data', types.Type(types.voidptr_))
-			})
-		} else {
-			ast.Expr(ast.PrefixExpr{
-				op:   .not
-				expr: temp_ident
-			})
-		}
 		prefix_stmts << ast.AssignStmt{
 			op:  .decl_assign
 			lhs: [ast.Expr(temp_ident)]
 			rhs: [t.transform_expr(call_expr)]
 		}
-		or_side_effect_stmts, or_value := t.get_or_block_stmts_and_value(or_expr.stmts)
-		// If there are side-effect statements, wrap in: if !_t._data { side_effects... }
-		if or_side_effect_stmts.len > 0 {
-			prefix_stmts << ast.ExprStmt{
-				expr: ast.IfExpr{
-					cond:  not_cond_expr2
-					stmts: or_side_effect_stmts
-				}
-			}
-		}
+		_, or_value := t.get_or_block_stmts_and_value(or_expr.stmts)
 		return ast.IfExpr{
-			cond:      cond_expr2
+			cond:      temp_ident
 			stmts:     [ast.Stmt(ast.ExprStmt{
 				expr: temp_ident
 			})]
@@ -3090,7 +3010,7 @@ fn (t &Transformer) stmt_ends_with_return(stmt ast.Stmt) bool {
 
 fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt {
 	// Native backends (arm64/x64) don't use Option/Result structs.
-	// `return error(...)` and `return none` should be lowered to `return 0` (error/none indicator).
+	// `return error(...)` should be lowered to `return 0` (error indicator).
 	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
 		if stmt.exprs.len == 1 {
 			ret_expr := stmt.exprs[0]
@@ -3118,17 +3038,6 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 							}),
 						]
 					}
-				}
-			}
-			// Check for `return none` — appears as Ident{name:'none'}
-			if ret_expr is ast.Ident && ret_expr.name == 'none' {
-				return ast.ReturnStmt{
-					exprs: [
-						ast.Expr(ast.BasicLiteral{
-							kind:  .number
-							value: '0'
-						}),
-					]
 				}
 			}
 		}

@@ -849,19 +849,10 @@ fn (mut t Transformer) transform_match_expr(expr ast.MatchExpr) ast.Expr {
 	}
 
 	// Non-sum type match - simple transformation
-	// Resolve enum shorthands (.red, .green, etc.) in branch conditions
-	enum_type := t.get_enum_type_name(expr.expr)
 	mut branches := []ast.MatchBranch{cap: expr.branches.len}
 	for branch in expr.branches {
-		mut conds := branch.cond.clone()
-		if enum_type != '' {
-			conds = []ast.Expr{cap: branch.cond.len}
-			for c in branch.cond {
-				conds << t.resolve_enum_shorthand(c, enum_type)
-			}
-		}
 		branches << ast.MatchBranch{
-			cond:  conds
+			cond:  branch.cond
 			stmts: t.transform_stmts(branch.stmts)
 			pos:   branch.pos
 		}
@@ -1389,66 +1380,6 @@ fn (mut t Transformer) transform_if_expr(expr ast.IfExpr) ast.Expr {
 			// functions return raw values (0 for none). Skip struct-based
 			// expansion and fall through to simple truthiness check.
 			if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
-				// For ?SumType returns, use _data field check instead of raw truthiness.
-				if is_option || is_result {
-					mut base_type := t.get_expr_base_type(rhs)
-					if base_type == '' {
-						fn_name2 := t.get_call_fn_name(rhs)
-						if fn_name2 != '' {
-							base_type = t.get_fn_return_base_type(fn_name2)
-						}
-					}
-					if base_type != '' && t.is_sum_type(base_type) {
-						temp_name := t.gen_temp_name()
-						temp_ident := ast.Ident{
-							name: temp_name
-							pos:  synth_pos
-						}
-						// 1. _tmp := call()
-						temp_assign := ast.AssignStmt{
-							op:  .decl_assign
-							lhs: [ast.Expr(temp_ident)]
-							rhs: [t.transform_expr(rhs)]
-							pos: synth_pos
-						}
-						// 2. Condition: _tmp._data (non-NULL means has value)
-						data_check := t.synth_selector(temp_ident, '_data', types.Type(types.voidptr_))
-						// 3. Build body: guard_var := _tmp; original_body
-						mut body_stmts2 := []ast.Stmt{}
-						mut guard_is_blank := false
-						if guard.stmt.lhs.len == 1 {
-							lhs0 := guard.stmt.lhs[0]
-							if lhs0 is ast.Ident && lhs0.name == '_' {
-								guard_is_blank = true
-							}
-						}
-						if !guard_is_blank {
-							body_stmts2 << ast.AssignStmt{
-								op:  .decl_assign
-								lhs: guard.stmt.lhs
-								rhs: [ast.Expr(temp_ident)]
-								pos: guard.stmt.pos
-							}
-						}
-						for s in expr.stmts {
-							body_stmts2 << s
-						}
-						modified_if := ast.IfExpr{
-							cond:      data_check
-							stmts:     t.transform_stmts(body_stmts2)
-							else_expr: t.transform_expr(expr.else_expr)
-							pos:       synth_pos
-						}
-						if orig_type := t.get_expr_type(ast.Expr(expr)) {
-							t.register_synth_type(synth_pos, orig_type)
-						}
-						return ast.UnsafeExpr{
-							stmts: [ast.Stmt(temp_assign), ast.ExprStmt{
-								expr: modified_if
-							}]
-						}
-					}
-				}
 				is_result = false
 				is_option = false
 			}
