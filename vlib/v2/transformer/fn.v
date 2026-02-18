@@ -730,20 +730,28 @@ fn (mut t Transformer) transform_call_expr(expr ast.CallExpr) ast.Expr {
 		if t.has_active_smartcast() {
 			receiver_str := t.expr_to_string(sel.lhs)
 			if ctx := t.find_smartcast_for_expr(receiver_str) {
-				// Transform receiver with smart cast and keep the method call structure
-				casted_receiver := t.apply_smartcast_receiver_ctx(sel.lhs, ctx)
-				mut args := []ast.Expr{cap: expr.args.len}
-				for arg in expr.args {
-					args << t.transform_expr(arg)
-				}
-				return ast.CallExpr{
-					lhs:  ast.SelectorExpr{
-						lhs: casted_receiver
-						rhs: sel.rhs
-						pos: sel.pos
+				// Check if the method exists on the variant type. If not, the method
+				// is defined on the sum type and we should NOT apply the smartcast
+				// to the receiver. E.g. `for cur is types.Alias { cur.base_type() }`
+				// where base_type() is defined on types.Type (the sum type), not on Alias.
+				variant_has_method := t.env.lookup_method(ctx.variant, sel.rhs.name) != none
+					|| t.env.lookup_method(ctx.variant_full, sel.rhs.name) != none
+				if variant_has_method {
+					// Transform receiver with smart cast and keep the method call structure
+					casted_receiver := t.apply_smartcast_receiver_ctx(sel.lhs, ctx)
+					mut args := []ast.Expr{cap: expr.args.len}
+					for arg in expr.args {
+						args << t.transform_expr(arg)
 					}
-					args: args
-					pos:  expr.pos
+					return ast.CallExpr{
+						lhs:  ast.SelectorExpr{
+							lhs: casted_receiver
+							rhs: sel.rhs
+							pos: sel.pos
+						}
+						args: args
+						pos:  expr.pos
+					}
 				}
 			}
 		}
@@ -1576,8 +1584,16 @@ fn (mut t Transformer) transform_call_or_cast_expr(expr ast.CallOrCastExpr) ast.
 		if t.has_active_smartcast() {
 			receiver_str := t.expr_to_string(sel.lhs)
 			if ctx := t.find_smartcast_for_expr(receiver_str) {
-				// Transform receiver with smart cast and keep the call semantics.
-				casted_receiver := t.apply_smartcast_receiver_ctx(sel.lhs, ctx)
+				// Check if the method exists on the variant type. If not, the method
+				// is defined on the sum type and we should NOT apply the smartcast
+				// to the receiver.
+				variant_has_method := t.env.lookup_method(ctx.variant, sel.rhs.name) != none
+					|| t.env.lookup_method(ctx.variant_full, sel.rhs.name) != none
+				casted_receiver := if variant_has_method {
+					t.apply_smartcast_receiver_ctx(sel.lhs, ctx)
+				} else {
+					t.transform_expr(sel.lhs)
+				}
 				mut args := []ast.Expr{cap: 1}
 				if expr.expr !is ast.EmptyExpr {
 					args << t.transform_expr(expr.expr)
