@@ -2011,6 +2011,15 @@ fn (mut b Builder) build_prefix(expr ast.PrefixExpr) ValueID {
 			if addr != 0 {
 				return addr
 			}
+			// No addressable location (e.g. function call return value) –
+			// spill the value into a stack alloca so we can take its address.
+			val_type := b.mod.values[val].typ
+			if val_type != 0 {
+				ptr_type := b.mod.type_store.get_ptr(val_type)
+				alloca := b.mod.add_instr(.alloca, b.cur_block, ptr_type, []ValueID{})
+				b.mod.add_instr(.store, b.cur_block, 0, [val, alloca])
+				return alloca
+			}
 			return val
 		}
 		.bit_not {
