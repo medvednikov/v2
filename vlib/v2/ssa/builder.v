@@ -186,6 +186,12 @@ fn (mut b Builder) type_to_ssa(t types.Type) TypeID {
 			}
 			return b.mod.type_store.get_tuple(elem_types)
 		}
+		types.SumType {
+			if t.name in b.struct_types {
+				return b.struct_types[t.name]
+			}
+			return b.mod.type_store.get_int(64) // fallback
+		}
 		else {
 			return b.mod.type_store.get_int(64) // fallback for unhandled
 		}
@@ -3166,7 +3172,55 @@ fn (mut b Builder) build_addr(expr ast.Expr) ValueID {
 		ast.IndexExpr {
 			base := b.build_expr(expr.lhs)
 			index := b.build_expr(expr.expr)
-			result_type := b.expr_type(ast.Expr(expr))
+			mut result_type := b.expr_type(ast.Expr(expr))
+			// For dynamic arrays, extract .data pointer first (mirrors build_index logic)
+			base_type_id := b.mod.values[base].typ
+			array_type := b.get_array_type()
+			if array_type != 0 && base_type_id == array_type {
+				i64_t := b.mod.type_store.get_int(64)
+				if result_type == i64_t {
+					if b.env != unsafe { nil } {
+						lhs_pos := expr.lhs.pos()
+						if lhs_pos.id != 0 {
+							if arr_typ := b.env.get_expr_type(lhs_pos.id) {
+								if arr_typ is types.Array {
+									inferred := b.type_to_ssa(arr_typ.elem_type)
+									if inferred != 0 {
+										result_type = inferred
+									}
+								}
+							}
+						}
+					}
+				}
+				// Extract .data field (index 0), cast to element pointer, then GEP
+				i8_t := b.mod.type_store.get_int(8)
+				void_ptr := b.mod.type_store.get_ptr(i8_t)
+				data_ptr := b.mod.add_instr(.extractvalue, b.cur_block, void_ptr, [base,
+					b.mod.get_or_add_const(b.mod.type_store.get_int(32), '0')])
+				elem_ptr_type := b.mod.type_store.get_ptr(result_type)
+				typed_ptr := b.mod.add_instr(.bitcast, b.cur_block, elem_ptr_type, [data_ptr])
+				return b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_type, [
+					typed_ptr,
+					index,
+				])
+			}
+			// For pointers (fixed-size arrays), GEP directly
+			if base_type_id < b.mod.type_store.types.len {
+				base_typ := b.mod.type_store.types[base_type_id]
+				if base_typ.kind == .ptr_t && base_typ.elem_type != 0 {
+					mut elem_type := base_typ.elem_type
+					if elem_type < b.mod.type_store.types.len {
+						inner_typ := b.mod.type_store.types[elem_type]
+						if inner_typ.kind == .array_t && inner_typ.elem_type != 0 {
+							elem_type = inner_typ.elem_type
+						}
+					}
+					elem_ptr_type := b.mod.type_store.get_ptr(elem_type)
+					return b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_type,
+						[base, index])
+				}
+			}
 			return b.mod.add_instr(.get_element_ptr, b.cur_block, b.mod.type_store.get_ptr(result_type),
 				[base, index])
 		}

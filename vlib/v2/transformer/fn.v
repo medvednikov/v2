@@ -873,9 +873,14 @@ fn (mut t Transformer) transform_call_expr(expr ast.CallExpr) ast.Expr {
 	// This is important for smart cast propagation through method chains
 	// e.g., stmt.name.replace() when stmt is smartcast
 	call_args := t.lower_missing_call_args(expr.lhs, expr.args)
+	// Look up function parameter types for sumtype re-wrapping
+	fn_info := t.lookup_call_fn_info(expr.lhs)
 	mut args := []ast.Expr{cap: call_args.len}
-	for arg in call_args {
-		args << t.transform_expr(arg)
+	for i, arg in call_args {
+		// When an argument has an active smartcast but the function parameter
+		// expects the original sumtype, temporarily disable the smartcast so the
+		// original sumtype value is passed through without being unwrapped.
+		args << t.transform_call_arg_with_sumtype_check(arg, fn_info, i)
 	}
 	args = t.lower_variadic_args(expr.lhs, args)
 	return ast.CallExpr{
@@ -1750,9 +1755,10 @@ fn (mut t Transformer) transform_call_or_cast_expr(expr ast.CallOrCastExpr) ast.
 				call_args << expr.expr
 			}
 			call_args = t.lower_missing_call_args(expr.lhs, call_args)
+			coce_fn_info := t.lookup_call_fn_info(expr.lhs)
 			mut args := []ast.Expr{cap: call_args.len}
-			for arg in call_args {
-				args << t.transform_expr(arg)
+			for i, arg in call_args {
+				args << t.transform_call_arg_with_sumtype_check(arg, coce_fn_info, i)
 			}
 			args = t.lower_variadic_args(expr.lhs, args)
 			return ast.CallExpr{
@@ -1800,6 +1806,31 @@ fn (mut t Transformer) transform_call_or_cast_expr(expr ast.CallOrCastExpr) ast.
 	transformed_lhs := t.transform_expr(expr.lhs)
 	transformed_arg := t.transform_expr(expr.expr)
 	return t.lower_call_or_cast_expr(transformed_lhs, transformed_arg, expr.pos)
+}
+
+// transform_call_arg_with_sumtype_check transforms a call argument, temporarily
+// disabling any active smartcast when the function parameter is a sumtype.
+// This prevents smartcast from unwrapping a sumtype value that should be passed as-is.
+fn (mut t Transformer) transform_call_arg_with_sumtype_check(arg ast.Expr, fn_info ?CallFnInfo, idx int) ast.Expr {
+	if info := fn_info {
+		if idx < info.param_types.len {
+			param_c_name := t.type_to_c_name(info.param_types[idx])
+			if param_c_name != '' && t.is_sum_type(param_c_name) {
+				arg_str := t.expr_to_string(arg)
+				if arg_str != '' {
+					if _ := t.find_smartcast_for_expr(arg_str) {
+						if existing := t.remove_smartcast_for_expr(arg_str) {
+							result := t.transform_expr(arg)
+							t.push_smartcast_full(existing.expr, existing.variant,
+								existing.variant_full, existing.sumtype)
+							return result
+						}
+					}
+				}
+			}
+		}
+	}
+	return t.transform_expr(arg)
 }
 
 // get_enum_type get enum type name from an expression

@@ -849,10 +849,29 @@ fn (mut t Transformer) transform_match_expr(expr ast.MatchExpr) ast.Expr {
 	}
 
 	// Non-sum type match - simple transformation
+	// Determine if match expression is an enum type so we can resolve shorthands (.red → Color__red)
+	mut enum_type_name := ''
+	if typ := t.get_expr_type(expr.expr) {
+		c_name := t.type_to_c_name(typ)
+		if c_name != '' {
+			if resolved := t.lookup_type(c_name) {
+				if resolved is types.Enum {
+					enum_type_name = c_name
+				}
+			}
+		}
+	}
 	mut branches := []ast.MatchBranch{cap: expr.branches.len}
 	for branch in expr.branches {
+		mut conds := branch.cond.clone()
+		if enum_type_name != '' {
+			conds = []ast.Expr{cap: branch.cond.len}
+			for c in branch.cond {
+				conds << t.resolve_enum_shorthand(c, enum_type_name)
+			}
+		}
 		branches << ast.MatchBranch{
-			cond:  branch.cond
+			cond:  conds
 			stmts: t.transform_stmts(branch.stmts)
 			pos:   branch.pos
 		}

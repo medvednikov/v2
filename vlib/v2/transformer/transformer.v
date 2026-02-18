@@ -3670,6 +3670,17 @@ fn (mut t Transformer) apply_smartcast_direct_ctx(original_expr ast.Expr, ctx Sm
 	// For C backends: _data is a union, so access _data._variant for the specific member.
 	is_native_backend := t.pref != unsafe { nil }
 		&& (t.pref.backend == .arm64 || t.pref.backend == .x64)
+	// The type checker may have assigned the smartcast variant type (e.g., int) to
+	// the original position of the base expression. Override it with the sumtype so
+	// that the SSA builder sees the struct {_tag, _data} layout for field access.
+	if ctx.sumtype != '' {
+		if sumtype_type := t.lookup_type(ctx.sumtype) {
+			base_pos := transformed_base.pos()
+			if base_pos.id != 0 {
+				t.register_synth_type(base_pos, sumtype_type)
+			}
+		}
+	}
 	data_access := t.synth_selector(transformed_base, '_data', types.Type(types.voidptr_))
 	variant_access := if is_native_backend {
 		data_access
@@ -3762,6 +3773,15 @@ fn (mut t Transformer) apply_smartcast_receiver_ctx(sumtype_expr ast.Expr, ctx S
 	// For C backends: _data is a union, access _data._variant.
 	is_native_backend2 := t.pref != unsafe { nil }
 		&& (t.pref.backend == .arm64 || t.pref.backend == .x64)
+	// Override the smartcast variant type with the sumtype so SSA sees {_tag, _data} struct.
+	if ctx.sumtype != '' {
+		if sumtype_type := t.lookup_type(ctx.sumtype) {
+			base_pos := transformed_base.pos()
+			if base_pos.id != 0 {
+				t.register_synth_type(base_pos, sumtype_type)
+			}
+		}
+	}
 	data_access := t.synth_selector(transformed_base, '_data', types.Type(types.voidptr_))
 	variant_access := if is_native_backend2 {
 		data_access
