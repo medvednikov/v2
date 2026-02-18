@@ -853,12 +853,14 @@ fn (mut t Transformer) transform_match_expr(expr ast.MatchExpr) ast.Expr {
 	enum_type := t.get_enum_type_name(expr.expr)
 	mut branches := []ast.MatchBranch{cap: expr.branches.len}
 	for branch in expr.branches {
-		mut conds := branch.cond.clone()
-		if enum_type != '' {
-			conds = []ast.Expr{cap: branch.cond.len}
+		conds := if enum_type != '' {
+			mut resolved := []ast.Expr{cap: branch.cond.len}
 			for c in branch.cond {
-				conds << t.resolve_enum_shorthand(c, enum_type)
+				resolved << t.resolve_enum_shorthand(c, enum_type)
 			}
+			resolved
+		} else {
+			branch.cond
 		}
 		branches << ast.MatchBranch{
 			cond:  conds
