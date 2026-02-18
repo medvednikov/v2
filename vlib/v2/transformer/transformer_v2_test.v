@@ -17,10 +17,12 @@ import v2.types
 struct ExprTypeChecker {
 	env &types.Environment
 mut:
-	total   int
-	missing int
-	details []string
-	by_kind map[string]int
+	total         int
+	missing       int
+	details       []string
+	by_kind       map[string]int
+	in_generic_fn bool
+	generic_miss  int
 }
 
 fn test_v2_transformer_all_exprs_have_types() {
@@ -107,12 +109,12 @@ fn test_v2_transformer_all_exprs_have_types() {
 	}
 
 	if etc.missing > 0 {
-		mut msg := '${etc.missing} of ${etc.total} expressions missing types.\n'
+		mut msg := '${etc.missing} of ${etc.total} expressions missing types (${etc.generic_miss} in generic fns).\n'
 		msg += 'breakdown by kind:\n'
 		for kind, count in etc.by_kind {
 			msg += '  ${kind}: ${count}\n'
 		}
-		limit := if etc.details.len < 20 { etc.details.len } else { 20 }
+		limit := if etc.details.len < 100 { etc.details.len } else { 100 }
 		msg += 'first ${limit} missing:\n'
 		for detail in etc.details[..limit] {
 			msg += '  ${detail}\n'
@@ -206,11 +208,31 @@ fn (mut c ExprTypeChecker) check_expr(expr ast.Expr) {
 		if c.has_type(pos.id) {
 			// ok
 		} else {
+			if c.in_generic_fn {
+				c.generic_miss++
+			}
 			c.missing++
 			kind := expr.type_name()
 			c.by_kind[kind] = c.by_kind[kind] + 1
-			if c.details.len < 20 {
-				c.details << 'id=${pos.id} kind=${kind}'
+			if c.details.len < 100 {
+				extra := match expr {
+					ast.Ident { ' name="${expr.name}"' }
+					ast.BasicLiteral { ' val="${expr.value}"' }
+					ast.StringLiteral { ' val="${expr.value}"' }
+					ast.SelectorExpr { ' .sel' }
+					ast.CallExpr { ' call' }
+					ast.InfixExpr { ' op=${expr.op}' }
+					ast.IndexExpr { ' idx' }
+					ast.CastExpr { ' cast' }
+					ast.PrefixExpr { ' op=${expr.op}' }
+					ast.ParenExpr { ' paren' }
+					ast.ModifierExpr { ' mod=${expr.kind}' }
+					ast.KeywordOperator { ' kw' }
+					ast.PostfixExpr { ' op=${expr.op}' }
+					ast.IfExpr { ' if' }
+					else { '' }
+				}
+				c.details << 'id=${pos.id} kind=${kind}${extra}'
 			}
 		}
 	}
@@ -429,9 +451,14 @@ fn (mut c ExprTypeChecker) check_stmt(stmt ast.Stmt) {
 			c.check_expr(stmt.expr)
 		}
 		ast.FnDecl {
+			prev_generic := c.in_generic_fn
+			if stmt.typ.generic_params.len > 0 {
+				c.in_generic_fn = true
+			}
 			for s in stmt.stmts {
 				c.check_stmt(s)
 			}
+			c.in_generic_fn = prev_generic
 		}
 		ast.ForStmt {
 			c.check_stmt(stmt.init)

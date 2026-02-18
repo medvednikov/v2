@@ -2128,8 +2128,38 @@ fn (c &Checker) eval_comptime_flag(name string) bool {
 			}
 			return false
 		}
+		'little_endian' {
+			$if little_endian {
+				return true
+			}
+			return false
+		}
+		'big_endian' {
+			$if big_endian {
+				return true
+			}
+			return false
+		}
+		'debug' {
+			$if debug {
+				return true
+			}
+			return false
+		}
+		'native' {
+			return c.pref != unsafe { nil } && (c.pref.backend == .arm64 || c.pref.backend == .x64)
+		}
+		'builtin_write_buf_to_fd_should_use_c_write' {
+			return c.pref != unsafe { nil } && (c.pref.backend == .arm64 || c.pref.backend == .x64)
+		}
+		'new_int', 'gcboehm', 'prealloc', 'autofree' {
+			return false
+		}
 		else {
-			// Unknown flag - return false
+			// Check user-defined comptime flags from -d <name>
+			if c.pref != unsafe { nil } && name in c.pref.user_defines {
+				return true
+			}
 			return false
 		}
 	}

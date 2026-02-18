@@ -471,6 +471,25 @@ fn (mut t Transformer) is_void_call_expr(expr ast.Expr) bool {
 }
 
 fn (mut t Transformer) transform_fn_decl(decl ast.FnDecl) ast.FnDecl {
+	// Skip uninstantiated generic functions - their bodies were never type-checked
+	// and they will never be called, so emit an empty body.
+	if decl.typ.generic_params.len > 0 {
+		has_generic_types := decl.name in t.env.generic_types
+		if !has_generic_types {
+			return ast.FnDecl{
+				attributes: decl.attributes
+				is_public:  decl.is_public
+				is_method:  decl.is_method
+				is_static:  decl.is_static
+				receiver:   decl.receiver
+				language:   decl.language
+				name:       decl.name
+				typ:        decl.typ
+				stmts:      []
+				pos:        decl.pos
+			}
+		}
+	}
 	// Check for conditional compilation attributes (e.g., @[if verbose ?])
 	// Skip functions whose conditions evaluate to false, and mark them for call elision
 	for attr in decl.attributes {

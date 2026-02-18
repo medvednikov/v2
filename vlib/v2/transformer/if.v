@@ -1086,9 +1086,8 @@ fn (t &Transformer) eval_comptime_flag(name string) bool {
 			}
 			return false
 		}
-		// v2 generates native code
 		'native' {
-			return true
+			return t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64)
 		}
 		// Native backend cannot resolve C.stdout/C.stderr data symbols through GOT,
 		// so use C.write() instead of fwrite() for I/O operations.
