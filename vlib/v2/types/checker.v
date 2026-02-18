@@ -1760,7 +1760,7 @@ fn (mut c Checker) check_struct_field_defaults(files []ast.File) {
 					if field.value !is ast.EmptyExpr {
 						field_typ := c.expr(field.typ)
 						prev_expected := c.expected_type
-						c.expected_type = field_typ
+						c.expected_type = to_optional_type(field_typ)
 						c.expr(field.value)
 						c.expected_type = prev_expected
 					}
