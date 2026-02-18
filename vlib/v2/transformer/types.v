@@ -334,6 +334,9 @@ fn (t &Transformer) get_var_type_name(name string) string {
 	if typ is types.Struct {
 		return typ.name
 	}
+	if typ is types.SumType {
+		return types.sum_type_name(typ)
+	}
 	if typ is types.Pointer {
 		base_name := t.type_to_name(typ.base_type)
 		if base_name != '' {
