@@ -225,8 +225,10 @@ fn (mut p Parser) stmt() ast.Stmt {
 		}
 		.key_fn {
 			// `fn name(...)` or `fn C.name(...)` is a declaration;
+			// `fn (recv Type) method(...)` is a method declaration;
 			// `fn (...)` or `fn [captures](...)` is a literal (handled by else/expr).
-			if p.peek() == .name {
+			next := p.peek()
+			if next == .name || next == .lpar {
 				return p.fn_decl(false, [])
 			}
 			// fall through to expression (fn literal)
