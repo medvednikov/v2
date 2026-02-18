@@ -415,6 +415,7 @@ pub fn (mut t Transformer) transform_files(files []ast.File) []ast.File {
 		}
 	}
 	t.inject_main_runtime_const_init_calls(mut result)
+	t.propagate_types(result)
 	return result
 }
 
