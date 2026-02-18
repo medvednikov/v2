@@ -1383,6 +1383,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				fn_ret_typ := g.mod.type_store.types[fn_ret_type]
 				fn_ret_size := g.type_size(fn_ret_type)
 
+
 				// Check if we're returning a pointer but the function expects a struct
 				// This happens when returning local struct variables (expr_init returns pointers)
 				mut is_indirect_struct_return := false
@@ -1401,35 +1402,47 @@ fn (mut g Gen) gen_instr(val_id int) {
 						g.emit_ldr_reg_offset(8, 29, g.x8_save_offset)
 					}
 
-					// string_literal values need to be materialized on the stack
-					// before we can copy them to the return pointer.
-					if ret_val.kind == .string_literal {
-						g.load_val_to_reg(9, ret_val_id)
-					}
-
-					// Get the source address of the struct
-					if is_indirect_struct_return {
-						// Return value is a pointer to struct - use it as source
-						g.load_val_to_reg(9, ret_val_id)
-					} else if ret_offset := g.stack_map[ret_val_id] {
-						if g.large_struct_stack_value_is_pointer(ret_val_id) {
-							// Some large-struct temporaries are represented as pointers in stack slots.
-							g.emit_ldr_reg_offset(9, 29, ret_offset)
-						} else {
-							// Struct is materialized by value on stack.
-							g.emit_add_fp_imm(9, ret_offset)
+					// Check if returning a zero/none value (e.g., `return 0` from `return none`).
+					// In this case, zero-fill the return area instead of trying to copy
+					// from address 0 (which would be a null pointer dereference).
+					is_zero_const := ret_val.kind == .constant && ret_val.name == '0'
+					if is_zero_const {
+						num_fields := (fn_ret_size + 7) / 8
+						for i in 0 .. num_fields {
+							// STR xzr, [x8, #i*8]
+							g.emit(asm_str_imm(Reg(31), Reg(8), u32(i)))
 						}
 					} else {
-						// Fallback
-						g.load_val_to_reg(9, ret_val_id)
-					}
-					// Copy struct from [x9] to [x8] (x8 was restored from saved location)
-					num_fields := (fn_ret_size + 7) / 8
-					for i in 0 .. num_fields {
-						// LDR x10, [x9, #i*8]
-						g.emit(asm_ldr_imm(Reg(10), Reg(9), u32(i)))
-						// STR x10, [x8, #i*8]
-						g.emit(asm_str_imm(Reg(10), Reg(8), u32(i)))
+						// string_literal values need to be materialized on the stack
+						// before we can copy them to the return pointer.
+						if ret_val.kind == .string_literal {
+							g.load_val_to_reg(9, ret_val_id)
+						}
+
+						// Get the source address of the struct
+						if is_indirect_struct_return {
+							// Return value is a pointer to struct - use it as source
+							g.load_val_to_reg(9, ret_val_id)
+						} else if ret_offset := g.stack_map[ret_val_id] {
+							if g.large_struct_stack_value_is_pointer(ret_val_id) {
+								// Some large-struct temporaries are represented as pointers in stack slots.
+								g.emit_ldr_reg_offset(9, 29, ret_offset)
+							} else {
+								// Struct is materialized by value on stack.
+								g.emit_add_fp_imm(9, ret_offset)
+							}
+						} else {
+							// Fallback
+							g.load_val_to_reg(9, ret_val_id)
+						}
+						// Copy struct from [x9] to [x8] (x8 was restored from saved location)
+						num_fields := (fn_ret_size + 7) / 8
+						for i in 0 .. num_fields {
+							// LDR x10, [x9, #i*8]
+							g.emit(asm_ldr_imm(Reg(10), Reg(9), u32(i)))
+							// STR x10, [x8, #i*8]
+							g.emit(asm_str_imm(Reg(10), Reg(8), u32(i)))
+						}
 					}
 				} else if (ret_typ.kind == .struct_t && ret_typ.fields.len > 1)
 					|| is_indirect_struct_return {
@@ -1453,6 +1466,15 @@ fn (mut g Gen) gen_instr(val_id int) {
 						}
 					} else {
 						g.load_val_to_reg(0, ret_val_id)
+					}
+				} else if fn_ret_typ.kind == .struct_t && ret_val.kind == .constant
+					&& ret_val.name == '0' {
+					// Returning zero/none from a function that returns a small struct.
+					// Zero all return registers for the struct to avoid garbage in x1+.
+					for i in 0 .. fn_ret_typ.fields.len {
+						if i < 8 {
+							g.emit_mov_reg(i, 31) // xN = xzr (zero)
+						}
 					}
 				} else {
 					g.load_val_to_reg(0, ret_val_id)
@@ -1502,7 +1524,21 @@ fn (mut g Gen) gen_instr(val_id int) {
 			}
 		}
 		.br {
-			g.load_val_to_reg(8, instr.operands[0])
+			// Load condition value into x8 for branch.
+			// For large structs (> 16 bytes), load_val_to_reg returns the *address*
+			// (which is always non-zero). For truthiness checks on option struct returns,
+			// we need to load the first word of the struct instead.
+			cond_val := g.mod.values[instr.operands[0]]
+			cond_is_large_struct := cond_val.typ > 0 && cond_val.typ < g.mod.type_store.types.len
+				&& g.mod.type_store.types[cond_val.typ].kind == .struct_t
+				&& g.type_size(cond_val.typ) > 16
+			if cond_is_large_struct {
+				// Large struct: load the address, then dereference first word
+				g.load_val_to_reg(8, instr.operands[0])
+				g.emit(asm_ldr_imm(Reg(8), Reg(8), 0)) // x8 = [x8] (first word)
+			} else {
+				g.load_val_to_reg(8, instr.operands[0])
+			}
 
 			true_blk := g.mod.values[instr.operands[1]].index
 			false_blk := g.mod.values[instr.operands[2]].index

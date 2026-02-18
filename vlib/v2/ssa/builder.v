@@ -731,6 +731,12 @@ fn (mut b Builder) ident_type_to_ssa(name string) TypeID {
 			b.mod.type_store.get_int(8)
 		}
 		else {
+			// Check for pointer types (e.g., 'StructType*', 'int*')
+			if name.ends_with('*') {
+				base_name := name[..name.len - 1]
+				base_type := b.ident_type_to_ssa(base_name)
+				return b.mod.type_store.get_ptr(base_type)
+			}
 			// Check struct types
 			if name in b.struct_types {
 				b.struct_types[name]
