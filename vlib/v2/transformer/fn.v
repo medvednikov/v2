@@ -1818,12 +1818,19 @@ fn (mut t Transformer) transform_call_arg_with_sumtype_check(arg ast.Expr, fn_in
 			if param_c_name != '' && t.is_sum_type(param_c_name) {
 				arg_str := t.expr_to_string(arg)
 				if arg_str != '' {
-					if _ := t.find_smartcast_for_expr(arg_str) {
-						if existing := t.remove_smartcast_for_expr(arg_str) {
-							result := t.transform_expr(arg)
-							t.push_smartcast_full(existing.expr, existing.variant,
-								existing.variant_full, existing.sumtype)
-							return result
+					if ctx := t.find_smartcast_for_expr(arg_str) {
+						// Only disable smartcast if parameter expects the SAME sumtype
+						// as the arg's original sumtype. This avoids incorrectly removing
+						// smartcasts when the parameter type is a DIFFERENT sumtype that
+						// happens to be the smartcast variant (e.g., ast.Expr smartcast
+						// to ast.Type, where ast.Type is itself a sumtype).
+						if ctx.sumtype == param_c_name {
+							if existing := t.remove_smartcast_for_expr(arg_str) {
+								result := t.transform_expr(arg)
+								t.push_smartcast_full(existing.expr, existing.variant,
+									existing.variant_full, existing.sumtype)
+								return result
+							}
 						}
 					}
 				}

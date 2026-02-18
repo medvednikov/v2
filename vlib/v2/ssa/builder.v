@@ -2492,17 +2492,20 @@ fn (mut b Builder) build_selector(expr ast.SelectorExpr) ValueID {
 		}
 	}
 	field_idx := b.field_index(expr, base)
-	// Determine result type: prefer type environment, fall back to SSA struct field type
-	mut result_type := b.expr_type(ast.Expr(expr))
-	if result_type == b.mod.type_store.get_int(64) {
-		// expr_type returned i64 fallback — try to get actual field type from SSA struct
-		actual_base_type := b.mod.values[base].typ
-		if actual_base_type < b.mod.type_store.types.len {
-			typ := b.mod.type_store.types[actual_base_type]
-			if typ.kind == .struct_t && field_idx < typ.fields.len {
-				result_type = typ.fields[field_idx]
-			}
+	// Determine result type: prefer SSA struct field type for struct bases,
+	// fall back to type environment.
+	// The type environment may have the smartcast variant type (e.g., int) for a
+	// sumtype field access, while the SSA struct has the correct field type.
+	mut result_type := TypeID(0)
+	actual_base_type := b.mod.values[base].typ
+	if actual_base_type < b.mod.type_store.types.len {
+		typ := b.mod.type_store.types[actual_base_type]
+		if typ.kind == .struct_t && field_idx < typ.fields.len {
+			result_type = typ.fields[field_idx]
 		}
+	}
+	if result_type == 0 {
+		result_type = b.expr_type(ast.Expr(expr))
 	}
 	return b.mod.add_instr(.extractvalue, b.cur_block, result_type, [base,
 		b.mod.get_or_add_const(b.mod.type_store.get_int(32), field_idx.str())])
