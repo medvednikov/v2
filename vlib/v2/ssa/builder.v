@@ -30,6 +30,18 @@ mut:
 	string_const_values map[string]string
 	// Label name -> SSA BlockID (for goto/label support)
 	label_blocks map[string]BlockID
+	// Track mut pointer params (e.g., mut buf &u8) that need extra dereference
+	// when used in expressions (buf is ptr(ptr(i8)), but user sees buf as &u8)
+	mut_ptr_params map[string]bool
+	// Deferred constant initializers that need runtime init (e.g., os.args = arguments())
+	deferred_const_inits []DeferredConstInit
+}
+
+struct DeferredConstInit {
+	global_name string   // mangled name, e.g., 'os__args'
+	init_expr   ast.Expr // the initializer expression
+	module_name string   // module for name resolution
+	const_type  TypeID   // SSA type of the constant
 }
 
 struct LoopInfo {
@@ -104,6 +116,37 @@ pub fn (mut b Builder) build_all(files []ast.File) {
 		b.cur_module = file_module_name(file)
 		b.build_fn_bodies(file)
 	}
+
+	// Phase 5: Generate __v2_global_init for deferred constant initializers
+	if b.deferred_const_inits.len > 0 {
+		b.generate_global_init()
+	}
+}
+
+// generate_global_init creates a __v2_global_init function that initializes
+// module-level constants with runtime initializers (e.g., os.args = arguments()).
+// This function is called at the start of main by the arm64 codegen.
+fn (mut b Builder) generate_global_init() {
+	func_idx := b.mod.new_function('__v2_global_init', 0, []TypeID{})
+	b.fn_index['__v2_global_init'] = func_idx
+	entry := b.mod.add_block(func_idx, 'entry')
+	b.cur_func = func_idx
+	b.cur_block = entry
+	b.vars = map[string]ValueID{}
+	b.mut_ptr_params = map[string]bool{}
+
+	for dinit in b.deferred_const_inits {
+		// Set the module context for name resolution
+		b.cur_module = dinit.module_name
+		// Build the initializer expression (e.g., call to arguments())
+		val := b.build_expr(dinit.init_expr)
+		// Find the global and store the value into it
+		if glob_id := b.find_global(dinit.global_name) {
+			b.mod.add_instr(.store, b.cur_block, 0, [val, glob_id])
+		}
+	}
+
+	b.mod.add_instr(.ret, b.cur_block, 0, []ValueID{})
 }
 
 fn file_module_name(file ast.File) string {
@@ -289,6 +332,13 @@ fn (mut b Builder) types_type_c_name(t types.Type) string {
 		types.Alias {
 			return b.types_type_c_name(t.base_type)
 		}
+		types.Array {
+			// []rune → Array_rune, []int → Array_int, etc.
+			return 'Array_${b.types_type_c_name(t.elem_type)}'
+		}
+		types.Rune {
+			return 'rune'
+		}
 		else {
 			return 'int'
 		}
@@ -416,6 +466,17 @@ fn (mut b Builder) register_consts_and_globals(file ast.File) {
 						// Also store without module prefix for transformer-generated references
 						b.const_values[field.name] = initial_value
 					}
+					// Detect non-trivial initializers that need runtime init
+					// (function calls, struct literals with function calls, etc.)
+					if initial_value == 0 && !b.is_zero_literal(field.value)
+						&& str_val.len == 0 && b.has_runtime_init(field.value) {
+						b.deferred_const_inits << DeferredConstInit{
+							global_name: const_name
+							init_expr:   field.value
+							module_name: b.cur_module
+							const_type:  const_type
+						}
+					}
 				}
 			}
 			ast.GlobalDecl {
@@ -540,6 +601,26 @@ fn (b &Builder) is_zero_literal(expr ast.Expr) bool {
 	return false
 }
 
+// has_runtime_init checks if an expression requires runtime initialization
+// (i.e., contains a function call that can't be evaluated at compile time).
+fn (b &Builder) has_runtime_init(expr ast.Expr) bool {
+	match expr {
+		ast.CallExpr, ast.CallOrCastExpr { return true }
+		ast.CastExpr { return b.has_runtime_init(expr.expr) }
+		ast.ParenExpr { return b.has_runtime_init(expr.expr) }
+		ast.InitExpr {
+			// Struct/array init with function call fields
+			for field in expr.fields {
+				if b.has_runtime_init(field.value) {
+					return true
+				}
+			}
+		}
+		else {}
+	}
+	return false
+}
+
 // resolve_char_value converts a V character literal value to its numeric byte value.
 // Handles escape sequences like \n, \t, \r, \\, \', \0, and raw characters.
 fn (b &Builder) resolve_char_value(val string) int {
@@ -617,6 +698,10 @@ fn (mut b Builder) ast_type_to_ssa(typ ast.Expr) TypeID {
 				base := b.ast_type_to_ssa(typ.expr)
 				return b.mod.type_store.get_ptr(base)
 			}
+			if typ.op == .ellipsis {
+				// Variadic params (...T) are lowered to []T (dynamic array)
+				return b.get_array_type()
+			}
 			return b.mod.type_store.get_int(64)
 		}
 		ast.ModifierExpr {
@@ -647,6 +732,19 @@ fn (mut b Builder) ast_type_node_to_ssa(typ ast.Type) TypeID {
 	match typ {
 		ast.ArrayType {
 			return b.get_array_type()
+		}
+		ast.ArrayFixedType {
+			// [N]T → SSA array type with N elements of T
+			elem_type := b.ast_type_to_ssa(typ.elem_type)
+			arr_len := if typ.len is ast.BasicLiteral {
+				typ.len.value.int()
+			} else {
+				0
+			}
+			if arr_len > 0 {
+				return b.mod.type_store.get_array(elem_type, arr_len)
+			}
+			return b.mod.type_store.get_int(64) // fallback
 		}
 		ast.MapType {
 			return b.struct_types['map'] or { b.mod.type_store.get_int(64) }
@@ -872,6 +970,25 @@ fn (mut b Builder) receiver_type_name(typ ast.Expr) string {
 		ast.SelectorExpr {
 			return '${typ.lhs.name()}__${typ.rhs.name}'
 		}
+		ast.Type {
+			// Handle type expressions used as receivers (e.g., []rune for (ra []rune) string())
+			inner := ast.Type(typ)
+			if inner is ast.ArrayType {
+				// []rune → Array_rune, []int → Array_int, etc.
+				elem_name := if inner.elem_type is ast.Ident {
+					inner.elem_type.name
+				} else {
+					b.receiver_type_name(inner.elem_type)
+				}
+				prefix := if b.cur_module != '' && b.cur_module != 'main' {
+					'${b.cur_module}__'
+				} else {
+					''
+				}
+				return '${prefix}Array_${elem_name}'
+			}
+			return 'unknown'
+		}
 		else {
 			return 'unknown'
 		}
@@ -906,12 +1023,9 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 		return
 	}
 
-	// Skip functions without a body (e.g., extern declarations) or modules with complex code
-	// that the SSA builder can't fully handle yet.
-	// Build function bodies for main, builtin, and supporting modules used by builtin stubs.
-	if decl.stmts.len == 0 || (b.cur_module != 'main' && b.cur_module != 'builtin'
-		&& b.cur_module != 'strings' && b.cur_module != 'strconv' && b.cur_module != 'hash'
-		&& b.cur_module != 'bits') {
+	// Skip functions without a body (e.g., extern declarations).
+	// Build function bodies for ALL modules so cross-module calls work at runtime.
+	if decl.stmts.len == 0 {
 		// Emit a minimal function body (entry + ret) so backends have a valid function
 		b.cur_func = func_idx
 		entry := b.mod.add_block(func_idx, 'entry')
@@ -939,6 +1053,7 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 
 	// Reset local variables
 	b.vars = map[string]ValueID{}
+	b.mut_ptr_params = map[string]bool{}
 
 	// Clear params (they were registered in register_fn_sig for forward decls,
 	// but we need to re-create them here with proper alloca bindings)
@@ -988,6 +1103,12 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 			[]ValueID{})
 		b.mod.add_instr(.store, entry, 0, [param_val, alloca])
 		b.vars[param.name] = alloca
+		// Track mut pointer params that need extra dereference in build_ident.
+		// e.g., mut buf &u8 → actual_type is ptr(ptr(i8)), but user sees buf as &u8.
+		if param.is_mut && param_type < b.mod.type_store.types.len
+			&& b.mod.type_store.types[param_type].kind == .ptr_t {
+			b.mut_ptr_params[param.name] = true
+		}
 	}
 
 	// Build body
@@ -1780,7 +1901,17 @@ fn (mut b Builder) build_ident(ident ast.Ident) ValueID {
 		ptr := b.vars[ident.name]
 		ptr_typ := b.mod.values[ptr].typ
 		elem_typ := b.mod.type_store.types[ptr_typ].elem_type
-		return b.mod.add_instr(.load, b.cur_block, elem_typ, [ptr])
+		val := b.mod.add_instr(.load, b.cur_block, elem_typ, [ptr])
+		// For mut pointer params (e.g., mut buf &u8), the alloca stores ptr(ptr(T)).
+		// One load gives ptr(ptr(T)), but user sees buf as ptr(T).
+		// Add extra dereference to get the actual pointer value.
+		if ident.name in b.mut_ptr_params {
+			inner_typ := b.mod.type_store.types[elem_typ].elem_type
+			if inner_typ != 0 {
+				return b.mod.add_instr(.load, b.cur_block, inner_typ, [val])
+			}
+		}
+		return val
 	}
 	// Could be a constant, enum value, or function reference
 	if ident.name in b.enum_values {
@@ -2179,7 +2310,15 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 			if addr != 0 {
 				args << addr
 			} else {
-				args << b.build_expr(arg)
+				// Can't take address directly (e.g., `mut &buffer[0]`).
+				// Evaluate the expression, store in a temp alloca, pass alloca address.
+				val := b.build_expr(arg.expr)
+				val_type := b.mod.values[val].typ
+				alloca_type := b.mod.type_store.get_ptr(val_type)
+				tmp_alloca := b.mod.add_instr(.alloca, b.cur_block, alloca_type,
+					[]ValueID{})
+				b.mod.add_instr(.store, b.cur_block, 0, [val, tmp_alloca])
+				args << tmp_alloca
 			}
 		} else {
 			// Use args.len as param index (accounts for receiver already in args)
@@ -2233,9 +2372,17 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 				arg_kind := b.mod.type_store.types[arg_type].kind
 				param_kind := b.mod.type_store.types[param_type].kind
 				// Pointer arg but value param: auto-deref
-				if arg_kind == .ptr_t && param_kind != .ptr_t {
+				// Only auto-deref when the pointee is a struct and the
+				// parameter expects that struct value. Do NOT deref raw
+				// pointers (ptr(i8)/voidptr) when the param is a plain
+				// int type (e.g., i64 from variadic params).
+				if arg_kind == .ptr_t && param_kind == .struct_t {
 					pointee := b.mod.type_store.types[arg_type].elem_type
-					args[ai] = b.mod.add_instr(.load, b.cur_block, pointee, [args[ai]])
+					if pointee == param_type {
+						args[ai] = b.mod.add_instr(.load, b.cur_block, pointee, [
+							args[ai],
+						])
+					}
 				}
 				// Value arg but pointer param: auto-ref (alloca + store + pass pointer)
 				if arg_kind == .struct_t && param_kind == .ptr_t {
@@ -2246,6 +2393,16 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 				}
 			}
 		}
+	}
+
+	// Check if fn_name is a local variable holding a function pointer
+	// (e.g., `cfn(s)` where cfn is a parameter of type `fn(string) string`)
+	if fn_name in b.vars {
+		fn_ptr := b.build_ident(ast.Ident{ name: fn_name })
+		mut indirect_operands := []ValueID{cap: args.len + 1}
+		indirect_operands << fn_ptr
+		indirect_operands << args
+		return b.mod.add_instr(.call_indirect, b.cur_block, ret_type, indirect_operands)
 	}
 
 	fn_ref := b.get_or_create_fn_ref(fn_name, ret_type)
@@ -2402,6 +2559,18 @@ fn (mut b Builder) resolve_call_name(expr ast.CallExpr) string {
 			method_name := '${receiver_type}__${sel.rhs.name}'
 			if method_name in b.fn_index {
 				return method_name
+			}
+			// Try with builtin__ prefix (e.g., Array_rune__string → builtin__Array_rune__string)
+			builtin_method := 'builtin__${method_name}'
+			if builtin_method in b.fn_index {
+				return builtin_method
+			}
+			// Try with current module prefix
+			if b.cur_module != '' && b.cur_module != 'main' {
+				mod_method := '${b.cur_module}__${method_name}'
+				if mod_method in b.fn_index {
+					return mod_method
+				}
 			}
 			// Try searching all functions for one matching __method_name
 			suffix := '__${sel.rhs.name}'
@@ -2788,7 +2957,39 @@ fn (mut b Builder) build_array_init_expr(expr ast.ArrayInitExpr) ValueID {
 		return alloca
 	}
 
-	// Empty array or dynamic array with len/cap - these should have been
+	// Check if this is a fixed-size array type (e.g., [5]u8{}).
+	// These need stack allocation via alloca, not a dynamic array struct.
+	if expr.typ is ast.Type {
+		if expr.typ is ast.ArrayFixedType {
+			fixed_typ := expr.typ as ast.ArrayFixedType
+			elem_type := b.ast_type_to_ssa(fixed_typ.elem_type)
+			arr_len := if fixed_typ.len is ast.BasicLiteral {
+				fixed_typ.len.value.int()
+			} else {
+				0
+			}
+			if arr_len > 0 {
+				arr_fixed_type := b.mod.type_store.get_array(elem_type, arr_len)
+				ptr_type := b.mod.type_store.get_ptr(arr_fixed_type)
+				alloca := b.mod.add_instr(.alloca, b.cur_block, ptr_type, []ValueID{})
+				// Zero-initialize each element
+				zero := b.mod.get_or_add_const(elem_type, '0')
+				elem_ptr_type := b.mod.type_store.get_ptr(elem_type)
+				i32_t := b.mod.type_store.get_int(32)
+				for i in 0 .. arr_len {
+					idx := b.mod.get_or_add_const(i32_t, i.str())
+					gep := b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_type, [
+						alloca,
+						idx,
+					])
+					b.mod.add_instr(.store, b.cur_block, 0, [zero, gep])
+				}
+				return alloca
+			}
+		}
+	}
+
+	// Empty dynamic array with len/cap - these should have been
 	// transformed to __new_array_with_default_noscan calls by the transformer.
 	// Return zero-initialized array struct as fallback.
 	arr_type := b.get_array_type()
@@ -2857,14 +3058,15 @@ fn (mut b Builder) build_init_expr(expr ast.InitExpr) ValueID {
 }
 
 // build_init_expr_ptr: like build_init_expr but returns the pointer (for &Point{...}).
-// This is the "address taken" case — forces lowering to memory.
+// This is the "heap allocation" case — allocates on heap via malloc.
 fn (mut b Builder) build_init_expr_ptr(expr ast.InitExpr) ValueID {
 	struct_val := b.build_init_expr(expr)
 	val_type := b.mod.values[struct_val].typ
 	ptr_type := b.mod.type_store.get_ptr(val_type)
-	alloca := b.mod.add_instr(.alloca, b.cur_block, ptr_type, []ValueID{})
-	b.mod.add_instr(.store, b.cur_block, 0, [struct_val, alloca])
-	return alloca
+	// Heap-allocate: emit heap_alloc which the backend lowers to malloc+zero
+	heap_ptr := b.mod.add_instr(.heap_alloc, b.cur_block, ptr_type, []ValueID{})
+	b.mod.add_instr(.store, b.cur_block, 0, [struct_val, heap_ptr])
+	return heap_ptr
 }
 
 fn (mut b Builder) build_cast(expr ast.CastExpr) ValueID {
@@ -3138,7 +3340,17 @@ fn (mut b Builder) build_addr(expr ast.Expr) ValueID {
 	match expr {
 		ast.Ident {
 			if expr.name in b.vars {
-				return b.vars[expr.name]
+				ptr := b.vars[expr.name]
+				// For mut pointer params (e.g., mut buf &u8), the alloca stores ptr(ptr(T)).
+				// When used as a mut arg to another function (build_addr call),
+				// return the loaded value (ptr(ptr(T))) instead of the alloca (ptr(ptr(ptr(T)))).
+				// This forwards the same indirection level instead of adding another layer.
+				if expr.name in b.mut_ptr_params {
+					ptr_typ := b.mod.values[ptr].typ
+					elem_typ := b.mod.type_store.types[ptr_typ].elem_type
+					return b.mod.add_instr(.load, b.cur_block, elem_typ, [ptr])
+				}
+				return ptr
 			}
 			if glob_id := b.find_global(expr.name) {
 				return glob_id

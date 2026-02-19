@@ -1100,6 +1100,13 @@ fn (t &Transformer) resolve_method_call_name(receiver ast.Expr, method_name stri
 	// Verify method exists via env.lookup_method
 	for name in lookup_names {
 		if t.env.lookup_method(name, method_name) != none {
+			// For array types: if the method is NOT on generic 'array' but on
+			// a typed array (e.g., []rune.string()), use the specific C type name
+			// (e.g., Array_rune) instead of generic 'array'.
+			if c_prefix == 'array' && t.env.lookup_method('array', method_name) == none {
+				specific_name := t.type_to_c_name(base_type)
+				return '${specific_name}__${method_name}'
+			}
 			return '${c_prefix}__${method_name}'
 		}
 	}

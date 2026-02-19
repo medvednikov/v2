@@ -980,6 +980,30 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.emit_add_fp_imm(8, data_off)
 			g.store_reg_to_val(8, val_id)
 		}
+		.heap_alloc {
+			// Heap-allocate memory for a struct type.
+			// Result type is ptr(T), compute sizeof(T) and call calloc(1, size).
+			mut alloc_size := 8
+			ha_val := g.mod.values[val_id]
+			if ha_val.typ > 0 && ha_val.typ < g.mod.type_store.types.len {
+				ptr_typ := g.mod.type_store.types[ha_val.typ]
+				if ptr_typ.kind == .ptr_t && ptr_typ.elem_type > 0 {
+					alloc_size = g.type_size(ptr_typ.elem_type)
+					if alloc_size <= 0 {
+						alloc_size = 8
+					}
+				}
+			}
+			// calloc(1, size) → x0 = 1, x1 = size
+			g.emit_mov_imm(0, 1)
+			g.emit_mov_imm(1, u64(alloc_size))
+			sym_idx := g.macho.add_undefined('_calloc')
+			g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_branch26,
+				true)
+			g.emit(asm_bl_reloc())
+			// calloc returns heap pointer in x0
+			g.store_reg_to_val(0, val_id)
+		}
 		.get_element_ptr {
 			// GEP: Base + scaled index (or struct field offset for aggregate pointers)
 			base_reg := g.get_operand_reg(instr.operands[0], 8)
@@ -1448,6 +1472,12 @@ fn (mut g Gen) gen_instr(val_id int) {
 					|| is_indirect_struct_return {
 					// Small struct (≤ 16 bytes) - return in registers x0, x1
 					actual_struct_typ := if is_indirect_struct_return { fn_ret_typ } else { ret_typ }
+
+					// Ensure string literals are materialized on the stack
+					// before we try to load their fields into return registers.
+					if ret_val.kind == .string_literal {
+						g.load_val_to_reg(9, ret_val_id)
+					}
 
 					if is_indirect_struct_return {
 						// Return value is a pointer to struct - load each field via the pointer
@@ -3074,7 +3104,7 @@ fn (mut g Gen) allocate_registers(func mir.Function) {
 			}
 
 			instr := g.mod.instrs[val.index]
-			if instr.op in [.call, .call_indirect, .call_sret] {
+			if instr.op in [.call, .call_indirect, .call_sret, .heap_alloc] {
 				call_indices << instr_idx
 			}
 

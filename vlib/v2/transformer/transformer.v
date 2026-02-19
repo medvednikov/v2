@@ -2800,35 +2800,41 @@ fn (mut t Transformer) shared_mtx_expr(locked_expr ast.Expr) ast.Expr {
 // rlock data { body } => sync__RwMutex_rlock(&data.mtx); body; sync__RwMutex_runlock(&data.mtx);
 fn (mut t Transformer) expand_lock_expr(expr ast.LockExpr) []ast.Stmt {
 	mut result := []ast.Stmt{}
+	// For native backends (arm64/x64), skip lock/unlock calls since there's
+	// no threading support and the sync module is not available.
+	is_native := t.pref != unsafe { nil }
+		&& (t.pref.backend == .arm64 || t.pref.backend == .x64)
 	// Emit lock calls
-	for lock_expr in expr.lock_exprs {
-		result << ast.ExprStmt{
-			expr: ast.CallExpr{
-				lhs:  ast.Ident{
-					name: 'sync__RwMutex_lock'
+	if !is_native {
+		for lock_expr in expr.lock_exprs {
+			result << ast.ExprStmt{
+				expr: ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'sync__RwMutex_lock'
+					}
+					args: [
+						ast.Expr(ast.PrefixExpr{
+							op:   .amp
+							expr: t.shared_mtx_expr(lock_expr)
+						}),
+					]
 				}
-				args: [
-					ast.Expr(ast.PrefixExpr{
-						op:   .amp
-						expr: t.shared_mtx_expr(lock_expr)
-					}),
-				]
 			}
 		}
-	}
-	// Emit rlock calls
-	for rlock_expr in expr.rlock_exprs {
-		result << ast.ExprStmt{
-			expr: ast.CallExpr{
-				lhs:  ast.Ident{
-					name: 'sync__RwMutex_rlock'
+		// Emit rlock calls
+		for rlock_expr in expr.rlock_exprs {
+			result << ast.ExprStmt{
+				expr: ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'sync__RwMutex_rlock'
+					}
+					args: [
+						ast.Expr(ast.PrefixExpr{
+							op:   .amp
+							expr: t.shared_mtx_expr(rlock_expr)
+						}),
+					]
 				}
-				args: [
-					ast.Expr(ast.PrefixExpr{
-						op:   .amp
-						expr: t.shared_mtx_expr(rlock_expr)
-					}),
-				]
 			}
 		}
 	}
@@ -2837,34 +2843,36 @@ fn (mut t Transformer) expand_lock_expr(expr ast.LockExpr) []ast.Stmt {
 		result << stmt
 	}
 	// Emit unlock calls (reverse order of lock)
-	for lock_expr in expr.lock_exprs {
-		result << ast.ExprStmt{
-			expr: ast.CallExpr{
-				lhs:  ast.Ident{
-					name: 'sync__RwMutex_unlock'
+	if !is_native {
+		for lock_expr in expr.lock_exprs {
+			result << ast.ExprStmt{
+				expr: ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'sync__RwMutex_unlock'
+					}
+					args: [
+						ast.Expr(ast.PrefixExpr{
+							op:   .amp
+							expr: t.shared_mtx_expr(lock_expr)
+						}),
+					]
 				}
-				args: [
-					ast.Expr(ast.PrefixExpr{
-						op:   .amp
-						expr: t.shared_mtx_expr(lock_expr)
-					}),
-				]
 			}
 		}
-	}
-	// Emit runlock calls (reverse order of rlock)
-	for rlock_expr in expr.rlock_exprs {
-		result << ast.ExprStmt{
-			expr: ast.CallExpr{
-				lhs:  ast.Ident{
-					name: 'sync__RwMutex_runlock'
+		// Emit runlock calls (reverse order of rlock)
+		for rlock_expr in expr.rlock_exprs {
+			result << ast.ExprStmt{
+				expr: ast.CallExpr{
+					lhs:  ast.Ident{
+						name: 'sync__RwMutex_runlock'
+					}
+					args: [
+						ast.Expr(ast.PrefixExpr{
+							op:   .amp
+							expr: t.shared_mtx_expr(rlock_expr)
+						}),
+					]
 				}
-				args: [
-					ast.Expr(ast.PrefixExpr{
-						op:   .amp
-						expr: t.shared_mtx_expr(rlock_expr)
-					}),
-				]
 			}
 		}
 	}
