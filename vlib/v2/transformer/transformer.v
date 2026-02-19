@@ -3220,6 +3220,17 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 	}
 	mut exprs := []ast.Expr{cap: stmt.exprs.len}
 	for expr in stmt.exprs {
+		// Resolve enum shorthands in return expressions (e.g., return .string → token__Token__string)
+		if t.cur_fn_ret_type_name != '' {
+			if expr is ast.SelectorExpr {
+				sel := expr as ast.SelectorExpr
+				if sel.lhs is ast.EmptyExpr {
+					resolved := t.resolve_enum_shorthand(expr, t.cur_fn_ret_type_name)
+					exprs << t.transform_expr(resolved)
+					continue
+				}
+			}
+		}
 		// If the return expression is a MatchExpr and the return type is a sum type,
 		// set sumtype_return_wrap so transform_match_expr wraps each branch value
 		if expr is ast.MatchExpr && t.cur_fn_ret_type_name != ''

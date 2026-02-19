@@ -69,7 +69,19 @@ pub fn (mut b Builder) build_all(files []ast.File) {
 	b.mod.add_global('g_main_argc', i32_t, false)
 	b.mod.add_global('g_main_argv', ptr_ptr_t, false)
 
-	// Phase 1a: Register core builtin types first (string, array) since other structs depend on them
+	// Phase 1a: Register core builtin types first (string, array) since other structs depend on them.
+	// First, register builtin enums (e.g., ArrayFlags) so their types resolve correctly
+	// when registering struct fields for array/string.
+	for file in files {
+		b.cur_module = file_module_name(file)
+		if b.cur_module == 'builtin' {
+			for stmt in file.stmts {
+				if stmt is ast.EnumDecl {
+					b.register_enum(stmt)
+				}
+			}
+		}
+	}
 	for file in files {
 		b.cur_module = file_module_name(file)
 		if b.cur_module == 'builtin' {
@@ -441,6 +453,7 @@ fn (mut b Builder) register_struct_fields(decl ast.StructDecl) {
 		fields:      field_types
 		field_names: field_names
 	}
+
 }
 
 // register_struct is the legacy combined registration (used for Phase 1a core types).
@@ -486,6 +499,18 @@ fn (mut b Builder) register_enum(decl ast.EnumDecl) {
 			b.enum_values[key] = i
 		}
 	}
+}
+
+// is_enum_type checks if a type name corresponds to a registered enum
+// by looking for any enum_values key that starts with the name followed by '__'.
+fn (b &Builder) is_enum_type(name string) bool {
+	prefix := '${name}__'
+	for key, _ in b.enum_values {
+		if key.starts_with(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 fn (mut b Builder) register_sumtype(decl ast.TypeDecl) {
@@ -782,6 +807,16 @@ fn (mut b Builder) ast_type_to_ssa(typ ast.Expr) TypeID {
 						}
 					}
 				}
+				// Try looking up in the referenced module's scope via type environment
+				// (e.g., token.Token where Token is an enum, not a struct)
+				if b.env != unsafe { nil } {
+					mod_name_v := mod_name.replace('.', '_')
+					if scope := b.env.get_scope(mod_name_v) {
+						if obj := scope.lookup_parent(typ.rhs.name, 0) {
+							return b.type_to_ssa(obj.typ())
+						}
+					}
+				}
 			}
 			return b.ident_type_to_ssa(typ.rhs.name)
 		}
@@ -940,6 +975,9 @@ fn (mut b Builder) ident_type_to_ssa(name string) TypeID {
 				qualified := '${b.cur_module}__${name}'
 				if qualified in b.struct_types {
 					b.struct_types[qualified]
+				} else if b.is_enum_type(name) || b.is_enum_type(qualified) {
+					// Enum types are always int (i32) in V
+					b.mod.type_store.get_int(32)
 				} else if b.env != unsafe { nil } {
 					// Use the type checker environment to resolve aliases and other types
 					if scope := b.env.get_scope(b.cur_module) {
@@ -2011,6 +2049,14 @@ fn (mut b Builder) build_ident(ident ast.Ident) ValueID {
 		val := b.enum_values[ident.name]
 		return b.mod.get_or_add_const(b.mod.type_store.get_int(32), val.str())
 	}
+	// Try enum value with module prefix (e.g., Token__key_fn → token__Token__key_fn)
+	{
+		enum_qualified := '${b.cur_module}__${ident.name}'
+		if enum_qualified in b.enum_values {
+			val := b.enum_values[enum_qualified]
+			return b.mod.get_or_add_const(b.mod.type_store.get_int(32), val.str())
+		}
+	}
 	// Try as function reference
 	if ident.name in b.fn_index {
 		return b.get_or_create_fn_ref(ident.name, 0)
@@ -2775,11 +2821,30 @@ fn (mut b Builder) build_selector(expr ast.SelectorExpr) ValueID {
 	if expr.lhs is ast.EmptyExpr || (expr.lhs is ast.Ident && expr.lhs.name == '') {
 		// Enum shorthand — try to look up a resolved name
 		field_name := expr.rhs.name
-		// Try common enum patterns
+		// Collect all matching enum values (not just the first)
+		suffix := '__${field_name}'
+		mut match_keys := []string{}
+		mut match_vals := []int{}
 		for key, val in b.enum_values {
-			if key.ends_with('__${field_name}') {
-				return b.mod.get_or_add_const(b.mod.type_store.get_int(32), val.str())
+			if key.ends_with(suffix) {
+				match_keys << key
+				match_vals << val
 			}
+		}
+		if match_keys.len == 1 {
+			return b.mod.get_or_add_const(b.mod.type_store.get_int(32), match_vals[0].str())
+		}
+		if match_keys.len > 1 {
+			// Disambiguate: prefer enum from current module
+			if b.cur_module != '' {
+				for i, mk in match_keys {
+					if mk.starts_with('${b.cur_module}__') {
+						return b.mod.get_or_add_const(b.mod.type_store.get_int(32), match_vals[i].str())
+					}
+				}
+			}
+			// Fallback: use the first match
+			return b.mod.get_or_add_const(b.mod.type_store.get_int(32), match_vals[0].str())
 		}
 		return b.mod.get_or_add_const(b.mod.type_store.get_int(32), '0')
 	}

@@ -545,9 +545,24 @@ fn (mut t Transformer) transform_fn_decl(decl ast.FnDecl) ast.FnDecl {
 	}
 
 	// Set current function return type for sum type wrapping in returns
+	// and enum shorthand resolution
 	old_fn_ret_type_name := t.cur_fn_ret_type_name
 	if decl.typ.return_type is ast.Ident {
-		t.cur_fn_ret_type_name = decl.typ.return_type.name
+		ret_name := decl.typ.return_type.name
+		// Qualify with module prefix for enum shorthand resolution
+		// (e.g., Token → token__Token so resolve_enum_shorthand produces token__Token__member)
+		if t.cur_module != '' && t.cur_module != 'main' && t.cur_module != 'builtin'
+			&& !ret_name.contains('__') {
+			t.cur_fn_ret_type_name = '${t.cur_module}__${ret_name}'
+		} else {
+			t.cur_fn_ret_type_name = ret_name
+		}
+	} else if decl.typ.return_type is ast.SelectorExpr {
+		// Handle module-qualified return types like token.Token
+		sel := decl.typ.return_type as ast.SelectorExpr
+		if sel.lhs is ast.Ident {
+			t.cur_fn_ret_type_name = '${sel.lhs.name}__${sel.rhs.name}'
+		}
 	} else {
 		t.cur_fn_ret_type_name = t.extract_return_sumtype_name(decl.typ.return_type)
 	}
