@@ -245,10 +245,15 @@ fn (mut g Gen) gen_func(func mir.Function) {
 	}
 
 	// Allocate stack slots for used string_literal values
+	// String struct: { str: &u8(8), len: int(4), is_lit: int(4) } = 16 bytes
 	for str_lit_id, _ in used_string_literals {
-		// String struct needs 24 bytes (str ptr + len + is_lit)
+		str_val := g.mod.values[str_lit_id]
+		mut str_struct_sz := g.type_size(str_val.typ)
+		if str_struct_sz <= 0 {
+			str_struct_sz = 16
+		}
 		slot_offset = (slot_offset + 15) & ~0xF
-		slot_offset += 24
+		slot_offset += str_struct_sz
 		g.stack_map[str_lit_id] = -slot_offset
 		// Keep subsequent scalar slots below the aggregate base.
 		slot_offset += 8
@@ -290,11 +295,15 @@ fn (mut g Gen) gen_func(func mir.Function) {
 			}
 
 			if instr.op == .inline_string_init {
-				// String struct needs 24 bytes (str ptr + len + is_lit)
+				// String struct: { str: &u8(8), len: int(4), is_lit: int(4) } = 16 bytes
 				// Plus 8 bytes for the result pointer, stored separately
 				// so that store_reg_to_val doesn't overwrite field 0.
+				mut str_struct_size := g.type_size(instr.typ)
+				if str_struct_size <= 0 {
+					str_struct_size = 16
+				}
 				slot_offset = (slot_offset + 15) & ~0xF
-				slot_offset += 24 // struct data
+				slot_offset += str_struct_size // struct data
 				slot_offset += 8 // pointer slot (separate from struct)
 				g.stack_map[val_id] = -slot_offset
 				continue
@@ -332,12 +341,31 @@ fn (mut g Gen) gen_func(func mir.Function) {
 			}
 
 			if instr.op == .call {
-				// Check if call returns a tuple
-				result_typ := g.mod.type_store.types[val.typ]
-				if result_typ.kind == .struct_t && result_typ.fields.len > 1 {
-					mut tuple_size := g.type_size(val.typ)
+				// Check if call returns a struct (directly from value type or
+				// from callee signature when value type fell back to i64).
+				mut call_ret_typ := g.mod.type_store.types[val.typ]
+				mut call_ret_typ_id := val.typ
+				if call_ret_typ.kind != .struct_t && instr.operands.len > 0 {
+					callee_id := instr.operands[0]
+					if callee_id > 0 && callee_id < g.mod.values.len {
+						cname := g.mod.values[callee_id].name
+						for f in g.mod.funcs {
+							if f.name == cname && f.typ > 0
+								&& f.typ < g.mod.type_store.types.len {
+								callee_ret := g.mod.type_store.types[f.typ]
+								if callee_ret.kind == .struct_t {
+									call_ret_typ = callee_ret
+									call_ret_typ_id = f.typ
+								}
+								break
+							}
+						}
+					}
+				}
+				if call_ret_typ.kind == .struct_t && call_ret_typ.fields.len > 1 {
+					mut tuple_size := g.type_size(call_ret_typ_id)
 					if tuple_size <= 0 {
-						tuple_size = result_typ.fields.len * 8
+						tuple_size = call_ret_typ.fields.len * 8
 					}
 					slot_offset = (slot_offset + 15) & ~0xF
 					slot_offset += tuple_size
@@ -895,15 +923,16 @@ fn (mut g Gen) gen_instr(val_id int) {
 				}
 			} else if val_typ.kind == .struct_t && val_typ.fields.len > 1 && val_size <= 16
 				&& !dst_elem_is_ptrlike {
-				// Small multi-field struct: copy all fields by value.
-				num_fields := val_typ.fields.len
+				// Small multi-field struct: copy by size-based chunks (not field count).
+				// E.g., string = { ptr(8), i32(4), i32(4) } = 16 bytes = 2 chunks.
+				num_chunks := (val_size + 7) / 8
 				if !src_has_storage {
 					g.emit_mov_reg(10, 31)
-					for i in 0 .. num_fields {
+					for i in 0 .. num_chunks {
 						g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
 					}
 				} else if src_off := g.stack_map[src_id] {
-					for i in 0 .. num_fields {
+					for i in 0 .. num_chunks {
 						g.emit_ldr_reg_offset(10, 29, src_off + i * 8)
 						g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
 					}
@@ -1105,9 +1134,24 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 				num_args := instr.operands.len - 1
 
-				// Check if return type is a large struct (> 16 bytes) requiring indirect return
-				result_typ := g.mod.type_store.types[g.mod.values[val_id].typ]
-				result_size := g.type_size(g.mod.values[val_id].typ)
+				// Determine the effective return type. Prefer the call value's type,
+				// but fall back to the callee's registered return type if the value
+				// has a non-struct type (e.g., i64 from type inference fallback).
+				mut effective_ret_typ_id := g.mod.values[val_id].typ
+				mut result_typ := g.mod.type_store.types[effective_ret_typ_id]
+				if result_typ.kind != .struct_t {
+					for f in g.mod.funcs {
+						if f.name == fn_name && f.typ > 0 && f.typ < g.mod.type_store.types.len {
+							callee_ret := g.mod.type_store.types[f.typ]
+							if callee_ret.kind == .struct_t {
+								effective_ret_typ_id = f.typ
+								result_typ = callee_ret
+							}
+							break
+						}
+					}
+				}
+				result_size := g.type_size(effective_ret_typ_id)
 				is_indirect_return := result_typ.kind == .struct_t && result_size > 16
 
 				// For indirect struct returns, set x8 to point to result storage BEFORE the call
@@ -1232,14 +1276,13 @@ fn (mut g Gen) gen_instr(val_id int) {
 				if result_typ.kind != .void_t {
 					// For indirect returns (large structs), result is already at x8 location
 					// For small structs (≤ 16 bytes), values are in x0, x1
-					if result_typ.kind == .struct_t && result_typ.fields.len > 1 {
+					if result_typ.kind == .struct_t && result_size > 8 {
 						if !is_indirect_return {
-							// Small struct: store return registers into the tuple's stack location
+							// Small struct (9-16 bytes): store x0 and x1 into the stack slot
 							result_offset := g.stack_map[val_id]
-							for i in 0 .. result_typ.fields.len {
-								if i < 8 {
-									g.emit_str_reg_offset(i, 29, result_offset + i * 8)
-								}
+							num_ret_regs := (result_size + 7) / 8
+							for i in 0 .. num_ret_regs {
+								g.emit_str_reg_offset(i, 29, result_offset + i * 8)
 							}
 						}
 						// For indirect return, result is already written by callee to x8
@@ -1677,24 +1720,6 @@ fn (mut g Gen) gen_instr(val_id int) {
 			dest_id := instr.operands[0]
 			src_id := instr.operands[1]
 			mut handled_aggregate_copy := false
-			// Diagnostic: check if assign involves multi-word dest
-			if dest_id > 0 && dest_id < g.mod.values.len {
-				diag_dt := g.mod.values[dest_id].typ
-				if diag_dt > 0 && diag_dt < g.mod.type_store.types.len {
-					diag_dsz := g.type_size(diag_dt)
-					if diag_dsz > 8 {
-						src_kind_str := if src_id > 0 && src_id < g.mod.values.len {
-							'kind=${g.mod.values[src_id].kind} typ_kind=${g.mod.type_store.types[g.mod.values[src_id].typ].kind} name="${g.mod.values[src_id].name}"'
-						} else {
-							'invalid_src'
-						}
-						dest_kind_str := 'kind=${g.mod.values[dest_id].kind} typ_kind=${g.mod.type_store.types[diag_dt].kind} name="${g.mod.values[dest_id].name}"'
-						has_src_stack := src_id in g.stack_map
-						has_dest_stack := dest_id in g.stack_map
-						eprintln('DIAG ASSIGN multi: dest[${dest_id}]={${dest_kind_str} sz=${diag_dsz} stk=${has_dest_stack}} src[${src_id}]={${src_kind_str} stk=${has_src_stack}} fn=${g.cur_func_name}')
-					}
-				}
-			}
 			if dest_id > 0 && dest_id < g.mod.values.len {
 				dest_typ_id := g.mod.values[dest_id].typ
 				if dest_typ_id > 0 && dest_typ_id < g.mod.type_store.types.len {
@@ -1794,16 +1819,6 @@ fn (mut g Gen) gen_instr(val_id int) {
 					}
 				}
 			}
-			// Check if this single-reg fallback is for a multi-word dest
-			if dest_id > 0 && dest_id < g.mod.values.len {
-				fb_dt := g.mod.values[dest_id].typ
-				if fb_dt > 0 && fb_dt < g.mod.type_store.types.len {
-					fb_dsz := g.type_size(fb_dt)
-					if fb_dsz > 8 {
-						eprintln('WARN ASSIGN single-reg fallback for multi-word dest! dest_sz=${fb_dsz} fn=${g.cur_func_name}')
-					}
-				}
-			}
 			g.load_val_to_reg(8, src_id)
 			g.store_reg_to_val(8, dest_id)
 		}
@@ -1812,30 +1827,45 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.emit(asm_udf())
 		}
 		.inline_string_init {
-			// Create string struct by value: { str, len, is_lit }
+			// Create string struct by value: { str: &u8, len: int, is_lit: int }
 			// operands: [str_ptr, len, is_lit]
-			// This instruction creates a string struct on the stack
-			// The result is a pointer to the struct
+			// The result is a pointer to the struct on the stack.
+			// String struct layout (16 bytes): ptr(8) + i32(4) + i32(4)
 			str_ptr_id := instr.operands[0]
 			len_id := instr.operands[1]
 			is_lit_id := instr.operands[2]
 
 			// stack_map[val_id] points to the 8-byte pointer slot.
-			// The 24-byte struct data lives right above it (at +8).
+			// The struct data lives right above it (at +8).
 			base_offset := g.stack_map[val_id]
 			struct_offset := base_offset + 8
 
-			// Store str field (offset 0)
+			// Use actual struct field offsets from the string type
+			str_type := g.mod.type_store.types[instr.typ]
+			mut len_off := 8
+			mut is_lit_off := 12
+			mut len_size := 4
+			mut is_lit_size := 4
+			if str_type.kind == .struct_t && str_type.fields.len >= 3 {
+				len_off = g.struct_field_offset_bytes(instr.typ, 1)
+				is_lit_off = g.struct_field_offset_bytes(instr.typ, 2)
+				len_size = g.type_size(str_type.fields[1])
+				is_lit_size = g.type_size(str_type.fields[2])
+				if len_size <= 0 { len_size = 4 }
+				if is_lit_size <= 0 { is_lit_size = 4 }
+			}
+
+			// Store str field (offset 0, 8 bytes)
 			g.load_val_to_reg(8, str_ptr_id)
 			g.emit_str_reg_offset(8, 29, struct_offset)
 
-			// Store len field (offset 8)
+			// Store len field (proper offset and size)
 			g.load_val_to_reg(9, len_id)
-			g.emit_str_reg_offset(9, 29, struct_offset + 8)
+			g.emit_str_reg_offset_sized(9, 29, struct_offset + len_off, len_size)
 
-			// Store is_lit field (offset 16)
+			// Store is_lit field (proper offset and size)
 			g.load_val_to_reg(10, is_lit_id)
-			g.emit_str_reg_offset(10, 29, struct_offset + 16)
+			g.emit_str_reg_offset_sized(10, 29, struct_offset + is_lit_off, is_lit_size)
 
 			// Return pointer to struct (stored at base_offset, separate from struct data)
 			g.emit_add_fp_imm(8, struct_offset) // x8 = fp + struct_offset
@@ -1851,12 +1881,40 @@ fn (mut g Gen) gen_instr(val_id int) {
 			mut tuple_is_large_agg := false
 			mut field_byte_off := idx * 8
 			mut field_elem_size := 8
-			if tuple_val.typ > 0 && tuple_val.typ < g.mod.type_store.types.len {
-				tuple_typ := g.mod.type_store.types[tuple_val.typ]
-				tuple_is_large_agg = g.type_size(tuple_val.typ) > 16
+			// Determine the struct type of the source tuple.
+			// If the tuple value's own type is not a struct (e.g., i64 from type
+			// inference fallback), try to recover the struct type from the callee's
+			// return type (for call results) or from other context.
+			mut effective_tuple_typ_id := tuple_val.typ
+			if effective_tuple_typ_id > 0 && effective_tuple_typ_id < g.mod.type_store.types.len {
+				tt := g.mod.type_store.types[effective_tuple_typ_id]
+				if tt.kind != .struct_t && tuple_val.kind == .instruction {
+					// Check if the source is a call/phi/assign — look up callee ret type
+					src_instr := g.mod.instrs[tuple_val.index]
+					if src_instr.op == .call && src_instr.operands.len > 0 {
+						callee_id := src_instr.operands[0]
+						if callee_id > 0 && callee_id < g.mod.values.len {
+							cname := g.mod.values[callee_id].name
+							for f in g.mod.funcs {
+								if f.name == cname && f.typ > 0
+									&& f.typ < g.mod.type_store.types.len {
+									if g.mod.type_store.types[f.typ].kind == .struct_t {
+										effective_tuple_typ_id = f.typ
+									}
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+			if effective_tuple_typ_id > 0
+				&& effective_tuple_typ_id < g.mod.type_store.types.len {
+				tuple_typ := g.mod.type_store.types[effective_tuple_typ_id]
+				tuple_is_large_agg = g.type_size(effective_tuple_typ_id) > 16
 					&& tuple_typ.kind in [.struct_t, .array_t]
 				if tuple_typ.kind == .struct_t && idx >= 0 {
-					field_byte_off = g.struct_field_offset_bytes(tuple_val.typ, idx)
+					field_byte_off = g.struct_field_offset_bytes(effective_tuple_typ_id, idx)
 					if idx < tuple_typ.fields.len {
 						field_elem_size = g.type_size(tuple_typ.fields[idx])
 						if field_elem_size <= 0 {
@@ -1864,8 +1922,18 @@ fn (mut g Gen) gen_instr(val_id int) {
 						}
 					}
 				}
-			} else {
-				// typ out of range — use default field_byte_off and field_elem_size
+			}
+			// Final safety: clamp field_elem_size to the extractvalue result type
+			// to avoid reading past packed fields.
+			result_type_id := g.mod.values[val_id].typ
+			if result_type_id > 0 && result_type_id < g.mod.type_store.types.len {
+				rt := g.mod.type_store.types[result_type_id]
+				if rt.kind == .int_t && rt.width > 0 {
+					result_bytes := (rt.width + 7) / 8
+					if result_bytes < field_elem_size {
+						field_elem_size = result_bytes
+					}
+				}
 			}
 
 			// If the tuple source is a string_literal (e.g. after mem2reg
@@ -1985,19 +2053,6 @@ fn (mut g Gen) gen_instr(val_id int) {
 			struct_size := g.type_size(instr.typ)
 			num_chunks := if struct_size > 0 { (struct_size + 7) / 8 } else { 1 }
 
-			// Diagnostic: check sum type struct_init for zero _data
-			if struct_typ.field_names.len == 2 && struct_typ.field_names[0] == '_tag'
-				&& struct_typ.field_names[1] == '_data' && instr.operands.len >= 2 {
-				tag_id := instr.operands[0]
-				data_id := instr.operands[1]
-				tag_val := g.mod.values[tag_id]
-				data_val := g.mod.values[data_id]
-				if tag_val.kind == .constant && tag_val.name != '0' && data_val.kind == .constant
-					&& data_val.name == '0' {
-					eprintln('DIAG: struct_init sum type with _tag=${tag_val.name} but _data=0 (const zero)! fn=${g.cur_func_name} val_id=${val_id} data_id=${data_id}')
-				}
-			}
-
 			// Zero-initialize the entire struct first
 			g.emit_mov_reg(9, 31) // xzr
 			for i in 0 .. num_chunks {
@@ -2030,7 +2085,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 				if field_size <= 8 {
 					g.load_val_to_reg(8, field_id)
-					g.emit_str_reg_offset(8, 29, result_offset + field_off)
+					g.emit_str_reg_offset_sized(8, 29, result_offset + field_off, field_size)
 				} else {
 					// Multi-word field (nested struct)
 					// Ensure string_literal values are materialized before reading from stack
@@ -2137,7 +2192,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			}
 			if elem_size <= 8 {
 				g.load_val_to_reg(8, elem_id)
-				g.emit_str_reg_offset(8, 29, result_offset + elem_off)
+				g.emit_str_reg_offset_sized(8, 29, result_offset + elem_off, elem_size)
 			} else {
 				elem_chunks := (elem_size + 7) / 8
 				mut copied_elem := false
@@ -2276,11 +2331,56 @@ fn (g &Gen) call_arg_reg_count(val_id int, arg_idx int, instr mir.Instruction) i
 			}
 		}
 	}
+	// Fallback: check the callee's parameter type. If the argument value has
+	// a non-struct type (e.g., i64 from phi/constant) but the callee expects
+	// a struct parameter, use the parameter type to determine register count.
+	if param_typ_id := g.call_param_type(instr, arg_idx) {
+		if param_typ_id > 0 && param_typ_id < g.mod.type_store.types.len {
+			param_typ := g.mod.type_store.types[param_typ_id]
+			if param_typ.kind == .struct_t {
+				size := g.type_size(param_typ_id)
+				if size > 8 && size <= 16 {
+					return 2
+				}
+			}
+		}
+	}
 	return 1
 }
 
 // Loads a multi-register struct argument (9-16 bytes) into consecutive regs.
 fn (mut g Gen) load_struct_arg_to_regs(start_reg int, val_id int) {
+	if val_id <= 0 || val_id >= g.mod.values.len {
+		// Invalid value - zero both registers
+		g.emit_mov_reg(start_reg, 31) // xzr
+		g.emit_mov_reg(start_reg + 1, 31)
+		return
+	}
+	val := g.mod.values[val_id]
+	// Handle constants (e.g., constant 0 used as empty string/struct)
+	if val.kind == .constant {
+		// Load the constant value into the first register, zero the second
+		g.load_val_to_reg(start_reg, val_id)
+		g.emit_mov_reg(start_reg + 1, 31) // xzr
+		return
+	}
+	// Handle non-struct values being passed as struct args (type mismatch from phi/bitcast).
+	if val.typ > 0 && val.typ < g.mod.type_store.types.len {
+		val_typ := g.mod.type_store.types[val.typ]
+		if val_typ.kind == .ptr_t {
+			// Pointer to struct — load through the pointer
+			g.load_val_to_reg(9, val_id)
+			g.emit(asm_ldr_imm(Reg(start_reg), Reg(9), 0))
+			g.emit(asm_ldr_imm(Reg(start_reg + 1), Reg(9), 1))
+			return
+		}
+		if val_typ.kind != .struct_t {
+			// Non-struct scalar (e.g., i64 from phi) — load into first reg, zero second
+			g.load_val_to_reg(start_reg, val_id)
+			g.emit_mov_reg(start_reg + 1, 31) // xzr
+			return
+		}
+	}
 	// Get the stack address of the struct value and load 2 words.
 	g.load_address_of_val_to_reg(9, val_id)
 	// Load first word to start_reg
@@ -2516,8 +2616,23 @@ fn (mut g Gen) load_val_to_reg(reg int, val_id int) {
 		// String literal: create string struct { str, len, is_lit } on stack
 		// val.name contains the string content, val.index contains the length
 
-		// Get stack slot for this string struct (24 bytes: str ptr + len + is_lit)
+		// Get stack slot for this string struct: { str: &u8(8), len: int(4), is_lit: int(4) }
 		base_offset := g.stack_map[val_id]
+
+		// Compute actual field offsets and sizes from the string struct type
+		str_typ := g.mod.type_store.types[val.typ]
+		mut len_off := 8
+		mut is_lit_off := 12
+		mut len_sz := 4
+		mut is_lit_sz := 4
+		if str_typ.kind == .struct_t && str_typ.fields.len >= 3 {
+			len_off = g.struct_field_offset_bytes(val.typ, 1)
+			is_lit_off = g.struct_field_offset_bytes(val.typ, 2)
+			len_sz = g.type_size(str_typ.fields[1])
+			is_lit_sz = g.type_size(str_typ.fields[2])
+			if len_sz <= 0 { len_sz = 4 }
+			if is_lit_sz <= 0 { is_lit_sz = 4 }
+		}
 
 		// Check if we've already materialized this string literal
 		if _ := g.string_literal_offsets[val_id] {
@@ -2536,7 +2651,7 @@ fn (mut g Gen) load_val_to_reg(reg int, val_id int) {
 			// Track that we've materialized this string literal
 			g.string_literal_offsets[val_id] = str_offset2
 
-			// Store str pointer (offset 0): load address of string data
+			// Store str pointer (field 0, offset 0, 8 bytes)
 			sym_idx := g.macho.add_symbol('L_str_${str_offset2}', u64(str_offset2), false,
 				2)
 			g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_page21, true)
@@ -2545,13 +2660,13 @@ fn (mut g Gen) load_val_to_reg(reg int, val_id int) {
 			g.emit(asm_add_pageoff(Reg(reg)))
 			g.emit_str_reg_offset(reg, 29, base_offset)
 
-			// Store len (offset 8)
+			// Store len field (proper offset and size)
 			g.emit_mov_imm64(9, str_len)
-			g.emit_str_reg_offset(9, 29, base_offset + 8)
+			g.emit_str_reg_offset_sized(9, 29, base_offset + len_off, len_sz)
 
-			// Store is_lit = 1 (offset 16)
+			// Store is_lit field (proper offset and size)
 			g.emit_mov_imm64(10, 1)
-			g.emit_str_reg_offset(10, 29, base_offset + 16)
+			g.emit_str_reg_offset_sized(10, 29, base_offset + is_lit_off, is_lit_sz)
 
 			// Load pointer to string struct into reg
 			g.emit_add_fp_imm(reg, base_offset)

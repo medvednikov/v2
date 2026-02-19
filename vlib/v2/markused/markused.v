@@ -7,6 +7,26 @@ module markused
 import v2.ast
 import v2.types
 
+// sumtype_has_valid_data checks if a sum type value has a valid (non-null) _data pointer.
+// For the arm64 native backend, sum type values may have _data=0 due to codegen limitations.
+fn sumtype_has_valid_data(ptr voidptr) bool {
+	raw := unsafe { &u64(ptr) }
+	tag := unsafe { raw[0] }
+	data := unsafe { raw[1] }
+	if tag != 0 && tag != 8 && data == 0 {
+		return false
+	}
+	return true
+}
+
+fn expr_has_valid_data(expr ast.Expr) bool {
+	return sumtype_has_valid_data(&expr)
+}
+
+fn stmt_has_valid_data(stmt ast.Stmt) bool {
+	return sumtype_has_valid_data(&stmt)
+}
+
 const builtin_cast_type_names = [
 	'bool',
 	'byte',
@@ -121,6 +141,9 @@ fn (mut w Walker) collect_defs() {
 			}
 		}
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			match stmt {
 				ast.StructDecl {
 					w.add_type_name(mod_name, stmt.name)
@@ -648,6 +671,9 @@ fn (mut w Walker) mark_ierror_wrapper_dependencies(name string, mod_name string)
 }
 
 fn (w &Walker) interface_name_from_expr(expr ast.Expr, mod_name string) string {
+	if !expr_has_valid_data(expr) {
+		return ''
+	}
 	match expr {
 		ast.Ident {
 			name := sanitize_receiver_name(expr.name)
@@ -708,6 +734,9 @@ fn (mut w Walker) mark_interface_conversion_methods(target_expr ast.Expr, value_
 
 fn (w &Walker) receiver_candidates_for_expr(expr ast.Expr, mod_name string) []string {
 	mut out := []string{}
+	if !expr_has_valid_data(expr) {
+		return out
+	}
 	pos := expr.pos()
 	if w.env != unsafe { nil } && pos.is_valid() {
 		if receiver_type := w.env.get_expr_type(pos.id) {
@@ -821,6 +850,9 @@ fn (mut w Walker) walk_stmts(stmts []ast.Stmt, mod_name string) {
 }
 
 fn (mut w Walker) walk_stmt(stmt ast.Stmt, mod_name string) {
+	if !stmt_has_valid_data(stmt) {
+		return
+	}
 	match stmt {
 		ast.AssertStmt {
 			w.walk_expr(stmt.expr, mod_name)
@@ -905,6 +937,9 @@ fn (mut w Walker) walk_stmt(stmt ast.Stmt, mod_name string) {
 }
 
 fn (mut w Walker) walk_expr(expr ast.Expr, mod_name string) {
+	if !expr_has_valid_data(expr) {
+		return
+	}
 	match expr {
 		ast.ArrayInitExpr {
 			w.walk_expr(expr.typ, mod_name)

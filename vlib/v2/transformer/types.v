@@ -738,6 +738,9 @@ fn (t &Transformer) type_names_match(actual string, target string) bool {
 }
 
 fn (t &Transformer) expr_is_casted_to_type(expr ast.Expr, target string) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	match expr {
 		ast.ParenExpr {
 			return t.expr_is_casted_to_type(expr.expr, target)
@@ -770,6 +773,9 @@ fn (t &Transformer) expr_is_casted_to_type(expr ast.Expr, target string) bool {
 }
 
 fn (t &Transformer) resolve_expr_with_expected_type(expr ast.Expr, expected types.Type) ast.Expr {
+	if !expr_has_valid_data(expr) {
+		return expr
+	}
 	base := t.unwrap_alias_and_pointer_type(expected)
 	match expr {
 		ast.ArrayInitExpr {
@@ -1399,6 +1405,9 @@ fn (t &Transformer) get_module_scope(module_name string) ?&types.Scope {
 
 // get_expr_type returns the types.Type for an expression by looking it up in the environment
 fn (t &Transformer) get_expr_type(expr ast.Expr) ?types.Type {
+	if !expr_has_valid_data(expr) {
+		return none
+	}
 	pos := expr.pos()
 	if pos.is_valid() {
 		if typ := t.env.get_expr_type(pos.id) {

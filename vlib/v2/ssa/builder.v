@@ -33,6 +33,10 @@ mut:
 	// Track mut pointer params (e.g., mut buf &u8) that need extra dereference
 	// when used in expressions (buf is ptr(ptr(i8)), but user sees buf as &u8)
 	mut_ptr_params map[string]bool
+	// Track array variable element types for correct indexing.
+	// Maps variable name -> SSA TypeID of the element type.
+	// Needed when type checker positions are unavailable (transformer-generated code).
+	array_var_elem_types map[string]TypeID
 }
 
 struct LoopInfo {
@@ -465,6 +469,12 @@ fn (mut b Builder) register_struct_fields(decl ast.StructDecl) {
 		field_names: field_names
 	}
 
+	if name == 'ast__File' || name == 'builder__Builder' {
+		eprintln('[ssa] ${name} struct: type_id=${type_id} fields=${field_types.len} size=${b.type_byte_size(type_id)}')
+		for fi2, ft2 in field_types {
+			eprintln('[ssa]   field[${fi2}] ${field_names[fi2]}: type=${ft2} size=${b.type_byte_size(ft2)}')
+		}
+	}
 }
 
 // register_struct is the legacy combined registration (used for Phase 1a core types).
@@ -558,7 +568,7 @@ fn (mut b Builder) register_consts_and_globals(file ast.File) {
 					} else {
 						field.name
 					}
-					const_type := b.expr_type(field.value)
+					mut const_type := b.expr_type(field.value)
 					// Check if this is a string constant - store for inline resolution
 					str_val := b.try_eval_const_string(field.value)
 					if str_val.len > 0 {
@@ -566,9 +576,7 @@ fn (mut b Builder) register_consts_and_globals(file ast.File) {
 						b.string_const_values[field.name] = str_val
 					}
 					initial_value := b.try_eval_const_int(field.value)
-					b.mod.add_global_with_value(const_name, const_type, true, initial_value)
-					// Also store in const_values map for inline resolution.
-					// Skip sum type constants (e.g., empty_expr/empty_stmt) which are
+					// Check for sum type constants (e.g., empty_expr/empty_stmt) which are
 					// InitExpr{_tag: N, _data: ...} — these are multi-word values that
 					// cannot be inlined as a single i64. They must be loaded from globals.
 					mut is_sumtype_const := false
@@ -579,7 +587,16 @@ fn (mut b Builder) register_consts_and_globals(file ast.File) {
 								break
 							}
 						}
+						// Fix: resolve the actual struct type for sum type constants
+						// so that loads get the correct multi-word type instead of i64
+						if is_sumtype_const {
+							resolved := b.ast_type_to_ssa(field.value.typ)
+							if resolved != 0 && resolved != b.mod.type_store.get_int(64) {
+								const_type = resolved
+							}
+						}
 					}
+					b.mod.add_global_with_value(const_name, const_type, true, initial_value)
 					if !is_sumtype_const && (initial_value != 0 || b.is_zero_literal(field.value)) {
 						b.const_values[const_name] = initial_value
 						// Also store without module prefix for transformer-generated references
@@ -620,6 +637,12 @@ fn (mut b Builder) try_eval_const_int(expr ast.Expr) i64 {
 			}
 			if expr.kind == .key_false {
 				return 0
+			}
+			if expr.kind == .char {
+				// Character/rune literal, e.g. `/` → 47
+				if expr.value.len > 0 {
+					return i64(expr.value[0])
+				}
 			}
 		}
 		ast.InfixExpr {
@@ -878,6 +901,24 @@ fn (mut b Builder) ast_type_node_to_ssa(typ ast.Type) TypeID {
 			elem_type := b.ast_type_to_ssa(typ.elem_type)
 			arr_len := if typ.len is ast.BasicLiteral {
 				typ.len.value.int()
+			} else if typ.len is ast.Ident {
+				// Resolve compile-time constant (e.g., kmp_stack_buffer_size)
+				name := (typ.len as ast.Ident).name
+				if name in b.const_values {
+					int(b.const_values[name])
+				} else {
+					qualified := '${b.cur_module}__${name}'
+					if qualified in b.const_values {
+						int(b.const_values[qualified])
+					} else {
+						builtin_name := 'builtin__${name}'
+						if builtin_name in b.const_values {
+							int(b.const_values[builtin_name])
+						} else {
+							0
+						}
+					}
+				}
 			} else {
 				0
 			}
@@ -1208,6 +1249,7 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 	b.vars = map[string]ValueID{}
 	b.mut_ptr_params = map[string]bool{}
 	b.label_blocks = map[string]BlockID{}
+	b.array_var_elem_types = map[string]TypeID{}
 
 	// Clear params (they were registered in register_fn_sig for forward decls,
 	// but we need to re-create them here with proper alloca bindings)
@@ -1258,6 +1300,9 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 			[]ValueID{})
 		b.mod.add_instr(.store, entry, 0, [param_val, alloca])
 		b.vars[param.name] = alloca
+		// Track array element types for correct indexing when type checker
+		// positions are unavailable (e.g., transformer-generated for-in loops).
+		b.try_record_array_elem_type(param.name, param.typ)
 		// Track mut pointer params that need extra dereference in build_ident.
 		// e.g., mut buf &u8 → actual_type is ptr(ptr(i8)), but user sees buf as &u8.
 		if param.is_mut && param_type < b.mod.type_store.types.len
@@ -1442,6 +1487,8 @@ fn (mut b Builder) build_assign(stmt ast.AssignStmt) {
 					[]ValueID{})
 				b.mod.add_instr(.store, b.cur_block, 0, [rhs_val, alloca])
 				b.vars[ident.name] = alloca
+				// Track array element types for correct indexing
+				b.try_record_array_elem_type_from_rhs(ident.name, rhs)
 			} else if ident.name == '_' && stmt.op == .assign {
 				// Discard for plain assignment only; compound assignments (+=, etc.)
 				// must still execute (e.g. for loop counter `_ += 1`).
@@ -2457,6 +2504,9 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 			ret_type = fn_ret
 		}
 	}
+	if fn_name.contains('parse_file') {
+		eprintln('[ssa] build_call: ${fn_name} ret_type=${ret_type} size=${b.type_byte_size(ret_type)}')
+	}
 
 	// Check if this is a function pointer field call (e.g., m.hash_fn(pkey))
 	// rather than a method call. If the selector field matches a struct field name
@@ -3104,6 +3154,63 @@ fn (mut b Builder) unwrap_to_struct(t types.Type) types.Struct {
 	}
 }
 
+// try_record_array_elem_type records the element type of an array variable
+// so that build_index can use it when type checker positions are unavailable.
+fn (mut b Builder) try_record_array_elem_type(name string, typ ast.Expr) {
+	// Check if the type expression is an array type
+	if typ is ast.Type {
+		if typ is ast.ArrayType {
+			elem_type := b.ast_type_to_ssa(typ.elem_type)
+			i64_t := b.mod.type_store.get_int(64)
+			if elem_type != 0 && elem_type != i64_t {
+				b.array_var_elem_types[name] = elem_type
+				elem_size := b.type_byte_size(elem_type)
+				eprintln('[ssa] recorded array elem type: ${name} -> type_id=${elem_type} size=${elem_size}')
+			}
+		}
+	}
+}
+
+// try_record_array_elem_type_from_rhs records the element type of an array variable
+// by inspecting the RHS expression of a declaration.
+fn (mut b Builder) try_record_array_elem_type_from_rhs(name string, rhs ast.Expr) {
+	// Array init expression: []Type{} → record element type
+	if rhs is ast.ArrayInitExpr {
+		if rhs.typ is ast.Type {
+			if rhs.typ is ast.ArrayType {
+				elem_type := b.ast_type_to_ssa(rhs.typ.elem_type)
+				i64_t := b.mod.type_store.get_int(64)
+				if elem_type != 0 && elem_type != i64_t {
+					b.array_var_elem_types[name] = elem_type
+				}
+			}
+		}
+	}
+	// Call to __new_array_with_default_noscan(len, cap, sizeof(ElemType), init)
+	// or builtin__new_array_from_c_array_noscan(len, cap, sizeof(ElemType), c_array)
+	// Extract element type from the sizeof argument (3rd arg, index 2).
+	if rhs is ast.CallExpr {
+		if rhs.lhs is ast.Ident {
+			fn_name := rhs.lhs.name
+			if (fn_name == '__new_array_with_default_noscan'
+				|| fn_name == 'builtin__new_array_from_c_array_noscan'
+				|| fn_name == '__new_array') && rhs.args.len >= 3 {
+				sizeof_arg := rhs.args[2]
+				if sizeof_arg is ast.KeywordOperator {
+					if sizeof_arg.op == .key_sizeof && sizeof_arg.exprs.len > 0 {
+						elem_type := b.ast_type_to_ssa(sizeof_arg.exprs[0])
+						i64_t := b.mod.type_store.get_int(64)
+						if elem_type != 0 && elem_type != i64_t
+							&& elem_type != b.get_array_type() {
+							b.array_var_elem_types[name] = elem_type
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 	base := b.build_expr(expr.lhs)
 	index := b.build_expr(expr.expr)
@@ -3133,6 +3240,49 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 				}
 			}
 		}
+		// If still i64, check tracked array variable element types
+		if result_type == i64_t {
+			if expr.lhs is ast.Ident {
+				if elem_t := b.array_var_elem_types[expr.lhs.name] {
+					result_type = elem_t
+					eprintln('[ssa] build_index: resolved ${expr.lhs.name}[] elem type from tracking: type_id=${elem_t} size=${b.type_byte_size(elem_t)}')
+				} else {
+					eprintln('[ssa] build_index: WARNING ${expr.lhs.name}[] elem type unknown (i64 fallback)')
+				}
+			} else {
+				lhs_name := expr.lhs.name()
+				eprintln('[ssa] build_index: WARNING non-ident array lhs type=${expr.lhs.type_name()} name=${lhs_name}, elem type unknown (i64 fallback)')
+			}
+		}
+
+		// When result_type is still i64 (unknown element type for large structs),
+		// use the array's runtime element_size field for byte-level addressing.
+		// This avoids GEP which would use compile-time element size (8 bytes for i64
+		// fallback) instead of the correct runtime size (e.g. 128 bytes for ast.File).
+		if result_type == i64_t {
+			i8_t := b.mod.type_store.get_int(8)
+			i32_t := b.mod.type_store.get_int(32)
+			void_ptr := b.mod.type_store.get_ptr(i8_t)
+			// Extract .data field (index 0)
+			data_ptr := b.mod.add_instr(.extractvalue, b.cur_block, void_ptr, [base,
+				b.mod.get_or_add_const(i32_t, '0')])
+			// Extract .element_size field (index 5: data=0, offset=1, len=2, cap=3, flags=4, element_size=5)
+			elem_size := b.mod.add_instr(.extractvalue, b.cur_block, i32_t, [base,
+				b.mod.get_or_add_const(i32_t, '5')])
+			// Compute byte offset = index * element_size
+			// First sign-extend index to i64 if it's i32
+			idx_i64 := b.mod.add_instr(.sext, b.cur_block, i64_t, [index])
+			esize_i64 := b.mod.add_instr(.sext, b.cur_block, i64_t, [elem_size])
+			byte_offset := b.mod.add_instr(.mul, b.cur_block, i64_t, [idx_i64, esize_i64])
+			// Add byte offset to data pointer
+			elem_addr := b.mod.add_instr(.add, b.cur_block, void_ptr, [data_ptr,
+				byte_offset])
+			// Load as i64 (just the first 8 bytes — only correct for simple types).
+			elem_ptr_type := b.mod.type_store.get_ptr(i64_t)
+			typed_ptr := b.mod.add_instr(.bitcast, b.cur_block, elem_ptr_type, [elem_addr])
+			return b.mod.add_instr(.load, b.cur_block, i64_t, [typed_ptr])
+		}
+
 		// Extract .data field (index 0), cast to element pointer, then GEP
 		i8_t := b.mod.type_store.get_int(8)
 		void_ptr := b.mod.type_store.get_ptr(i8_t)
@@ -3330,6 +3480,10 @@ fn (mut b Builder) build_array_init_expr(expr ast.ArrayInitExpr) ValueID {
 		if elem_vals.len > 0 {
 			elem_type = b.mod.values[elem_vals[0]].typ
 		}
+		elem_size := b.type_byte_size(elem_type)
+		if elem_size > 16 {
+			eprintln('[ssa] build_array_init: large elem type=${elem_type} size=${elem_size} kind=${b.mod.type_store.types[elem_type].kind}')
+		}
 		// Allocate fixed-size array on stack and store each element.
 		// Use array_t so that GEP uses element-size scaling (not struct-field offsets).
 		arr_fixed_type := b.mod.type_store.get_array(elem_type, elem_vals.len)
@@ -3358,6 +3512,24 @@ fn (mut b Builder) build_array_init_expr(expr ast.ArrayInitExpr) ValueID {
 			elem_type := b.ast_type_to_ssa(fixed_typ.elem_type)
 			arr_len := if fixed_typ.len is ast.BasicLiteral {
 				fixed_typ.len.value.int()
+			} else if fixed_typ.len is ast.Ident {
+				// Resolve compile-time constant (e.g., kmp_stack_buffer_size)
+				name := (fixed_typ.len as ast.Ident).name
+				if name in b.const_values {
+					int(b.const_values[name])
+				} else {
+					qualified := '${b.cur_module}__${name}'
+					if qualified in b.const_values {
+						int(b.const_values[qualified])
+					} else {
+						builtin_name := 'builtin__${name}'
+						if builtin_name in b.const_values {
+							int(b.const_values[builtin_name])
+						} else {
+							0
+						}
+					}
+				}
 			} else {
 				0
 			}
@@ -3444,20 +3616,6 @@ fn (mut b Builder) build_init_expr(expr ast.InitExpr) ValueID {
 		} else {
 			// Zero-initialize unset fields
 			field_vals << b.mod.get_or_add_const(field_type, '0')
-		}
-	}
-
-	// Diagnostic: check sum type init for zero _data
-	if typ_info.field_names.len == 2 && typ_info.field_names[0] == '_tag'
-		&& typ_info.field_names[1] == '_data' && field_vals.len >= 2 {
-		tag_v := b.mod.values[field_vals[0]]
-		data_v := b.mod.values[field_vals[1]]
-		if tag_v.kind == .constant && tag_v.name != '0' && data_v.kind == .constant
-			&& data_v.name == '0' {
-			eprintln('DIAG SSA: sum type struct_init with _tag=${tag_v.name} but _data=0! fn=${b.cur_func}')
-			for fi2, field2 in expr.fields {
-				eprintln('  field[${fi2}]: name="${field2.name}" value_tag=${field2.value.type_name()}')
-			}
 		}
 	}
 

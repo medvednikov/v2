@@ -100,6 +100,27 @@ fn (t &Transformer) extract_base_type_name_from_type(typ ast.Type) string {
 	return ''
 }
 
+// is_void_result_return_type checks if a function return type AST node is a void Result (!).
+// Void Result means the function returns `!` with no value type.
+fn is_void_result_return_type(return_type ast.Expr) bool {
+	if return_type is ast.Type {
+		if return_type is ast.ResultType {
+			return return_type.base_type is ast.EmptyExpr
+		}
+	}
+	return false
+}
+
+// is_void_option_return_type checks if a function return type AST node is a void Option (?).
+fn is_void_option_return_type(return_type ast.Expr) bool {
+	if return_type is ast.Type {
+		if return_type is ast.OptionType {
+			return return_type.base_type is ast.EmptyExpr
+		}
+	}
+	return false
+}
+
 fn (t &Transformer) extract_type_name_from_expr(expr ast.Expr) string {
 	if expr is ast.Ident {
 		return expr.name
@@ -344,6 +365,9 @@ fn (t &Transformer) get_expr_base_type(expr ast.Expr) string {
 }
 
 fn (t &Transformer) contains_call_expr(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	return match expr {
 		ast.CallExpr {
 			true
@@ -412,6 +436,58 @@ fn (t &Transformer) contains_call_expr(expr ast.Expr) bool {
 		}
 		ast.IndexExpr {
 			t.contains_call_expr(expr.lhs) || t.contains_call_expr(expr.expr)
+		}
+		else {
+			false
+		}
+	}
+}
+
+// needs_runtime_init returns true if a constant expression cannot be evaluated
+// at compile time as a simple integer by the SSA builder's try_eval_const_int.
+// For native backends (ARM64/x64), such constants need runtime initialization
+// functions because the ARM64 data section can only store integer values.
+fn needs_runtime_init(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
+	return match expr {
+		ast.ArrayInitExpr {
+			true // Arrays always need runtime init
+		}
+		ast.MapInitExpr {
+			true // Maps always need runtime init
+		}
+		ast.InitExpr {
+			true // Struct literals always need runtime init
+		}
+		ast.BasicLiteral {
+			// String literals need runtime init; numbers and bools don't
+			expr.kind == .string
+		}
+		ast.CallExpr {
+			true // Function calls need runtime init
+		}
+		ast.CallOrCastExpr {
+			true
+		}
+		ast.CastExpr {
+			needs_runtime_init(expr.expr)
+		}
+		ast.ParenExpr {
+			needs_runtime_init(expr.expr)
+		}
+		ast.PrefixExpr {
+			needs_runtime_init(expr.expr)
+		}
+		ast.InfixExpr {
+			needs_runtime_init(expr.lhs) || needs_runtime_init(expr.rhs)
+		}
+		ast.SelectorExpr {
+			needs_runtime_init(expr.lhs)
+		}
+		ast.IndexExpr {
+			needs_runtime_init(expr.lhs) || needs_runtime_init(expr.expr)
 		}
 		else {
 			false
@@ -567,14 +643,47 @@ fn (mut t Transformer) transform_fn_decl(decl ast.FnDecl) ast.FnDecl {
 		t.cur_fn_ret_type_name = t.extract_return_sumtype_name(decl.typ.return_type)
 	}
 
+	// Track whether we're in a void Result/Option function (for native backends)
+	old_is_void_result := t.cur_fn_is_void_result
+	t.cur_fn_is_void_result = is_void_result_return_type(decl.typ.return_type)
+		|| is_void_option_return_type(decl.typ.return_type)
+
 	// Transform function body
 	transformed_stmts := t.transform_stmts(decl.stmts)
 	t.cur_fn_ret_type_name = old_fn_ret_type_name
+	t.cur_fn_is_void_result = old_is_void_result
 
 	// Lower defer statements: collect defers, remove them from body,
 	// inject defer body before every return and at end of function
 	has_return_type := decl.typ.return_type !is ast.EmptyExpr
-	final_stmts := t.lower_defer_stmts(transformed_stmts, has_return_type)
+	mut final_stmts := t.lower_defer_stmts(transformed_stmts, has_return_type)
+
+	// Native backends (arm64/x64): void Result (!) functions need an explicit
+	// `return 1` at the end to signal success. Convention:
+	//   - 0 = error (from `return error(...)` → `return 0`)
+	//   - non-zero = success
+	// Without this, falling off the end returns 0 which callers interpret as error.
+	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
+		if is_void_result_return_type(decl.typ.return_type)
+			|| is_void_option_return_type(decl.typ.return_type) {
+			// Only add if the body doesn't already end with a return
+			needs_success_return := if final_stmts.len > 0 {
+				!t.stmt_ends_with_return(final_stmts.last())
+			} else {
+				true
+			}
+			if needs_success_return {
+				final_stmts << ast.ReturnStmt{
+					exprs: [
+						ast.Expr(ast.BasicLiteral{
+							kind:  .number
+							value: '1'
+						}),
+					]
+				}
+			}
+		}
+	}
 
 	// Restore previous scope and fn_root_scope
 	t.scope = old_scope
@@ -1483,6 +1592,9 @@ fn (mut t Transformer) lower_struct_shorthand_call(args []ast.Expr, param_types 
 }
 
 fn (t &Transformer) expr_contains_ident_named(expr ast.Expr, name string) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	match expr {
 		ast.Ident {
 			return expr.name == name
@@ -1567,6 +1679,10 @@ fn (t &Transformer) is_sort_compare_lambda_expr(expr ast.Expr) bool {
 }
 
 fn (mut t Transformer) transform_call_or_cast_expr(expr ast.CallOrCastExpr) ast.Expr {
+	// Safety: check if lhs/expr have valid data (arm64 sum type constants may have _data=0)
+	if !expr_has_valid_data(expr.lhs) || !expr_has_valid_data(expr.expr) {
+		return ast.Expr(expr)
+	}
 	// Expand .filter() / .map() calls to hoisted statements + temp variable
 	if expanded := t.try_expand_filter_or_map_expr(expr) {
 		return expanded

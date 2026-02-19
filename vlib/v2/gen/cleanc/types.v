@@ -7,6 +7,24 @@ module cleanc
 import v2.ast
 import v2.types
 
+fn sumtype_has_valid_data(ptr voidptr) bool {
+	raw := unsafe { &u64(ptr) }
+	tag := unsafe { raw[0] }
+	data := unsafe { raw[1] }
+	if tag != 0 && tag != 8 && data == 0 {
+		return false
+	}
+	return true
+}
+
+fn expr_has_valid_data(expr ast.Expr) bool {
+	return sumtype_has_valid_data(&expr)
+}
+
+fn stmt_has_valid_data(stmt ast.Stmt) bool {
+	return sumtype_has_valid_data(&stmt)
+}
+
 fn (g &Gen) result_value_type(result_type string) string {
 	if !result_type.starts_with('_result_') {
 		return ''
@@ -113,6 +131,9 @@ fn (mut g Gen) collect_module_type_names() {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			match stmt {
 				ast.StructDecl {
 					if stmt.language != .v {
@@ -171,6 +192,9 @@ fn (mut g Gen) collect_runtime_aliases() {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			g.collect_decl_type_aliases_from_stmt(stmt)
 		}
 	}

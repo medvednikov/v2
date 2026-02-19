@@ -849,6 +849,10 @@ fn (mut t Transformer) collect_defers_in_else(else_expr ast.Expr, mut defer_bodi
 fn (mut t Transformer) inject_defer_before_returns(stmts []ast.Stmt, defer_stmts []ast.Stmt, has_return_type bool) []ast.Stmt {
 	mut result := []ast.Stmt{cap: stmts.len}
 	for stmt in stmts {
+		if !stmt_has_valid_data(stmt) {
+			result << stmt
+			continue
+		}
 		match stmt {
 			ast.ReturnStmt {
 				if has_return_type && stmt.exprs.len > 0 {

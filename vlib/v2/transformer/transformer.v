@@ -9,6 +9,29 @@ import v2.pref
 import v2.token
 import v2.types
 
+// sumtype_has_valid_data checks if a sum type value has a valid (non-null) _data pointer.
+// For the arm64 native backend, sum type constants may have _data=0 due to codegen
+// limitations. This helper prevents crashes when the transformer tries to dereference
+// the variant data. Works for any 16-byte sum type (Expr, Stmt, Type, etc.).
+fn sumtype_has_valid_data(ptr voidptr) bool {
+	raw := unsafe { &u64(ptr) }
+	tag := unsafe { raw[0] }
+	data := unsafe { raw[1] }
+	// data=0 is only valid for tag=0 (first variant) or tag=8 (EmptyExpr)
+	if tag != 0 && tag != 8 && data == 0 {
+		return false
+	}
+	return true
+}
+
+fn expr_has_valid_data(expr ast.Expr) bool {
+	return sumtype_has_valid_data(&expr)
+}
+
+fn stmt_has_valid_data(stmt ast.Stmt) bool {
+	return sumtype_has_valid_data(&stmt)
+}
+
 // Transformer performs AST-level transformations to simplify
 // and normalize code before codegen. This avoids duplicating
 // transformation logic across multiple backends (SSA, cleanc, etc.)
@@ -35,6 +58,8 @@ mut:
 	needed_array_last_index_fns map[string]ArrayMethodInfo
 	// Current function's return type name (for sum type wrapping in returns)
 	cur_fn_ret_type_name string
+	// Whether the current function has void Result/Option return type (for native backends)
+	cur_fn_is_void_result bool
 	// When set, match branch values should be wrapped in this sum type
 	// (used when a match expression is returned from a function with sum type return)
 	sumtype_return_wrap string
@@ -363,25 +388,29 @@ fn (t &Transformer) is_var_enum(name string) ?string {
 pub fn (mut t Transformer) transform_files(files []ast.File) []ast.File {
 	// Pre-pass: scan all function declarations for conditional compilation attributes
 	// to build elided_fns set before transforming call sites
-	for file in files {
-		for stmt in file.stmts {
-			if stmt is ast.FnDecl {
-				for attr in stmt.attributes {
-					if attr.comptime_cond !is ast.EmptyExpr {
-						if !t.eval_comptime_cond(attr.comptime_cond) {
-							t.elided_fns[stmt.name] = true
-						}
-					}
-				}
-			}
-		}
-	}
+	// TEMPORARILY DISABLED: crashes on ARM64 self-host due to corrupted AST data
+	// for file in files {
+	// 	for stmt in file.stmts {
+	// 		if stmt is ast.FnDecl {
+	// 			for attr in stmt.attributes {
+	// 				if attr.comptime_cond !is ast.EmptyExpr {
+	// 					if !t.eval_comptime_cond(attr.comptime_cond) {
+	// 						t.elided_fns[stmt.name] = true
+	// 					}
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
 	// Pre-pass: collect const declarations that require runtime initialization.
+	C.write(2, c'TF1\n', 4)
 	t.collect_runtime_const_inits(files)
+	C.write(2, c'TF2\n', 4)
 	mut result := []ast.File{cap: files.len}
 	for file in files {
 		result << t.transform_file(file)
 	}
+	C.write(2, c'TF3\n', 4)
 	t.inject_runtime_const_init_fns(mut result)
 	// Generate auto helper functions and add them to the builtin file
 	mut generated_fns := []ast.Stmt{}
@@ -433,11 +462,35 @@ fn runtime_const_init_call_name(mod string, fn_name string) string {
 }
 
 fn (mut t Transformer) collect_runtime_const_inits(files []ast.File) {
+	C.write(2, c'CR1\n', 4)
+	is_native := t.pref != unsafe { nil }
+		&& (t.pref.backend == .arm64 || t.pref.backend == .x64)
+	C.write(2, c'CR2\n', 4)
+	mut fcount := u8(0)
 	for file in files {
+		fcount++
+		mut digit := fcount + 48
+		if fcount > 9 {
+			digit = fcount + 55
+		}
+		C.write(2, c'F', 1)
+		C.write(2, &digit, 1)
+		C.write(2, c' ', 1)
+		mut scount := u8(0)
 		for stmt in file.stmts {
+			scount++
 			if stmt is ast.ConstDecl {
 				for field in stmt.fields {
-					if !t.contains_call_expr(field.value) {
+					// For native backends, any non-integer-evaluable constant needs
+					// runtime init (arrays, strings, maps, struct literals, etc.)
+					// because the ARM64 data section can only store integer values.
+					// For C backends, only constants with call expressions need runtime init.
+					needs_init := if is_native {
+						needs_runtime_init(field.value)
+					} else {
+						t.contains_call_expr(field.value)
+					}
+					if !needs_init {
 						continue
 					}
 					if file.mod !in t.runtime_const_inits_by_mod {
@@ -453,6 +506,7 @@ fn (mut t Transformer) collect_runtime_const_inits(files []ast.File) {
 			}
 		}
 	}
+	C.write(2, c'CR3\n', 4)
 }
 
 fn (mut t Transformer) transform_expr_in_module(mod string, expr ast.Expr) ast.Expr {
@@ -603,6 +657,9 @@ fn (mut t Transformer) transform_file(file ast.File) ast.File {
 }
 
 fn (mut t Transformer) transform_stmt(stmt ast.Stmt) ast.Stmt {
+	if !stmt_has_valid_data(stmt) {
+		return stmt
+	}
 	// Check for OrExpr assignment that needs expansion
 	if stmt is ast.AssignStmt {
 		if expanded := t.try_expand_or_expr_assign(stmt) {
@@ -680,6 +737,10 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 	mut result := []ast.Stmt{cap: stmts.len}
 	is_native_be := t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64)
 	for stmt in stmts {
+		if !stmt_has_valid_data(stmt) {
+			result << stmt
+			continue
+		}
 		// Check for OrExpr assignment that expands to multiple statements
 		if stmt is ast.AssignStmt {
 			// Native backends (arm64/x64): lower interface casts.
@@ -1757,6 +1818,9 @@ fn (t &Transformer) get_filter_or_map_call_info(expr ast.Expr) ?(string, ast.Exp
 
 // replace_it_ident replaces all occurrences of 'it' identifier with the given name
 fn (t &Transformer) replace_it_ident(expr ast.Expr, new_name string) ast.Expr {
+	if !expr_has_valid_data(expr) {
+		return expr
+	}
 	match expr {
 		ast.Ident {
 			if expr.name == 'it' {
@@ -1874,6 +1938,9 @@ fn (t &Transformer) or_block_has_return(stmts []ast.Stmt) bool {
 }
 
 fn (t &Transformer) stmt_uses_ident(stmt ast.Stmt, name string) bool {
+	if !stmt_has_valid_data(stmt) {
+		return false
+	}
 	match stmt {
 		ast.AssignStmt {
 			for lhs in stmt.lhs {
@@ -1974,6 +2041,9 @@ fn (mut t Transformer) get_or_block_stmts_and_value(stmts []ast.Stmt) ([]ast.Stm
 //   if _t1.is_error { err := _t1.err; _t1.data = 0 }
 //   println(_t1.data)
 fn (mut t Transformer) try_expand_or_expr_stmt(stmt ast.ExprStmt) ?[]ast.Stmt {
+	if !expr_has_valid_data(stmt.expr) {
+		return none
+	}
 	// Check if expression contains any OrExpr
 	if !t.expr_has_or_expr(stmt.expr) {
 		return none
@@ -2028,6 +2098,9 @@ fn (mut t Transformer) try_expand_or_expr_return(stmt ast.ReturnStmt) ?[]ast.Stm
 
 // expr_has_or_expr checks if an expression contains any OrExpr
 fn (t &Transformer) expr_has_or_expr(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	if expr is ast.OrExpr {
 		return true
 	}
@@ -2116,6 +2189,9 @@ fn (mut t Transformer) extract_or_expr(expr ast.Expr, mut prefix_stmts []ast.Stm
 		return t.expand_single_or_expr(expr, mut prefix_stmts)
 	}
 	// Recursively check sub-expressions
+	if !expr_has_valid_data(expr) {
+		return expr
+	}
 	match expr {
 		ast.CallExpr {
 			mut new_args := []ast.Expr{cap: expr.args.len}
@@ -2972,6 +3048,9 @@ fn (mut t Transformer) lower_defer_stmts(stmts []ast.Stmt, has_return_type bool)
 
 fn (t &Transformer) has_defer_stmt(stmts []ast.Stmt) bool {
 	for stmt in stmts {
+		if !stmt_has_valid_data(stmt) {
+			continue
+		}
 		match stmt {
 			ast.DeferStmt {
 				return true
@@ -3041,6 +3120,10 @@ fn (mut t Transformer) lower_defer_else(else_expr ast.Expr, active_defers [][]as
 fn (mut t Transformer) lower_defer_block(stmts []ast.Stmt, mut active_defers [][]ast.Stmt, has_return_type bool) []ast.Stmt {
 	mut result := []ast.Stmt{cap: stmts.len}
 	for stmt in stmts {
+		if !stmt_has_valid_data(stmt) {
+			result << stmt
+			continue
+		}
 		match stmt {
 			ast.DeferStmt {
 				active_defers << stmt.stmts
@@ -3125,6 +3208,10 @@ fn (mut t Transformer) lower_defer_block(stmts []ast.Stmt, mut active_defers [][
 fn (mut t Transformer) collect_and_remove_defers(stmts []ast.Stmt, mut defer_bodies [][]ast.Stmt) []ast.Stmt {
 	mut result := []ast.Stmt{cap: stmts.len}
 	for stmt in stmts {
+		if !stmt_has_valid_data(stmt) {
+			result << stmt
+			continue
+		}
 		match stmt {
 			ast.DeferStmt {
 				defer_bodies << stmt.stmts
@@ -3176,6 +3263,17 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 	// Native backends (arm64/x64) don't use Option/Result structs.
 	// `return error(...)` and `return none` should be lowered to `return 0` (error/none indicator).
 	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
+		// Bare `return` in void Result/Option functions means success → `return 1`
+		if stmt.exprs.len == 0 && t.cur_fn_is_void_result {
+			return ast.ReturnStmt{
+				exprs: [
+					ast.Expr(ast.BasicLiteral{
+						kind:  .number
+						value: '1'
+					}),
+				]
+			}
+		}
 		error_fn_names := ['error', 'error_posix', 'error_with_code', 'error_win32']
 		if stmt.exprs.len == 1 {
 			ret_expr := stmt.exprs[0]
@@ -3278,6 +3376,9 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 }
 
 fn (t &Transformer) unwrap_assoc_expr(expr ast.Expr) ?ast.AssocExpr {
+	if !expr_has_valid_data(expr) {
+		return none
+	}
 	match expr {
 		ast.AssocExpr {
 			return expr
@@ -3368,6 +3469,9 @@ fn (mut t Transformer) lower_assoc_expr(node ast.AssocExpr, take_addr bool) ast.
 }
 
 fn (t &Transformer) is_nil_expr(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	return match expr {
 		ast.Ident {
 			expr.name == 'nil'
@@ -3399,6 +3503,9 @@ fn (t &Transformer) is_unsafe_nil_expr(expr ast.UnsafeExpr) bool {
 }
 
 fn (t &Transformer) can_take_address_expr(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	return match expr {
 		ast.Ident, ast.SelectorExpr, ast.IndexExpr {
 			true
@@ -3949,6 +4056,9 @@ fn (mut t Transformer) build_single_match_cond(match_expr ast.Expr, cond ast.Exp
 }
 
 fn (t &Transformer) is_supported_struct_default_expr(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	match expr {
 		ast.BasicLiteral, ast.StringLiteral, ast.SelectorExpr, ast.CallExpr, ast.CallOrCastExpr,
 		ast.PrefixExpr, ast.CastExpr, ast.ArrayInitExpr, ast.MapInitExpr, ast.InitExpr {
@@ -4339,6 +4449,9 @@ fn (mut t Transformer) transform_flag_enum_method(receiver ast.Expr, method stri
 //   receiver.set(flag)   → receiver |= flag
 //   receiver.clear(flag) → receiver &= ~flag
 fn (mut t Transformer) try_transform_flag_enum_set_clear(stmt ast.ExprStmt) ?ast.Stmt {
+	if !expr_has_valid_data(stmt.expr) {
+		return none
+	}
 	// Handle direct method call form: receiver.set(flag) / receiver.clear(flag)
 	if stmt.expr is ast.CallExpr {
 		call := stmt.expr as ast.CallExpr

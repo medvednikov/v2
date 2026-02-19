@@ -61,10 +61,6 @@ pub fn (mut b Builder) build(files []string) {
 	}
 	parse_time := sw.elapsed()
 	print_time('Scan & Parse', parse_time)
-	b.update_parse_summary_counts()
-	print_parse_summary(b.parsed_full_files_n, b.parsed_vh_files_n, b.entry_v_lines_n,
-		b.parsed_v_lines_n, b.pref.stats, b.pref.print_parsed_files, b.parsed_full_files,
-		b.parsed_vh_files)
 	if b.pref.stats {
 		// b.print_flat_ast_summary()
 	}
@@ -87,8 +83,11 @@ pub fn (mut b Builder) build(files []string) {
 
 	// Transform AST (flag enum desugaring, etc.)
 	transform_start := sw.elapsed()
+	C.write(2, c'TR1\n', 4)
 	mut trans := transformer.Transformer.new_with_pref(b.files, b.env, b.pref)
+	C.write(2, c'TR2\n', 4)
 	b.files = trans.transform_files(b.files)
+	C.write(2, c'TR3\n', 4)
 	transform_time := time.Duration(sw.elapsed() - transform_start)
 	print_time('Transform', transform_time)
 

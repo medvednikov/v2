@@ -1581,6 +1581,9 @@ fn (mut t Transformer) expand_array_init_with_index(len_expr ast.Expr, cap_expr 
 // replace_ident_named replaces all occurrences of an identifier named `old_name`
 // with a new identifier named `new_name` in an expression tree.
 fn (t &Transformer) replace_ident_named(expr ast.Expr, old_name string, new_name string) ast.Expr {
+	if !expr_has_valid_data(expr) {
+		return expr
+	}
 	match expr {
 		ast.Ident {
 			if expr.name == old_name {

@@ -9,6 +9,9 @@ import v2.types
 import v2.token
 
 fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
+	if !expr_has_valid_data(expr) {
+		return expr
+	}
 	return match expr {
 		ast.CallExpr {
 			t.transform_call_expr(expr)

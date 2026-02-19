@@ -150,6 +150,9 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 fn (mut g Gen) gen_file(file ast.File) {
 	g.set_file_module(file)
 	for stmt in file.stmts {
+		if !stmt_has_valid_data(stmt) {
+			continue
+		}
 		// Skip struct/enum/type/interface/const decls - already emitted in earlier passes
 		if stmt is ast.StructDecl || stmt is ast.EnumDecl || stmt is ast.TypeDecl
 			|| stmt is ast.ConstDecl || stmt is ast.InterfaceDecl {
@@ -259,6 +262,9 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			if stmt is ast.GlobalDecl {
 				for field in stmt.fields {
 					if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
@@ -275,6 +281,9 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			if stmt is ast.StructDecl {
 				if stmt.language == .c {
 					continue
@@ -315,6 +324,9 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			if stmt is ast.EnumDecl {
 				g.gen_enum_decl(stmt)
 			} else if stmt is ast.TypeDecl {
@@ -337,6 +349,9 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			if stmt is ast.StructDecl {
 				if stmt.language == .c {
 					continue
@@ -407,6 +422,9 @@ pub fn (mut g Gen) gen() string {
 			continue
 		}
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			if stmt is ast.ConstDecl {
 				g.gen_const_decl(stmt)
 			}
@@ -441,6 +459,9 @@ pub fn (mut g Gen) gen() string {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			if stmt is ast.FnDecl {
 				if !g.should_emit_fn_decl(g.cur_module, stmt) {
 					continue

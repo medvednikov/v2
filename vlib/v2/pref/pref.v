@@ -111,8 +111,10 @@ fn detect_vroot() string {
 	// First prefer the compile-time module root when it points to a valid
 	// V source tree. This keeps self-host binaries stable during bootstrapping.
 	compile_time_root := @VMODROOT
-	joined := os.join_path(compile_time_root, 'vlib', 'builtin')
-	if os.is_dir(joined) {
+	// @VMODROOT is resolved at compile time and always points to the correct
+	// V source tree root. Trust it directly if non-empty, avoiding os.is_dir()
+	// which may not work correctly on all backends (e.g., ARM64 native).
+	if compile_time_root.len > 0 {
 		return compile_time_root
 	}
 	// Prefer deriving from executable path: <vroot>/cmd/v2/v3.

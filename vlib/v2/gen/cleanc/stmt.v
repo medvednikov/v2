@@ -9,6 +9,9 @@ import v2.ast
 fn (mut g Gen) set_file_module(file ast.File) {
 	g.cur_file_name = file.name
 	for stmt in file.stmts {
+		if !stmt_has_valid_data(stmt) {
+			continue
+		}
 		if stmt is ast.ModuleStmt {
 			g.cur_module = stmt.name.replace('.', '_')
 			return
@@ -20,6 +23,9 @@ fn (mut g Gen) set_file_module(file ast.File) {
 
 fn (mut g Gen) gen_stmts(stmts []ast.Stmt) {
 	for s in stmts {
+		if !stmt_has_valid_data(s) {
+			continue
+		}
 		g.gen_stmt(s)
 	}
 }

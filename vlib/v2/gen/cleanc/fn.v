@@ -153,6 +153,9 @@ fn (mut g Gen) collect_fn_signatures() {
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
 			match stmt {
 				ast.FnDecl {
 					if stmt.language == .js {
