@@ -1789,6 +1789,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 						}
 					}
 				}
+			} else {
+				// typ out of range — use default field_byte_off and field_elem_size
 			}
 
 			// If the tuple source is a string_literal (e.g. after mem2reg

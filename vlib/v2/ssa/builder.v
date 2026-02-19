@@ -82,10 +82,15 @@ pub fn (mut b Builder) build_all(files []ast.File) {
 			}
 		}
 	}
-	// Phase 1b: Register all struct types and enums
+	// Phase 1b: Register all struct type names (forward declarations) and enums
 	for file in files {
 		b.cur_module = file_module_name(file)
-		b.register_types(file)
+		b.register_types_pass1(file)
+	}
+	// Phase 1c: Fill in struct field types (now all struct names are known)
+	for file in files {
+		b.cur_module = file_module_name(file)
+		b.register_types_pass2(file)
 	}
 	// Phase 2: Register consts and globals
 	for file in files {
@@ -353,11 +358,14 @@ fn (mut b Builder) types_type_c_name(t types.Type) string {
 
 // --- Phase 1: Register types ---
 
-fn (mut b Builder) register_types(file ast.File) {
+// Pass 1: Register struct names as forward declarations (empty structs),
+// enums, and sumtypes. This ensures all struct names are in struct_types
+// before any field types are resolved.
+fn (mut b Builder) register_types_pass1(file ast.File) {
 	for stmt in file.stmts {
 		match stmt {
 			ast.StructDecl {
-				b.register_struct(stmt)
+				b.register_struct_name(stmt)
 			}
 			ast.EnumDecl {
 				b.register_enum(stmt)
@@ -370,10 +378,19 @@ fn (mut b Builder) register_types(file ast.File) {
 	}
 }
 
-fn (mut b Builder) register_struct(decl ast.StructDecl) {
-	// For core builtin types (array, string, map, DenseArray), use short names
-	// to match the C preamble typedefs
-	name := if b.cur_module == 'builtin'
+// Pass 2: Fill in struct field types. All struct names are now registered,
+// so cross-module struct references (e.g., &scanner.Scanner in Parser)
+// resolve correctly to the struct type instead of falling back to i64.
+fn (mut b Builder) register_types_pass2(file ast.File) {
+	for stmt in file.stmts {
+		if stmt is ast.StructDecl {
+			b.register_struct_fields(stmt)
+		}
+	}
+}
+
+fn (mut b Builder) struct_mangled_name(decl ast.StructDecl) string {
+	return if b.cur_module == 'builtin'
 		&& decl.name in ['array', 'string', 'map', 'DenseArray', 'IError', 'Error', 'MessageError', 'None__', '_option', '_result', 'Option'] {
 		decl.name
 	} else if b.cur_module != '' && b.cur_module != 'main' {
@@ -381,6 +398,54 @@ fn (mut b Builder) register_struct(decl ast.StructDecl) {
 	} else {
 		decl.name
 	}
+}
+
+// register_struct_name registers a struct name with an empty struct type.
+// The fields will be filled in by register_struct_fields in pass 2.
+fn (mut b Builder) register_struct_name(decl ast.StructDecl) {
+	name := b.struct_mangled_name(decl)
+
+	if name in b.struct_types {
+		return
+	}
+
+	type_id := b.mod.type_store.register(Type{
+		kind: .struct_t
+	})
+	b.struct_types[name] = type_id
+	b.mod.c_struct_names[type_id] = name
+}
+
+// register_struct_fields fills in the field types for a previously forward-declared struct.
+fn (mut b Builder) register_struct_fields(decl ast.StructDecl) {
+	name := b.struct_mangled_name(decl)
+
+	type_id := b.struct_types[name] or { return }
+
+	// Skip if fields are already populated (e.g., builtin types registered in Phase 1a)
+	if b.mod.type_store.types[type_id].fields.len > 0 {
+		return
+	}
+
+	mut field_types := []TypeID{}
+	mut field_names := []string{}
+
+	for field in decl.fields {
+		ft := b.ast_type_to_ssa(field.typ)
+		field_types << ft
+		field_names << field.name
+	}
+
+	b.mod.type_store.types[type_id] = Type{
+		kind:        .struct_t
+		fields:      field_types
+		field_names: field_names
+	}
+}
+
+// register_struct is the legacy combined registration (used for Phase 1a core types).
+fn (mut b Builder) register_struct(decl ast.StructDecl) {
+	name := b.struct_mangled_name(decl)
 
 	if name in b.struct_types {
 		return
@@ -402,7 +467,6 @@ fn (mut b Builder) register_struct(decl ast.StructDecl) {
 	})
 	b.struct_types[name] = type_id
 	b.mod.c_struct_names[type_id] = name
-	// DEBUG removed
 }
 
 fn (mut b Builder) register_enum(decl ast.EnumDecl) {
@@ -853,9 +917,18 @@ fn (mut b Builder) ident_type_to_ssa(name string) TypeID {
 			// Check struct types
 			if name in b.struct_types {
 				b.struct_types[name]
-			} else if name == 'Builder' || name == 'strings__Builder' {
-				// Builder = []u8 = array (type alias)
+			} else if name == 'strings__Builder' {
+				// strings.Builder = []u8 = array (type alias)
 				b.get_array_type()
+			} else if name == 'Builder' {
+				// Builder could be strings.Builder alias or an actual struct
+				// Try module-qualified first, fall back to array alias
+				qualified_b := '${b.cur_module}__Builder'
+				if qualified_b in b.struct_types {
+					b.struct_types[qualified_b]
+				} else {
+					b.get_array_type()
+				}
 			} else if name.starts_with('Array_') {
 				// Transformer-generated Array_T types (e.g., Array_int, Array_string) are all array structs
 				b.get_array_type()
@@ -914,7 +987,8 @@ fn (mut b Builder) register_fn_sig(decl ast.FnDecl) {
 
 	// Register parameter types for correct forward declarations.
 	// For methods, add receiver as the first parameter.
-	if decl.is_method {
+	// Skip for static methods (is_static=true) — they have no receiver in the call.
+	if decl.is_method && !decl.is_static {
 		recv_type := b.ast_type_to_ssa(decl.receiver.typ)
 		// For &Type (PrefixExpr), ast_type_to_ssa already returns ptr(Type).
 		// For mut receivers, the parser sets is_mut on the Parameter (not ModifierExpr),
@@ -1074,7 +1148,8 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 	b.cur_block = entry
 
 	// Add parameters
-	if decl.is_method {
+	// Skip receiver for static methods (is_static=true) — no receiver in call
+	if decl.is_method && !decl.is_static {
 		// Receiver is the first parameter
 		receiver_name := if decl.receiver.name != '' {
 			decl.receiver.name
@@ -2958,6 +3033,23 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 		])
 		// Load the element
 		return b.mod.add_instr(.load, b.cur_block, result_type, [elem_addr])
+	}
+
+	// Check if base is a string struct — index into .str (field 0) data pointer
+	str_type := b.get_string_type()
+	if str_type != 0 && base_type_id == str_type {
+		// Extract .str field (field 0) — pointer to u8 data
+		i8_t := b.mod.type_store.get_int(8)
+		u8_ptr := b.mod.type_store.get_ptr(i8_t)
+		data_ptr := b.mod.add_instr(.extractvalue, b.cur_block, u8_ptr, [base,
+			b.mod.get_or_add_const(b.mod.type_store.get_int(32), '0')])
+		// GEP to the byte at index (scale = 1 for u8)
+		elem_addr := b.mod.add_instr(.get_element_ptr, b.cur_block, u8_ptr, [
+			data_ptr,
+			index,
+		])
+		// Load the byte
+		return b.mod.add_instr(.load, b.cur_block, i8_t, [elem_addr])
 	}
 
 	// Check if base is a pointer (e.g., from alloca for fixed-size array literal)
