@@ -402,6 +402,7 @@ fn (mut b Builder) register_struct(decl ast.StructDecl) {
 	})
 	b.struct_types[name] = type_id
 	b.mod.c_struct_names[type_id] = name
+	// DEBUG removed
 }
 
 fn (mut b Builder) register_enum(decl ast.EnumDecl) {
@@ -1062,6 +1063,7 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 	// Reset local variables
 	b.vars = map[string]ValueID{}
 	b.mut_ptr_params = map[string]bool{}
+	b.label_blocks = map[string]BlockID{}
 
 	// Clear params (they were registered in register_fn_sig for forward decls,
 	// but we need to re-create them here with proper alloca bindings)
@@ -2141,6 +2143,57 @@ fn (mut b Builder) build_prefix(expr ast.PrefixExpr) ValueID {
 			}
 		}
 	}
+	// Same for &CallOrCastExpr (parser uses CallOrCastExpr when it cannot distinguish
+	// between a function call and a type cast, e.g. u8(expr))
+	if expr.op == .amp && expr.expr is ast.CallOrCastExpr {
+		coce := expr.expr as ast.CallOrCastExpr
+		inner_val := b.build_expr(coce.expr)
+		inner_type := b.mod.values[inner_val].typ
+		if inner_type != 0 && int(inner_type) < b.mod.type_store.types.len {
+			inner_t := b.mod.type_store.types[inner_type]
+			if inner_t.kind == .ptr_t {
+				target_elem := b.ast_type_to_ssa(coce.lhs)
+				ptr_type := b.mod.type_store.get_ptr(target_elem)
+				return b.mod.add_instr(.bitcast, b.cur_block, ptr_type, [inner_val])
+			}
+		}
+	}
+	// Handle &&T(expr) — nested ampersand pointer-type cast pattern.
+	// Parser creates PrefixExpr(.amp, PrefixExpr(.amp, CallOrCastExpr/CastExpr(T, expr)))
+	// for &&T(expr), meaning "cast expr to type **T", not "address-of address-of cast".
+	if expr.op == .amp && expr.expr is ast.PrefixExpr {
+		inner_prefix := expr.expr as ast.PrefixExpr
+		if inner_prefix.op == .amp {
+			if inner_prefix.expr is ast.CallOrCastExpr {
+				coce := inner_prefix.expr as ast.CallOrCastExpr
+				inner_val := b.build_expr(coce.expr)
+				inner_type := b.mod.values[inner_val].typ
+				if inner_type != 0 && int(inner_type) < b.mod.type_store.types.len {
+					inner_t := b.mod.type_store.types[inner_type]
+					if inner_t.kind == .ptr_t {
+						// &&T(ptr): cast to **T = ptr(ptr(T))
+						target_elem := b.ast_type_to_ssa(coce.lhs)
+						ptr_type := b.mod.type_store.get_ptr(target_elem)
+						ptr_ptr_type := b.mod.type_store.get_ptr(ptr_type)
+						return b.mod.add_instr(.bitcast, b.cur_block, ptr_ptr_type, [inner_val])
+					}
+				}
+			} else if inner_prefix.expr is ast.CastExpr {
+				cast_expr := inner_prefix.expr as ast.CastExpr
+				inner_val := b.build_expr(cast_expr.expr)
+				inner_type := b.mod.values[inner_val].typ
+				if inner_type != 0 && int(inner_type) < b.mod.type_store.types.len {
+					inner_t := b.mod.type_store.types[inner_type]
+					if inner_t.kind == .ptr_t {
+						target_elem := b.ast_type_to_ssa(cast_expr.typ)
+						ptr_type := b.mod.type_store.get_ptr(target_elem)
+						ptr_ptr_type := b.mod.type_store.get_ptr(ptr_type)
+						return b.mod.add_instr(.bitcast, b.cur_block, ptr_ptr_type, [inner_val])
+					}
+				}
+			}
+		}
+	}
 
 	val := b.build_expr(expr.expr)
 
@@ -2289,7 +2342,30 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 				// Mut receiver: pass address (pointer to struct)
 				addr := b.build_addr(sel.lhs)
 				if addr != 0 {
-					addr
+					// build_addr for an Ident returns the alloca.
+					// For a mut receiver variable, the alloca is ptr(ptr(Struct)),
+					// storing the struct pointer. We need to load from the alloca
+					// to get the actual struct pointer ptr(Struct).
+					addr_typ := b.mod.values[addr].typ
+					if addr_typ < b.mod.type_store.types.len
+						&& b.mod.type_store.types[addr_typ].kind == .ptr_t {
+						inner := b.mod.type_store.types[addr_typ].elem_type
+						if inner < b.mod.type_store.types.len
+							&& b.mod.type_store.types[inner].kind == .ptr_t {
+							pointee := b.mod.type_store.types[inner].elem_type
+							if pointee < b.mod.type_store.types.len
+								&& b.mod.type_store.types[pointee].kind == .struct_t {
+								// addr is ptr(ptr(Struct)) — load to get ptr(Struct)
+								b.mod.add_instr(.load, b.cur_block, inner, [addr])
+							} else {
+								addr
+							}
+						} else {
+							addr
+						}
+					} else {
+						addr
+					}
 				} else {
 					b.build_expr(sel.lhs)
 				}
@@ -2446,14 +2522,15 @@ fn (mut b Builder) resolve_call_name(expr ast.CallExpr) string {
 	match expr.lhs {
 		ast.Ident {
 			name := expr.lhs.name
-			// Check if it's a known function
-			if name in b.fn_index {
-				return name
-			}
-			// Try module-qualified
+			// Try module-qualified FIRST to avoid shadowing by C functions.
+			// E.g., os.getenv() should resolve to os__getenv, not C.getenv.
 			qualified := '${b.cur_module}__${name}'
 			if qualified in b.fn_index {
 				return qualified
+			}
+			// Check if it's a known function
+			if name in b.fn_index {
+				return name
 			}
 			// Try builtin-qualified (transformer remaps builtin__X to X)
 			builtin_qualified := 'builtin__${name}'
@@ -2645,10 +2722,51 @@ fn (mut b Builder) build_selector(expr ast.SelectorExpr) ValueID {
 		}
 	}
 
-	// C global variable access: C.stdout, C.stderr, C._wyp, etc.
+	// C constant/global access: C.SEEK_END, C.stdout, C.stderr, etc.
 	if expr.lhs is ast.Ident && expr.lhs.name == 'C' {
 		c_name := expr.rhs.name
-		// Emit as a global reference — the C gen will use the bare name
+		// Well-known C preprocessor constants — emit inline integer values
+		// since the native backend cannot resolve C macros.
+		c_const_val := match c_name {
+			'SEEK_SET' { '0' }
+			'SEEK_CUR' { '1' }
+			'SEEK_END' { '2' }
+			'EOF' { '-1' }
+			'NULL' { '0' }
+			'O_RDONLY' { '0' }
+			'O_WRONLY' { '1' }
+			'O_RDWR' { '2' }
+			'O_CREAT' { '512' }
+			'O_TRUNC' { '1024' }
+			'O_EXCL' { '2048' }
+			'O_APPEND' { '8' }
+			'S_IRUSR' { '256' }
+			'S_IWUSR' { '128' }
+			'S_IXUSR' { '64' }
+			'S_IREAD' { '256' }
+			'S_IWRITE' { '128' }
+			'S_IEXEC' { '64' }
+			'PROT_READ' { '1' }
+			'PROT_WRITE' { '2' }
+			'SIGTERM' { '15' }
+			'SIGKILL' { '9' }
+			'SIGINT' { '2' }
+			'STDIN_FILENO' { '0' }
+			'STDOUT_FILENO' { '1' }
+			'STDERR_FILENO' { '2' }
+			'DT_DIR' { '4' }
+			'DT_REG' { '8' }
+			'DT_LNK' { '10' }
+			'DT_UNKNOWN' { '0' }
+			'ENOENT' { '2' }
+			'EXIT_SUCCESS' { '0' }
+			'EXIT_FAILURE' { '1' }
+			else { '' }
+		}
+		if c_const_val.len > 0 {
+			return b.mod.get_or_add_const(b.mod.type_store.get_int(32), c_const_val)
+		}
+		// Not a known constant — emit as a global reference (e.g. C.stdout, C.stderr)
 		i8_t := b.mod.type_store.get_int(8)
 		ptr_t := b.mod.type_store.get_ptr(i8_t)
 		return b.mod.add_value_node(.global, ptr_t, c_name, 0)
@@ -2883,6 +3001,34 @@ fn (mut b Builder) build_if_expr(node ast.IfExpr) ValueID {
 					str_type := b.get_string_type()
 					if str_type != 0 {
 						result_type = str_type
+					}
+				} else if last.expr is ast.Ident {
+					// Look up the identifier's SSA type from variables or function return types.
+					// This handles transformer-generated patterns like:
+					//   _t := fn_returning_struct()
+					//   src := if _t { _t } else { fallback }
+					// where _t has a struct type (e.g., string) but the IfExpr has no type annotation.
+					ident_name := (last.expr as ast.Ident).name
+					if alloca_id := b.vars[ident_name] {
+						alloca_val := b.mod.values[alloca_id]
+						if alloca_val.typ > 0
+							&& alloca_val.typ < b.mod.type_store.types.len {
+							alloca_typ := b.mod.type_store.types[alloca_val.typ]
+							if alloca_typ.kind == .ptr_t && alloca_typ.elem_type > 0
+								&& alloca_typ.elem_type < b.mod.type_store.types.len {
+								elem := b.mod.type_store.types[alloca_typ.elem_type]
+								if elem.kind == .struct_t {
+									result_type = alloca_typ.elem_type
+								}
+							}
+						}
+					}
+				} else {
+					// Try to infer type from the expression using expr_type.
+					// This handles CallExpr, SelectorExpr, etc. that may return struct types.
+					inferred := b.expr_type(last.expr)
+					if inferred != i64_t && inferred != 0 {
+						result_type = inferred
 					}
 				}
 			}

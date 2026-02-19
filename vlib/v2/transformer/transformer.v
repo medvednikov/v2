@@ -768,8 +768,23 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 		if stmt is ast.ReturnStmt {
 			if expanded_or_return := t.try_expand_or_expr_return(stmt) {
 				// Note: expand_single_or_expr already transforms expressions internally,
-				// so we don't call transform_stmt again to avoid double transformation
-				result << expanded_or_return
+				// so we don't call transform_stmt again to avoid double transformation.
+				// However, transform_expr may have populated pending_stmts (e.g., from
+				// lower_if_expr_value), which must be drained before the return stmt.
+				if t.pending_stmts.len > 0 {
+					// Insert pending_stmts before the last statement (the return).
+					for i, es in expanded_or_return {
+						if i == expanded_or_return.len - 1 {
+							for ps in t.pending_stmts {
+								result << ps
+							}
+							t.pending_stmts.clear()
+						}
+						result << es
+					}
+				} else {
+					result << expanded_or_return
+				}
 				continue
 			}
 			// Check for if-expression in return statements
@@ -1235,6 +1250,66 @@ fn (mut t Transformer) try_expand_or_expr_assign_stmts(stmt ast.AssignStmt) ?[]a
 	// Check if RHS is directly an OrExpr (simple case)
 	if rhs_expr is ast.OrExpr {
 		return t.expand_direct_or_expr_assign(stmt, rhs_expr)
+	}
+	// Handle `!` error propagation (PostfixExpr with .not) for native backends.
+	// `a := fn()!` expands to: `_t := fn(); if !_t { return 0 }; a := _t`
+	// Also handle bare CallExpr/CallOrCastExpr with Result/Option return type
+	// (parser sometimes strips PostfixExpr wrapper but the call still needs error propagation)
+	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
+		mut call_expr := ast.empty_expr
+		mut is_error_propagation := false
+		if rhs_expr is ast.PostfixExpr {
+			postfix := rhs_expr as ast.PostfixExpr
+			if postfix.op in [.not, .question] {
+				call_expr = postfix.expr
+				is_error_propagation = true
+			}
+		} else if rhs_expr is ast.CallExpr || rhs_expr is ast.CallOrCastExpr {
+			// Check if the call returns a Result or Option type
+			if ret_type := t.get_expr_type(rhs_expr) {
+				if ret_type is types.ResultType || ret_type is types.OptionType {
+					call_expr = rhs_expr
+					is_error_propagation = true
+				}
+			}
+		}
+		if is_error_propagation {
+			temp_name := t.gen_temp_name()
+			temp_ident := ast.Ident{
+				name: temp_name
+			}
+			mut stmts := []ast.Stmt{}
+			// 1. _t := call_expr
+			stmts << ast.AssignStmt{
+				op:  .decl_assign
+				lhs: [ast.Expr(temp_ident)]
+				rhs: [t.transform_expr(call_expr)]
+				pos: stmt.pos
+			}
+			// 2. if !_t { return 0 } (error propagation)
+			stmts << ast.ExprStmt{
+				expr: ast.IfExpr{
+					cond:  ast.PrefixExpr{
+						op:   .not
+						expr: temp_ident
+					}
+					stmts: [ast.Stmt(ast.ReturnStmt{
+						exprs: [ast.Expr(ast.BasicLiteral{
+							value: '0'
+							kind:  .number
+						})]
+					})]
+				}
+			}
+			// 3. a := _t
+			stmts << ast.AssignStmt{
+				op:  stmt.op
+				lhs: stmt.lhs
+				rhs: [ast.Expr(temp_ident)]
+				pos: stmt.pos
+			}
+			return stmts
+		}
 	}
 	// Check if RHS contains an OrExpr (nested case like cast(OrExpr))
 	if t.expr_has_or_expr(rhs_expr) {
@@ -3101,11 +3176,12 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 	// Native backends (arm64/x64) don't use Option/Result structs.
 	// `return error(...)` and `return none` should be lowered to `return 0` (error/none indicator).
 	if t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64) {
+		error_fn_names := ['error', 'error_posix', 'error_with_code', 'error_win32']
 		if stmt.exprs.len == 1 {
 			ret_expr := stmt.exprs[0]
-			// Check for `error(...)` call — appears as CallOrCastExpr with lhs=Ident{name:'error'}
+			// Check for `error(...)` / `error_posix(...)` call — appears as CallOrCastExpr with lhs=Ident
 			if ret_expr is ast.CallOrCastExpr {
-				if ret_expr.lhs is ast.Ident && ret_expr.lhs.name == 'error' {
+				if ret_expr.lhs is ast.Ident && ret_expr.lhs.name in error_fn_names {
 					return ast.ReturnStmt{
 						exprs: [
 							ast.Expr(ast.BasicLiteral{
@@ -3118,7 +3194,7 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 			}
 			// Also check for CallExpr form
 			if ret_expr is ast.CallExpr {
-				if ret_expr.lhs is ast.Ident && ret_expr.lhs.name == 'error' {
+				if ret_expr.lhs is ast.Ident && ret_expr.lhs.name in error_fn_names {
 					return ast.ReturnStmt{
 						exprs: [
 							ast.Expr(ast.BasicLiteral{

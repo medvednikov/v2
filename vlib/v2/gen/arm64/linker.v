@@ -58,7 +58,37 @@ const force_external_syms = ['_malloc', '_free', '_calloc', '_realloc', '_exit',
 	'_memmove', '_memset', '_memcmp', '___stdoutp', '___stderrp', '_puts', '_printf', '_write',
 	'_read', '_open', '_close', '_fwrite', '_fflush', '_fopen', '_fclose', '_putchar', '_sprintf',
 	'_snprintf', '_fprintf', '_sscanf', '_mmap', '_munmap', '_getcwd', '_access', '_readlink',
-	'_getenv', '_strlen']
+	'_getenv', '_strlen',
+	// Filesystem/directory operations
+	'_opendir', '_readdir', '_closedir', '_mkdir', '_rmdir', '_unlink', '_rename', '_remove',
+	'_stat', '_lstat', '_fstat', '_chmod', '_chdir', '_realpath', '_symlink', '_link',
+	// Process/system
+	'_getpid', '_getuid', '_geteuid', '_fork', '_execve', '_execvp', '_waitpid', '_kill',
+	'_system', '_posix_spawn', '_signal', '_atexit',
+	// I/O
+	'_fgets', '_fputs', '_fread', '_fseek', '_ftell', '_rewind', '_fileno', '_popen', '_pclose',
+	'_dup', '_dup2', '_pipe', '_isatty', '_freopen', '_dprintf', '_getc',
+	// String/memory
+	'_strdup', '_strcmp', '_strncmp', '_strchr', '_strrchr', '_strerror',
+	'_strncasecmp', '_strcasecmp', '_atoi', '_atof', '_qsort',
+	// Time
+	'_time', '_localtime_r', '_gmtime_r', '_mktime', '_gettimeofday', '_clock_gettime_nsec_np',
+	'_mach_absolute_time', '_mach_timebase_info', '_nanosleep', '_sleep', '_usleep', '_strftime',
+	// Other
+	'_rand', '_srand', '_isdigit', '_isspace', '_tolower', '_toupper',
+	'_setenv', '_unsetenv', '_sysconf', '_uname', '_gethostname',
+	'_pthread_mutex_init', '_pthread_mutex_lock', '_pthread_mutex_unlock', '_pthread_mutex_destroy',
+	'_pthread_self',
+	'_arc4random_buf',
+	'_proc_pidpath', '_backtrace', '_backtrace_symbols_fd',
+	// macOS specific
+	'_dispatch_semaphore_create', '_dispatch_semaphore_signal', '_dispatch_semaphore_wait',
+	'_dispatch_time', '_dispatch_release',
+	'_setvbuf', '_setbuf', '_memchr',
+	'_getlogin_r', '_getppid', '_getgid', '_getegid', '_ftruncate', '_mkstemp',
+	'_statvfs', '_chown', '_sigaction', '_sigemptyset', '_sigaddset', '_sigprocmask',
+	'_select', '_kqueue',
+	'_abs']
 
 pub struct Linker {
 	macho &MachOObject
@@ -382,8 +412,10 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 }
 
 fn (l Linker) codesign_output(output_path string) {
-	// Skip external codesign — our built-in ad-hoc signature is sufficient
-	// and codesign -s - -f can rewrite the binary layout, breaking stub→GOT references
+	// Re-sign with system codesign to ensure valid signature for large binaries.
+	// Our built-in ad-hoc signature works for small binaries but has issues with
+	// large (30MB+) executables that cause dyld to hang.
+	os.execute('codesign -s - -f ${output_path}')
 }
 
 fn (mut l Linker) write_header(ncmds int, cmdsize int) {
