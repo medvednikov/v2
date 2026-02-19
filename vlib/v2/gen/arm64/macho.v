@@ -27,9 +27,10 @@ pub mut:
 	str_data  []u8
 	data_data []u8
 
-	relocs    []RelocationInfo
-	symbols   []Symbol
-	str_table []u8
+	relocs       []RelocationInfo
+	symbols      []Symbol
+	str_table    []u8
+	c_extern_syms []string // C extern function symbols that need to resolve from libc
 }
 
 struct RelocationInfo {

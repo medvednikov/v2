@@ -109,12 +109,12 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 	mut t := time.now()
 	mut t_total := time.now()
 
-	// First pass: collect all defined symbols (except force_external_syms)
+	// First pass: collect all defined symbols (except external ones)
 	mut defined_syms := map[string]bool{}
 	for sym in l.macho.symbols {
 		// N_SECT (0x0E) means symbol is defined in a section
 		if (sym.type_ & 0x0E) == 0x0E {
-			// Don't track force_external symbols as defined - they should come from libc
+			// Don't track external symbols as defined - they should come from libc
 			if sym.name !in force_external_syms {
 				defined_syms[sym.name] = true
 			}
@@ -122,7 +122,7 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 	}
 
 	// Second pass: collect truly external symbols.
-	// Only force_external_syms (libc functions) should go through GOT/stubs.
+	// force_external_syms should go through GOT/stubs.
 	// All other undefined symbols are internal V functions or V-embedded C functions
 	// (like wyhash) that resolve to local stubs.
 	for sym in l.macho.symbols {
@@ -882,11 +882,11 @@ fn (mut l Linker) write_text_with_relocations() {
 	// Map symbol names to their defined addresses (for resolving undefined references)
 	mut sym_name_to_addr := map[string]u64{}
 
-	// First pass: collect all defined symbol addresses (except force_external_syms)
+	// First pass: collect all defined symbol addresses (except external syms)
 	for i, sym in l.macho.symbols {
 		// N_SECT (0x0E) means symbol is defined in a section
 		if (sym.type_ & 0x0E) == 0x0E {
-			// Skip force_external symbols - they should always resolve to libc
+			// Skip external symbols - they should always resolve to libc
 			is_external := sym.name in force_external_syms
 			if sym.sect == 1 {
 				// Text section symbol (code)
@@ -936,7 +936,7 @@ fn (mut l Linker) write_text_with_relocations() {
 		sym_name := l.macho.symbols[r.sym_idx].name
 		mut sym_addr := sym_addrs[r.sym_idx]
 		if sym_name in force_external_syms {
-			// Use stub address for force_external symbols
+			// Use stub address for external symbols
 			if sym_name in l.sym_to_got {
 				got_idx := l.sym_to_got[sym_name]
 				sym_addr = stubs_vmaddr + u64(got_idx * 12)
