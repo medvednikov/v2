@@ -177,6 +177,24 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 			g.sb.write_string('\t${elem_type} ${field_name}[')
 			if resolved_len > 0 {
 				g.sb.write_string('${resolved_len}')
+			} else if fixed_typ.len is ast.Ident {
+				// Fallback: resolve constant identifier from pre-collected values
+				ident_name := fixed_typ.len.name
+				mut found := false
+				if val := g.const_int_vals[ident_name] {
+					g.sb.write_string('${val}')
+					found = true
+				} else if g.cur_module != '' && g.cur_module != 'main'
+					&& g.cur_module != 'builtin' {
+					qualified := '${g.cur_module}__${ident_name}'
+					if val2 := g.const_int_vals[qualified] {
+						g.sb.write_string('${val2}')
+						found = true
+					}
+				}
+				if !found {
+					g.expr(fixed_typ.len)
+				}
 			} else {
 				g.expr(fixed_typ.len)
 			}

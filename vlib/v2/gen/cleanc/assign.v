@@ -17,6 +17,37 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 	if !expr_has_valid_data(lhs) || !expr_has_valid_data(rhs) {
 		return
 	}
+	// Skip assignments with empty ident LHS (e.g. or-expr expansion for void results)
+	if lhs is ast.Ident && (lhs.name == '' || lhs.name.len == 0) {
+		return
+	}
+	// Handle map index on LHS: m[key] = val → map__set(&m, &key, &(ValType){val})
+	if lhs is ast.IndexExpr && node.op == .assign {
+		lhs_type := g.get_expr_type(lhs.lhs)
+		if lhs_type == 'map' || lhs_type.starts_with('Map_') {
+			mut key_type := 'string'
+			mut val_type := g.get_expr_type(rhs)
+			if val_type == '' || val_type == 'int_literal' || val_type == 'float_literal' {
+				val_type = 'int'
+			}
+			if info := g.ensure_map_type_info(lhs_type) {
+				key_type = info.key_c_type
+				if val_type == 'int' {
+					val_type = info.value_c_type
+				}
+			}
+			g.write_indent()
+			g.sb.write_string('map__set((map*)&')
+			g.expr(lhs.lhs)
+			g.sb.write_string(', &(${key_type}[]){')
+			g.expr(lhs.expr)
+			g.sb.write_string('}[0], &(${val_type}[]){')
+			g.expr(rhs)
+			g.sb.write_string('}[0])')
+			g.sb.writeln(';')
+			return
+		}
+	}
 
 	// Multi-declaration with parallel RHS values:
 	// `a, b := x, y` should declare both variables (not just the first one).
@@ -317,12 +348,53 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		}
 		if !elem_type_from_array && rhs is ast.CallExpr {
 			if ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
-				if ret != ''
-					&& (ret != 'int' || typ in ['', 'void*', 'voidptr'] || typ.starts_with('Array_')
-					|| typ.starts_with('Map_')) {
+				// Only override typ from function return type when typ is still generic/unresolved.
+				// If get_expr_type already inferred a specific type (e.g. "string" from
+				// argument-based inference on array__slice), prefer it over the generic return type.
+				if ret != '' && (typ in ['', 'int', 'int_literal', 'float_literal', 'void*', 'voidptr']
+					|| typ.starts_with('Array_') || typ.starts_with('Map_')) {
 					if !(ret in ['void*', 'voidptr'] && typ !in ['', 'int', 'void*', 'voidptr']) {
 						typ = ret
 					}
+				}
+				// Auto-unwrap _result_/_option_ when the or-expr wasn't expanded by transformer.
+				// User variables (not _or_t* temps) should get the value type, not the wrapper type.
+				if typ.starts_with('_result_') && !name.starts_with('_or_t') {
+					val := g.result_value_type(typ)
+					if val != '' && val != 'void' {
+						typ = val
+					}
+				} else if typ.starts_with('_option_') && !name.starts_with('_or_t') {
+					val := option_value_type(typ)
+					if val != '' && val != 'void' {
+						typ = val
+					}
+				}
+			}
+		}
+		// For or-expr expansions (UnsafeExpr wrapping a _result_ call), unwrap the value type
+		if !elem_type_from_array && rhs is ast.UnsafeExpr
+			&& (typ == '' || typ == 'int' || typ == 'void*' || typ == 'voidptr') {
+			for stmt_inner in rhs.stmts {
+				if stmt_inner is ast.AssignStmt && stmt_inner.op == .decl_assign
+					&& stmt_inner.rhs.len == 1 {
+					inner_rhs := stmt_inner.rhs[0]
+					if inner_rhs is ast.CallExpr {
+						if ret := g.get_call_return_type(inner_rhs.lhs, inner_rhs.args.len) {
+							if ret.starts_with('_result_') {
+								val_type := g.result_value_type(ret)
+								if val_type != '' && val_type != 'void' {
+									typ = val_type
+								}
+							} else if ret.starts_with('_option_') {
+								val_type := option_value_type(ret)
+								if val_type != '' && val_type != 'void' {
+									typ = val_type
+								}
+							}
+						}
+					}
+					break
 				}
 			}
 		}
@@ -369,6 +441,16 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			&& rhs_type !in ['int', 'int_literal', 'float_literal']
 			&& !rhs_type.starts_with('_result_') && !rhs_type.starts_with('_option_') {
 			typ = rhs_type
+		}
+		// Fix type for NULL-initialized variables: should be void* not int
+		if typ == 'int' && (rhs is ast.Keyword && rhs.tok == .key_none) {
+			typ = 'void*'
+		}
+		if typ == 'int' {
+			rhs_str := g.expr_to_string(rhs)
+			if rhs_str == 'NULL' || rhs_str == '((void*)0)' {
+				typ = 'void*'
+			}
 		}
 		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
 			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
@@ -469,6 +551,21 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		g.expr(rhs)
 		g.sb.writeln(';')
 		g.remember_runtime_local_type(name, typ)
+		// Track array element type from sizeof(T) in __new_array* calls
+		if name != '' && typ == 'array' && rhs is ast.CallExpr {
+			call_name := g.resolve_call_name(rhs.lhs, rhs.args.len)
+			if call_name.contains('new_array') && rhs.args.len >= 3 {
+				sizeof_arg := rhs.args[2]
+				if sizeof_arg is ast.KeywordOperator && sizeof_arg.op == .key_sizeof {
+					if sizeof_arg.exprs.len > 0 {
+						elem_t := g.expr_type_to_c(sizeof_arg.exprs[0])
+						if elem_t != '' && elem_t != 'int' && elem_t != 'void' {
+							g.array_var_elem_types[name] = elem_t
+						}
+					}
+				}
+			}
+		}
 	} else {
 		// Assignment
 		if node.op == .left_shift_assign {
@@ -507,7 +604,19 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				return
 			}
 		}
-		if node.op == .assign && lhs is ast.Ident && g.get_local_var_c_type(lhs.name) == none
+		// Skip assignments to consts that were emitted as #define macros or static const arrays
+		if node.op == .assign && lhs is ast.Ident {
+			mut const_check_name := lhs.name
+			if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
+				&& !const_check_name.contains('__') {
+				const_check_name = '${g.cur_module}__${const_check_name}'
+			}
+			if const_check_name in g.const_exprs || const_check_name in g.fixed_array_globals {
+				return
+			}
+		}
+		if node.op == .assign && lhs is ast.Ident && lhs.name.len > 0
+			&& g.get_local_var_c_type(lhs.name) == none
 			&& !g.is_module_ident(lhs.name) && !g.is_module_local_const_or_global(lhs.name)
 			&& lhs.name !in ['errno', 'stdin', 'stdout', 'stderr', 'environ'] {
 			mut decl_type := g.get_expr_type(rhs)
@@ -556,6 +665,18 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 					g.sb.writeln(';')
 					return
 				}
+			}
+		}
+		// Skip assignments where LHS renders to empty (e.g. or-expr on void result)
+		if lhs is ast.Ident {
+			if lhs.name.len == 0 || lhs.name.str == unsafe { nil } {
+				return
+			}
+		}
+		{
+			lhs_rendered := g.expr_to_string(lhs)
+			if lhs_rendered.len == 0 || lhs_rendered.trim_space() == '' {
+				return
 			}
 		}
 		mut lhs_needs_deref := false

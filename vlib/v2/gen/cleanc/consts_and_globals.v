@@ -121,8 +121,23 @@ fn (mut g Gen) gen_global_decl(node ast.GlobalDecl) {
 			typ = g.get_expr_type(field.value)
 		}
 		if typ == '' || typ == 'void' {
-			typ = 'int'
+			// If the value emits to NULL/nil, the type should be void* (pointer), not int.
+			// The value can be Ident(NULL), UnsafeExpr{nil}, or other nil-like patterns.
+			val_str := g.expr_to_string(field.value)
+			if val_str == 'NULL' || val_str == '((void*)0)' || (val_str == '0' && field.value is ast.UnsafeExpr) {
+				typ = 'void*'
+			} else {
+				typ = 'int'
+			}
 		}
+		// When value renders to NULL and type is a primitive (int), override to void*.
+		if typ == 'int' && field.value !is ast.EmptyExpr {
+			val_str2 := g.expr_to_string(field.value)
+			if val_str2 == 'NULL' || val_str2 == '((void*)0)' {
+				typ = 'void*'
+			}
+		}
+		g.global_var_types[name] = typ
 		g.sb.write_string('${typ} ${name}')
 		if field.value !is ast.EmptyExpr {
 			// Function calls are not compile-time constants in C
@@ -170,8 +185,26 @@ fn (mut g Gen) gen_global_decl_extern(node ast.GlobalDecl) {
 			continue
 		}
 		if typ == '' || typ == 'void' {
-			typ = 'int'
+			// Check if value renders to NULL for proper void* typing.
+			if field.value !is ast.EmptyExpr {
+				val_str := g.expr_to_string(field.value)
+				if val_str == 'NULL' || val_str == '((void*)0)' {
+					typ = 'void*'
+				} else {
+					typ = 'int'
+				}
+			} else {
+				typ = 'int'
+			}
 		}
+		// When value renders to NULL and type is a primitive (int), override to void*.
+		if typ == 'int' && field.value !is ast.EmptyExpr {
+			val_str2 := g.expr_to_string(field.value)
+			if val_str2 == 'NULL' || val_str2 == '((void*)0)' {
+				typ = 'void*'
+			}
+		}
+		g.global_var_types[name] = typ
 		g.sb.writeln('extern ${typ} ${name};')
 	}
 }
@@ -287,6 +320,9 @@ fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
 			continue
 		}
 		typ := g.get_expr_type(field.value)
+		if typ != '' && typ != 'int' {
+			g.global_var_types[name] = typ
+		}
 		// Function calls are not compile-time constants in C; emit as zero-initialized globals.
 		if g.contains_call_expr(field.value) {
 			if typ in ['bool', 'char', 'rune', 'int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32',
@@ -326,9 +362,23 @@ fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
 			}
 		} else {
 			// Fallback for aggregate literals and other complex consts.
-			g.sb.write_string('#define ${name} ')
-			g.expr(field.value)
-			g.sb.writeln('')
+			// Emit as #define for consts that won't be reassigned in init functions.
+			// Skip #define for builtin consts (none__, etc.) that may be re-declared
+			// in __v_init_consts functions, causing macro-expansion conflicts.
+			if g.contains_call_expr(field.value) || (g.cur_module == '' || g.cur_module == 'builtin') {
+				// Builtin complex consts (none__, etc.) use zero-init at file scope;
+				// the actual value is assigned in __v_init_consts_builtin.
+				if typ in ['bool', 'char', 'rune', 'int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16',
+					'u32', 'u64', 'usize', 'isize', 'f32', 'f64'] {
+					g.sb.writeln('${typ} ${name} = 0;')
+				} else {
+					g.sb.writeln('${typ} ${name} = {0};')
+				}
+			} else {
+				g.sb.write_string('#define ${name} ')
+				g.expr(field.value)
+				g.sb.writeln('')
+			}
 		}
 	}
 }

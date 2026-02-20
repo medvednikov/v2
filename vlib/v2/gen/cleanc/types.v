@@ -146,6 +146,101 @@ fn (mut g Gen) ensure_map_type_info(map_name string) ?MapTypeInfo {
 }
 
 fn (mut g Gen) collect_module_type_names() {
+	// First pass: register all type names with their modules (needed for --skip-type-check)
+	for file in g.files {
+		g.set_file_module(file)
+		// Record all modules and their import aliases
+		if g.cur_module != '' {
+			g.known_modules[g.cur_module] = true
+		}
+		for imp in file.imports {
+			mod_name := imp.name.replace('.', '_')
+			if mod_name != '' {
+				g.known_modules[mod_name] = true
+				// Also register the last component (e.g. 'strconv' from 'math.strconv')
+				short := mod_name.all_after_last('_')
+				if short != '' && short != mod_name {
+					g.known_modules[short] = true
+				}
+				if imp.alias != '' {
+					g.known_modules[imp.alias] = true
+				}
+			}
+		}
+		if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin' {
+			for stmt in file.stmts {
+				if !stmt_has_valid_data(stmt) {
+					continue
+				}
+				match stmt {
+					ast.StructDecl {
+						if stmt.language == .v && stmt.name != '' {
+							g.module_type_names[stmt.name] = g.cur_module
+						}
+					}
+					ast.EnumDecl {
+						if stmt.name != '' {
+							g.module_type_names[stmt.name] = g.cur_module
+						}
+					}
+					ast.TypeDecl {
+						if stmt.language != .c && stmt.name != '' {
+							g.module_type_names[stmt.name] = g.cur_module
+						}
+					}
+					ast.InterfaceDecl {
+						if stmt.name != '' {
+							g.module_type_names[stmt.name] = g.cur_module
+						}
+					}
+					ast.ConstDecl {
+						for field in stmt.fields {
+							if field.name != '' {
+								g.module_const_names[field.name] = g.cur_module
+							}
+						}
+					}
+					ast.GlobalDecl {
+						for field in stmt.fields {
+							if field.name != '' {
+								g.module_const_names[field.name] = g.cur_module
+							}
+						}
+					}
+					ast.FnDecl {
+						if stmt.language == .v && stmt.name != '' && !stmt.is_method {
+							g.module_fn_names[stmt.name] = g.cur_module
+						}
+					}
+					else {}
+				}
+			}
+		}
+	}
+	// Collect integer const values for array size resolution (needed before struct defs)
+	for file in g.files {
+		g.set_file_module(file)
+		for stmt in file.stmts {
+			if !stmt_has_valid_data(stmt) {
+				continue
+			}
+			if stmt is ast.ConstDecl {
+				for field in stmt.fields {
+					if field.value is ast.BasicLiteral && field.value.kind == .number {
+						const_name := if g.cur_module != '' && g.cur_module != 'main'
+							&& g.cur_module != 'builtin' {
+							'${g.cur_module}__${field.name}'
+						} else {
+							field.name
+						}
+						g.const_int_vals[const_name] = field.value.value.int()
+						g.const_int_vals[field.name] = field.value.value.int()
+					}
+				}
+			}
+		}
+	}
+	// Second pass: collect struct field types and enum fields
 	for file in g.files {
 		g.set_file_module(file)
 		for stmt in file.stmts {
@@ -723,6 +818,22 @@ fn (mut g Gen) method_receiver_base_type(expr ast.Expr) string {
 			}
 		}
 	}
+	// Handle SelectorExpr: resolve struct field type via struct_field_types
+	if expr is ast.SelectorExpr {
+		parent_type := g.method_receiver_base_type(expr.lhs)
+		if parent_type != '' && parent_type != 'int' {
+			field_key := '${parent_type}.${expr.rhs.name}'
+			if field_type := g.struct_field_types[field_key] {
+				mut base := field_type
+				if base.ends_with('*') {
+					base = base[..base.len - 1]
+				}
+				if base != '' && base != 'int' {
+					return base
+				}
+			}
+		}
+	}
 	// Fast path: env pos.id O(1) lookup (covers most non-Ident receivers).
 	if g.env != unsafe { nil } && expr_has_valid_data(expr) {
 		pos := expr.pos()
@@ -1050,6 +1161,18 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 		if local_type := g.get_local_var_c_type(node.name) {
 			return local_type
 		}
+		// Check global variable types tracked from global declarations.
+		if global_type := g.global_var_types[node.name] {
+			return global_type
+		}
+		// Also try module-qualified name for globals/consts
+		if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
+			&& !node.name.contains('__') {
+			qualified := '${g.cur_module}__${node.name}'
+			if global_type := g.global_var_types[qualified] {
+				return global_type
+			}
+		}
 		// get_local_var_c_type already checked fn scope + runtime_local_types.
 		// Only module and builtin scope fallbacks remain.
 		if g.env != unsafe { nil } {
@@ -1272,6 +1395,23 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 					return elem
 				}
 			}
+			// Pointer indexing: ptr[i] gives the pointed-to type (e.g. StrIntpData*[i] → StrIntpData)
+			if lhs_type.ends_with('*') {
+				return lhs_type[..lhs_type.len - 1]
+			}
+			// Check tracked array element types (from sizeof(T) in __new_array*)
+			if lhs_type == 'array' && node.lhs is ast.Ident {
+				if tracked_elem := g.array_var_elem_types[node.lhs.name] {
+					return tracked_elem
+				}
+			}
+			// For array__slice/array__clone/etc calls, infer element type from the source array arg
+			if lhs_type == 'array' && node.lhs is ast.CallExpr && node.lhs.args.len > 0 {
+				src_type := g.get_expr_type(node.lhs.args[0])
+				if src_type.starts_with('Array_') {
+					return src_type['Array_'.len..].trim_right('*')
+				}
+			}
 			return 'int'
 		}
 		ast.InitExpr {
@@ -1364,8 +1504,38 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 					return elem_type
 				}
 			}
+			// Remap array__slice return type to string when first arg is string
+			if node.lhs is ast.Ident && node.lhs.name == 'array__slice'
+				&& node.args.len > 0 {
+				first_arg_type := g.get_expr_type(node.args[0])
+				if first_arg_type == 'string' {
+					return 'string'
+				}
+			}
 			if ret := g.get_call_return_type(node.lhs, node.args.len) {
 				return ret
+			}
+			// Fallback: known string-returning methods when full resolution fails
+			if node.lhs is ast.Ident {
+				if node.lhs.name in ['array__string', 'array__join', 'array__bytestr'] {
+					return 'string'
+				}
+			} else if node.lhs is ast.SelectorExpr {
+				method := node.lhs.rhs.name
+				if method in ['string', 'join', 'join_lines', 'bytestr', 'str', 'substr',
+					'trim', 'trim_left', 'trim_right', 'trim_space', 'to_upper', 'to_lower',
+					'replace', 'clone'] {
+					if method in ['string', 'join', 'join_lines', 'bytestr'] {
+						return 'string'
+					}
+					// For methods on a string receiver, return string
+					if node.args.len > 0 {
+						receiver_type := g.get_expr_type(node.args[0])
+						if receiver_type == 'string' {
+							return 'string'
+						}
+					}
+				}
 			}
 			return 'int'
 		}
@@ -1634,6 +1804,10 @@ fn (g &Gen) is_module_local_type(name string) bool {
 	if obj := g.lookup_module_scope_object(name) {
 		return obj is types.Type
 	}
+	// Fallback for --skip-type-check: use pre-collected module type names from AST
+	if mod := g.module_type_names[name] {
+		return mod == g.cur_module
+	}
 	return false
 }
 
@@ -1643,6 +1817,10 @@ fn (g &Gen) is_module_local_const_or_global(name string) bool {
 	}
 	if obj := g.lookup_module_scope_object(name) {
 		return obj is types.Const || obj is types.Global
+	}
+	// Fallback for --skip-type-check: use pre-collected module const names from AST
+	if mod := g.module_const_names[name] {
+		return mod == g.cur_module
 	}
 	return false
 }
@@ -1658,6 +1836,15 @@ fn (g &Gen) is_module_local_fn(name string) bool {
 	if sanitized != name {
 		if obj := g.lookup_module_scope_object(sanitized) {
 			return obj is types.Fn
+		}
+	}
+	// Fallback for --skip-type-check: use pre-collected module fn names from AST
+	if mod := g.module_fn_names[name] {
+		return mod == g.cur_module
+	}
+	if sanitized != name {
+		if mod := g.module_fn_names[sanitized] {
+			return mod == g.cur_module
 		}
 	}
 	return false
@@ -2188,6 +2375,16 @@ fn (mut g Gen) selector_field_type(sel ast.SelectorExpr) string {
 		resolved := g.types_type_to_c(raw_type)
 		if resolved != '' {
 			return resolved
+		}
+	}
+	// Fallback: use struct_field_types when type checker info is unavailable
+	parent_type := g.method_receiver_base_type(sel.lhs)
+	if parent_type != '' && parent_type != 'int' {
+		field_key := '${parent_type}.${rhs}'
+		if field_type := g.struct_field_types[field_key] {
+			if field_type != '' {
+				return field_type
+			}
 		}
 	}
 	return ''

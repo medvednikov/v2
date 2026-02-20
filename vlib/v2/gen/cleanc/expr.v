@@ -37,15 +37,15 @@ fn is_none_like_expr(expr ast.Expr) bool {
 }
 
 fn (mut g Gen) gen_interface_cast(type_name string, value_expr ast.Expr) bool {
-	// Look up the type in the environment to check if it's an interface
-	if g.env == unsafe { nil } {
-		return false
-	}
-	mut is_iface := false
-	if mut scope := g.env_scope(g.cur_module) {
-		if obj := scope.lookup_parent(type_name, 0) {
-			if obj is types.Type && obj is types.Interface {
-				is_iface = true
+	// Check if the type is an interface via the collected interface methods map (works
+	// even without type checker scopes, e.g. --skip-type-check).
+	mut is_iface := type_name in g.interface_methods
+	if !is_iface && g.env != unsafe { nil } {
+		if mut scope := g.env_scope(g.cur_module) {
+			if obj := scope.lookup_parent(type_name, 0) {
+				if obj is types.Type && obj is types.Interface {
+					is_iface = true
+				}
 			}
 		}
 	}
@@ -86,6 +86,12 @@ fn (mut g Gen) gen_interface_cast(type_name string, value_expr ast.Expr) bool {
 	if methods := g.interface_methods[type_name] {
 		for method in methods {
 			fn_name := '${base_concrete}__${method.name}'
+			// Check if the concrete type actually implements this method.
+			// If not (e.g. None__ has no msg/code), use NULL.
+			if fn_name !in g.fn_return_types && fn_name !in g.fn_param_is_ptr {
+				g.sb.write_string(', .${method.name} = 0')
+				continue
+			}
 			mut target_name := fn_name
 			if ptr_params := g.fn_param_is_ptr[fn_name] {
 				if ptr_params.len > 0 && !ptr_params[0] {
@@ -646,6 +652,42 @@ fn (mut g Gen) expr(node ast.Expr) {
 				g.sb.write_string(')')
 				return
 			}
+			// String ordering: use string__lt/string__le for <, <=, >, >=
+			if node.op in [.lt, .gt, .le, .ge] && is_string_cmp {
+				// string__lt(a, b) for a < b; !string__lt(b, a) for a >= b, etc.
+				match node.op {
+					.lt {
+						g.sb.write_string('(string__lt(')
+						g.expr(node.lhs)
+						g.sb.write_string(', ')
+						g.expr(node.rhs)
+						g.sb.write_string('))')
+					}
+					.gt {
+						g.sb.write_string('(string__lt(')
+						g.expr(node.rhs)
+						g.sb.write_string(', ')
+						g.expr(node.lhs)
+						g.sb.write_string('))')
+					}
+					.le {
+						g.sb.write_string('(!string__lt(')
+						g.expr(node.rhs)
+						g.sb.write_string(', ')
+						g.expr(node.lhs)
+						g.sb.write_string('))')
+					}
+					.ge {
+						g.sb.write_string('(!string__lt(')
+						g.expr(node.lhs)
+						g.sb.write_string(', ')
+						g.expr(node.rhs)
+						g.sb.write_string('))')
+					}
+					else {}
+				}
+				return
+			}
 			// Map comparison: use memcmp on the map struct
 			is_lhs_map := lhs_type == 'map' || lhs_type.starts_with('Map_')
 			is_rhs_map := rhs_type == 'map' || rhs_type.starts_with('Map_')
@@ -764,6 +806,17 @@ fn (mut g Gen) expr(node ast.Expr) {
 						if raw_type := g.get_raw_type(idx.lhs) {
 							if raw_type is types.ArrayFixed {
 								// Fixed arrays: &arr[i]
+								g.sb.write_string('&')
+								g.expr(idx.lhs)
+								g.sb.write_string('[')
+								g.expr(idx.expr)
+								g.sb.write_string(']')
+								return
+							}
+						}
+						// Check local fixed array variables (skip-type-check fallback)
+						if local_type := g.get_local_var_c_type(idx.lhs.name) {
+							if local_type.starts_with('Array_fixed_') {
 								g.sb.write_string('&')
 								g.expr(idx.lhs)
 								g.sb.write_string('[')
@@ -902,6 +955,14 @@ fn (mut g Gen) expr(node ast.Expr) {
 							return
 						}
 					}
+				}
+				// Skip dereference on non-pointer types (e.g. *err where err is IError value)
+				expr_type := g.get_expr_type(node.expr)
+				if expr_type != '' && expr_type != 'int' && expr_type != 'void'
+					&& !expr_type.ends_with('*') && expr_type != 'voidptr'
+					&& expr_type != 'byteptr' {
+					g.expr(node.expr)
+					return
 				}
 			}
 			op := match node.op {
@@ -1124,7 +1185,16 @@ fn (mut g Gen) expr(node ast.Expr) {
 				}
 				lhs_struct := g.selector_struct_name(node.lhs)
 				owner := g.embedded_owner_for(lhs_struct, node.rhs.name)
-				field_name := escape_c_keyword(node.rhs.name)
+				mut field_name := escape_c_keyword(node.rhs.name)
+				// Option structs use .state (u8) not .is_error (bool).
+				// The transformer may generate .is_error for option types when
+				// it can't distinguish option from result (--skip-type-check).
+				if field_name == 'is_error' {
+					lt := g.get_expr_type(node.lhs)
+					if lt.starts_with('_option') {
+						field_name = 'state'
+					}
+				}
 				selector := if use_ptr { '->' } else { '.' }
 				g.expr(node.lhs)
 				if owner != '' {
@@ -1537,6 +1607,16 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 			g.sb.write_string(']')
 			return
 		}
+		// Check if local variable is a fixed array (registered during decl_assign)
+		if local_type := g.get_local_var_c_type(node.lhs.name) {
+			if local_type.starts_with('Array_fixed_') {
+				g.expr(node.lhs)
+				g.sb.write_string('[')
+				g.expr(node.expr)
+				g.sb.write_string(']')
+				return
+			}
+		}
 	}
 	// Fixed-size array struct fields are emitted as plain C arrays.
 	if node.lhs is ast.SelectorExpr && g.is_fixed_array_selector(node.lhs) {
@@ -1596,6 +1676,7 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 		}
 		if raw_type is types.Map {
 			g.panic_map_index_expr(node)
+			return
 		}
 		if raw_type is types.String {
 			if node.lhs is ast.SelectorExpr && g.is_fixed_array_selector(node.lhs) {
@@ -1642,6 +1723,7 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 				return
 			} else if raw_type.base_type is types.Map {
 				g.panic_map_index_expr(node)
+				return
 			} else if raw_type.base_type is types.Pointer || raw_type.base_type is types.String {
 				// Pointer to pointer (e.g. &&char) or pointer to string (e.g. &string used as array):
 				// plain C pointer arithmetic
@@ -1666,6 +1748,7 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 	lhs_type := g.get_expr_type(node.lhs)
 	if lhs_type == 'map' || lhs_type.starts_with('Map_') {
 		g.panic_map_index_expr(node)
+		return
 	}
 	if lhs_type == 'string' {
 		g.expr(node.lhs)
@@ -1743,6 +1826,12 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 						}
 					}
 				}
+				// Check tracked array element types (from sizeof(T) in __new_array*)
+				if (elem_type == '' || elem_type == 'int') && node.lhs is ast.Ident {
+					if tracked_elem := g.array_var_elem_types[node.lhs.name] {
+						elem_type = tracked_elem
+					}
+				}
 			}
 		}
 		if elem_type == '' {
@@ -1778,6 +1867,14 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 fn (mut g Gen) panic_map_index_expr(node ast.IndexExpr) {
 	// In v3 (ARM64-compiled), calling .name() on corrupt AST exprs can crash.
 	// Generate a safe C fallback instead of panicking.
+	// Try to determine the map value type for a type-correct zero value.
+	lhs_type := g.get_expr_type(node.lhs)
+	if lhs_type.starts_with('Map_') {
+		if info := g.ensure_map_type_info(lhs_type) {
+			g.sb.write_string('((${info.value_c_type}){0}) /* unlowered map index */')
+			return
+		}
+	}
 	g.sb.write_string('0 /* unlowered map index */')
 }
 
@@ -1843,8 +1940,21 @@ fn is_header_type_only_const_expr(expr ast.Expr) bool {
 	}
 }
 
+fn is_c_macro_name(name string) bool {
+	return name in ['WEXITSTATUS', 'WTERMSIG', 'WIFSIGNALED', 'WIFEXITED', 'WIFSTOPPED',
+		'FD_ZERO', 'FD_SET', 'FD_ISSET', 'FD_CLR']
+}
+
 fn (mut g Gen) gen_cast_expr(node ast.CastExpr) {
 	type_name := g.expr_type_to_c(node.typ)
+	// Handle C macros that appear as cast expressions: emit as function calls instead
+	macro_name := if type_name.starts_with('struct ') { type_name[7..] } else { type_name }
+	if is_c_macro_name(macro_name) {
+		g.sb.write_string('${macro_name}(')
+		g.expr(node.expr)
+		g.sb.write_string(')')
+		return
+	}
 	if type_name.starts_with('_option_') {
 		value_type := option_value_type(type_name)
 		if value_type != '' && value_type != 'void' {

@@ -284,5 +284,15 @@ fn (mut g Gen) gen_interface_decl(node ast.InterfaceDecl) {
 	}
 	g.interface_methods[name] = methods
 	g.sb.writeln('};')
+	// For IError interface, emit vtable dispatch macros.
+	// The transformer generates calls like IError__msg(err, err._object)
+	// which need to dispatch through the function pointer in the struct.
+	// Using macros instead of inline functions to avoid incomplete type issues
+	// (IError struct may be defined before string struct).
+	if name == 'IError' || name == 'builtin__IError' {
+		g.sb.writeln('#define IError__msg(e, obj) ((e).msg(obj))')
+		g.sb.writeln('#define IError__type_name(e, obj) ((e).type_name(obj))')
+		g.sb.writeln('#define IError__code(e, obj) ((e).code(obj))')
+	}
 	g.sb.writeln('')
 }

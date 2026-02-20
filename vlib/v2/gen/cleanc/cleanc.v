@@ -65,8 +65,16 @@ mut:
 	not_local_var_cache         map[string]bool    // per-function negative cache for get_local_var_c_type
 	resolved_module_names       map[string]string  // per-function cache for resolve_module_name
 	cached_env_scopes           map[string]voidptr // cache of env_scope results (avoids repeated locking)
+	module_type_names           map[string]string  // unqualified type name → module name (fallback for --skip-type-check)
+	module_const_names          map[string]string  // unqualified const name → module name (fallback for --skip-type-check)
+	module_fn_names             map[string]string  // unqualified fn name → module name (fallback for --skip-type-check)
+	known_modules               map[string]bool    // all module names found in AST files (fallback for --skip-type-check)
+
+	array_var_elem_types        map[string]string  // array variable name → element type (tracked from sizeof(T) in __new_array*)
+	global_var_types            map[string]string  // global variable name → C type (tracked from global declarations)
 
 	const_exprs     map[string]string // const name → C expression string (for inlining)
+	const_int_vals  map[string]int    // const name → integer value (for array sizes)
 	used_fn_keys    map[string]bool
 	called_fn_names map[string]bool
 	anon_fn_defs    []string // lifted anonymous function definitions
@@ -144,6 +152,9 @@ pub fn Gen.new_with_env_and_pref(files []ast.File, env &types.Environment, p &pr
 		needed_ierror_wrapper_bases: map[string]bool{}
 		used_fn_keys:                map[string]bool{}
 		called_fn_names:             map[string]bool{}
+		module_type_names:           map[string]string{}
+		module_const_names:          map[string]string{}
+		module_fn_names:             map[string]string{}
 	}
 }
 
@@ -554,11 +565,27 @@ pub fn (mut g Gen) gen() string {
 	stage_start = g.mark_cgen_step(stats_enabled, stats_scope, mut stats_sw, stage_start,
 		'final helper emission')
 
+	// Collect any late-discovered fixed array typedefs (from function bodies in pass 5)
+	mut late_fixed_arrays := strings.new_builder(256)
+	for name, info in g.collected_fixed_array_types {
+		alias_key := 'alias_${name}'
+		body_key := 'body_${name}'
+		if alias_key !in g.emitted_types && body_key !in g.emitted_types {
+			late_fixed_arrays.writeln('typedef ${info.elem_type} ${name} [${info.size}];')
+			late_fixed_arrays.writeln('#define ${name}_str(a) ((string){.str = "${name}", .len = ${name.len}, .is_lit = 1})')
+			late_fixed_arrays.writeln('#define ${name}__str(a) ${name}_str(a)')
+		}
+	}
+	late_fixed_str := late_fixed_arrays.str()
+	has_late_inserts := g.anon_fn_defs.len > 0 || late_fixed_str.len > 0
 	mut out := ''
-	if g.anon_fn_defs.len > 0 {
+	if has_late_inserts {
 		full := g.sb.str()
 		mut out_sb := strings.new_builder(full.len + 4096)
 		unsafe { out_sb.write_ptr(full.str, g.pass5_start_pos) }
+		if late_fixed_str.len > 0 {
+			out_sb.write_string(late_fixed_str)
+		}
 		for def in g.anon_fn_defs {
 			out_sb.write_string(def)
 		}
@@ -586,6 +613,12 @@ fn is_c_identifier_like(name string) bool {
 		}
 	}
 	return true
+}
+
+fn is_c_primitive_type(name string) bool {
+	return name in ['bool', 'char', 'rune', 'int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32',
+		'u64', 'usize', 'isize', 'f32', 'f64', 'void', 'string', 'array', 'map', 'voidptr',
+		'charptr', 'byteptr', 'float_literal', 'int_literal']
 }
 
 fn is_c_runtime_function(name string) bool {
@@ -656,6 +689,10 @@ fn (mut g Gen) is_module_ident(name string) bool {
 				result = obj is types.Module
 			}
 		}
+	}
+	// Fallback for --skip-type-check: use pre-collected module names from AST
+	if !result && name in g.known_modules {
+		result = true
 	}
 	g.is_module_ident_cache[name] = result
 	return result

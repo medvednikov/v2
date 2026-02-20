@@ -330,5 +330,12 @@ fn (mut g Gen) gen_enum_decl(node ast.EnumDecl) {
 	if enum_short_str_fn !in g.fn_return_types {
 		g.sb.writeln('#define ${name}_str(v) ${name}__str(v)')
 	}
+	// Emit flag enum helper macros (.has, .all, .set, .clear)
+	if is_flag {
+		g.sb.writeln('#define ${name}__has(v, flag) (((int)(v) & (int)(flag)) != 0)')
+		g.sb.writeln('#define ${name}__all(v, flags) (((int)(v) & (int)(flags)) == (int)(flags))')
+		g.sb.writeln('#define ${name}__set(v, flag) ((v) |= (flag))')
+		g.sb.writeln('#define ${name}__clear(v, flag) ((v) &= ~(flag))')
+	}
 	g.sb.writeln('')
 }

@@ -118,6 +118,13 @@ fn (mut g Gen) array_append_elem_type(lhs ast.Expr, rhs ast.Expr) (bool, string)
 	if lhs_type.starts_with('Array_') {
 		elem_type = lhs_type['Array_'.len..].trim_right('*')
 	}
+	// Check if LHS type (stripped of pointer) is a known array alias (e.g. strings__Builder = []u8)
+	if !is_array_append {
+		base_lhs := lhs_type.trim_right('*')
+		if base_lhs in g.array_aliases || base_lhs == 'array' {
+			is_array_append = true
+		}
+	}
 	if raw_type := g.get_raw_type(lhs) {
 		match raw_type {
 			types.Array {
@@ -162,7 +169,18 @@ fn (mut g Gen) array_append_elem_type(lhs ast.Expr, rhs ast.Expr) (bool, string)
 	if elem_type == '' || elem_type == 'int' {
 		rhs_type := g.get_expr_type(rhs)
 		if rhs_type != '' && rhs_type !in ['int_literal', 'float_literal'] {
-			elem_type = rhs_type.trim_right('*')
+			// For C pointer types (char*, FILE*, etc.), preserve the * as it's part of the element type.
+			// Only strip trailing * for V array pointer types (Array_string* → string).
+			if rhs_type.ends_with('*') && !rhs_type.starts_with('Array_')
+				&& !rhs_type.starts_with('Map_') {
+				elem_type = rhs_type
+			} else {
+				elem_type = rhs_type.trim_right('*')
+			}
+			// void is incomplete; keep as void* for voidptr elements
+			if elem_type == 'void' {
+				elem_type = 'void*'
+			}
 		}
 	}
 	// When raw_type gives a module-qualified name (e.g. term__Coord) but the rhs

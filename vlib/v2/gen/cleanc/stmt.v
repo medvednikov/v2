@@ -224,10 +224,37 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 					g.sb.writeln('return (${g.cur_fn_ret_type}){ .is_error=false };')
 					return
 				}
+				// Detect error type returns: when returning a struct (InitExpr) that doesn't
+				// match the expected value type (e.g. Eof{} in a !int function), generate
+				// an error return instead of a success return.
+				if expr is ast.InitExpr && expr_type != '' && expr_type != 'int'
+					&& expr_type != value_type {
+					g.sb.writeln('return (${g.cur_fn_ret_type}){ .is_error=true };')
+					return
+				}
 				g.sb.write_string('return ({ ${g.cur_fn_ret_type} _res = (${g.cur_fn_ret_type}){0}; ${value_type} _val = ')
 				g.expr(expr)
 				g.sb.writeln('; _result_ok(&_val, (_result*)&_res, sizeof(_val)); _res; });')
 				return
+			}
+			// IError interface return: wrap concrete type pointer in IError vtable struct
+			if g.cur_fn_ret_type == 'IError' && node.exprs.len > 0 {
+				expr := node.exprs[0]
+				expr_type := g.get_expr_type(expr)
+				concrete := expr_type.trim_right('*')
+				if concrete != '' && concrete != 'IError' && concrete != 'int'
+					&& concrete != 'void' && expr_type.ends_with('*') {
+					type_id := interface_type_id_for_name(concrete)
+					g.needed_ierror_wrapper_bases[concrete] = true
+					g.sb.write_string('return (IError){ ._object = ')
+					g.expr(expr)
+					g.sb.write_string(', ._type_id = ${type_id}')
+					g.sb.write_string(', .type_name = IError_${concrete}_type_name_wrapper')
+					g.sb.write_string(', .msg = IError_${concrete}_msg_wrapper')
+					g.sb.write_string(', .code = IError_${concrete}_code_wrapper')
+					g.sb.writeln(' };')
+					return
+				}
 			}
 			g.sb.write_string('return')
 			if node.exprs.len > 0 {

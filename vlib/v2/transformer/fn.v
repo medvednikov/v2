@@ -2073,7 +2073,8 @@ fn (t &Transformer) is_flag_enum_receiver(receiver ast.Expr, inferred string) bo
 fn (t &Transformer) is_cast_type_name(name string) bool {
 	// Built-in primitive types
 	if name in ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64', 'bool',
-		'byte', 'char', 'rune', 'usize', 'isize', 'string', 'byteptr', 'charptr', 'voidptr'] {
+		'byte', 'char', 'rune', 'usize', 'isize', 'string', 'byteptr', 'charptr', 'voidptr',
+		'array', 'map', 'mapnode'] {
 		return true
 	}
 	// Type names start with uppercase in V
@@ -2087,10 +2088,17 @@ fn is_c_type_name_for_cast(name string) bool {
 	// Keep in sync with cleanc `is_c_type_name`.
 	// This list is only used to disambiguate `C.TYPE(x)` casts from `C.fn(x)` calls
 	// in `CallOrCastExpr` lowering.
-	return name in ['FILE', 'DIR', 'va_list', 'pthread_t', 'pthread_mutex_t', 'pthread_cond_t',
+	if name in ['FILE', 'DIR', 'va_list', 'pthread_t', 'pthread_mutex_t', 'pthread_cond_t',
 		'pthread_rwlock_t', 'pthread_attr_t', 'stat', 'tm', 'timespec', 'timeval', 'dirent',
 		'termios', 'sockaddr', 'sockaddr_in', 'sockaddr_in6', 'sockaddr_un',
-		'mach_timebase_info_data_t']
+		'mach_timebase_info_data_t', 'IError'] {
+		return true
+	}
+	// C type names that start with uppercase are very likely types, not functions.
+	if name.len > 0 && name[0] >= `A` && name[0] <= `Z` {
+		return true
+	}
+	return false
 }
 
 fn (t &Transformer) call_or_cast_lhs_is_type(lhs ast.Expr) bool {

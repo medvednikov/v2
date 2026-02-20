@@ -269,6 +269,7 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 	// Set function scope for type lookups
 	g.cur_fn_name = node.name
 	g.runtime_local_types = map[string]string{}
+	g.array_var_elem_types = map[string]string{}
 	g.is_module_ident_cache = map[string]bool{}
 	g.not_local_var_cache = map[string]bool{}
 	g.resolved_module_names = map[string]string{}
@@ -331,6 +332,19 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 	if node.is_method && node.receiver.name != '' && node.receiver.is_mut {
 		g.cur_fn_mut_params[node.receiver.name] = true
 	}
+	// Register receiver type for method calls within the function body.
+	// Without this, method_receiver_base_type cannot resolve receiver types
+	// when the type checker scope is unavailable (e.g. --skip-type-check).
+	if node.is_method && node.receiver.name != '' && g.cur_fn_scope == unsafe { nil } {
+		recv_type := g.expr_type_to_c(node.receiver.typ)
+		if recv_type != '' {
+			mut recv_c_type := recv_type
+			if node.receiver.is_mut {
+				recv_c_type += '*'
+			}
+			g.runtime_local_types[node.receiver.name] = recv_c_type
+		}
+	}
 	for param in node.typ.params {
 		if param.is_mut {
 			g.cur_fn_mut_params[param.name] = true
@@ -340,7 +354,11 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		if g.cur_fn_scope == unsafe { nil } {
 			param_type := g.expr_type_to_c(param.typ)
 			if param_type != '' {
-				g.runtime_local_types[param.name] = param_type
+				mut c_type := param_type
+				if param.is_mut {
+					c_type += '*'
+				}
+				g.runtime_local_types[param.name] = c_type
 			}
 		}
 	}
@@ -528,6 +546,18 @@ fn (mut g Gen) expr_is_pointer(arg ast.Expr) bool {
 		}
 		if base_arg.name in g.cur_fn_mut_params {
 			return true
+		}
+		// Check global variable types
+		if global_type := g.global_var_types[base_arg.name] {
+			return global_type.ends_with('*') || global_type in ['voidptr', 'charptr', 'byteptr']
+		}
+		// Also try module-qualified name
+		if g.cur_module != '' && g.cur_module != 'main' && g.cur_module != 'builtin'
+			&& !base_arg.name.contains('__') {
+			qualified := '${g.cur_module}__${base_arg.name}'
+			if global_type := g.global_var_types[qualified] {
+				return global_type.ends_with('*') || global_type in ['voidptr', 'charptr', 'byteptr']
+			}
 		}
 	}
 	if raw_type := g.get_raw_type(base_arg) {
@@ -821,8 +851,13 @@ fn (mut g Gen) gen_call_arg(fn_name string, idx int, arg ast.Expr) {
 				}
 				// Fallback: use expression type or default to array
 				wrap_type := g.get_expr_type(base_arg)
-				if wrap_type != '' {
+				if wrap_type != '' && wrap_type != 'void' {
 					g.gen_addr_of_expr(base_arg, wrap_type)
+					return
+				}
+				if wrap_type == 'void' {
+					// void is incomplete; use void* for pointer values
+					g.gen_addr_of_expr(base_arg, 'void*')
 					return
 				}
 				if base_arg is ast.StringLiteral || base_arg is ast.StringInterLiteral {
@@ -1104,8 +1139,22 @@ fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
 		}
 		return none
 	}
-	if ret := g.fn_return_types[c_name] {
+	// Remap function names BEFORE return type lookup (same as call_expr remappings)
+	mut effective_name := c_name
+	if effective_name == 'string__runes_iterator' {
+		effective_name = 'string__runes'
+	}
+	if effective_name == 'int__ascii_str' {
+		effective_name = 'u8__ascii_str'
+	}
+	if ret := g.fn_return_types[effective_name] {
 		return ret
+	}
+	// Also try original name if remap didn't help
+	if effective_name != c_name {
+		if ret := g.fn_return_types[c_name] {
+			return ret
+		}
 	}
 	match c_name {
 		'open', 'chdir', 'proc_pidpath' { return 'int' }
@@ -1243,6 +1292,10 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 	if name == 'os__exit' {
 		name = 'exit'
 	}
+	// Remap string__runes_iterator → string__runes (returns Array_rune, not RunesIterator)
+	if name == 'string__runes_iterator' {
+		name = 'string__runes'
+	}
 	if name.starts_with('strings__Builder__') && name !in g.fn_param_is_ptr
 		&& name !in g.fn_return_types {
 		method_name := name.all_after_last('__')
@@ -1251,24 +1304,120 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 			name = array_name
 		}
 	}
+	// Remap array__ methods to string__ when the receiver (first arg) is a string.
+	// The transformer defaults to array__ when type info is missing (--skip-type-check).
+	if name.starts_with('array__') && call_args.len > 0 {
+		first_arg_type := g.get_expr_type(call_args[0])
+		if first_arg_type == 'string' {
+			method := name['array__'.len..]
+			if method == 'slice' {
+				name = 'string__substr'
+			} else {
+				name = 'string__${method}'
+			}
+		}
+	}
 	if name.starts_with('array__') && call_args.len > 0 {
 		method_name := name['array__'.len..]
 		elem_type := g.infer_array_elem_type_from_expr(call_args[0]).trim_right('*')
 		if elem_type != '' {
 			specialized := 'Array_' + mangle_alias_component(elem_type) + '__' + method_name
-			if method_name == 'clone' {
-				// eprintln('[cleanc spec] name=${name} elem_type=${elem_type} specialized=${specialized} in_params=${specialized in g.fn_param_is_ptr} in_rets=${specialized in g.fn_return_types}')
-			}
 			if specialized in g.fn_param_is_ptr || specialized in g.fn_return_types {
 				name = specialized
 			}
 		}
 	}
-	for i, arg in call_args {
-		if arg is ast.FieldInit {
-			// In v3 (ARM64-compiled), transformer may skip FieldInit lowering due to corrupt type info.
-			// Instead of panicking, extract the value expression.
-			call_args[i] = arg.value
+	// Remap specific array__ methods that only exist for certain element types
+	if name == 'array__string' {
+		name = 'Array_rune__string'
+	}
+	if name == 'array__join' {
+		name = 'Array_string__join'
+	}
+	// Despecialize Array_T__method to array__method if specialized version doesn't exist
+	if name.starts_with('Array_') && name.contains('__') && name !in g.fn_param_is_ptr
+		&& name !in g.fn_return_types {
+		method_part := name.all_after_last('__')
+		generic_name := 'array__${method_part}'
+		if generic_name in g.fn_param_is_ptr || generic_name in g.fn_return_types {
+			name = generic_name
+		}
+	}
+	// When a Type__method call is not found, try the first argument's actual type.
+	// This handles cases like int__process_str_intp_data → StrIntpData__process_str_intp_data
+	// where the transformer inferred wrong receiver type (--skip-type-check).
+	if name.contains('__') && name !in g.fn_param_is_ptr && name !in g.fn_return_types
+		&& call_args.len > 0 {
+		method_part := name.all_after('__')
+		if method_part != '' {
+			receiver_type := g.get_expr_type(call_args[0]).trim_right('*')
+			if receiver_type != '' && receiver_type != 'int' && receiver_type != 'void' {
+				alt_name := '${receiver_type}__${method_part}'
+				if alt_name in g.fn_param_is_ptr || alt_name in g.fn_return_types {
+					name = alt_name
+				}
+			}
+		}
+	}
+	// Handle FieldInit args: wrap in struct literal if we know the expected param type,
+	// otherwise extract just the value (fallback for v3/corrupt AST).
+	mut field_init_struct_literal := '' // Pre-rendered struct literal for FieldInit args
+	mut field_init_start_idx := -1 // Index of first FieldInit in call_args
+	{
+		mut fi_idx := -1
+		for i, arg in call_args {
+			if arg is ast.FieldInit {
+				if fi_idx == -1 {
+					fi_idx = i
+				}
+			}
+		}
+		if fi_idx >= 0 {
+			mut handled := false
+			if param_types := g.fn_param_types[name] {
+				if fi_idx < param_types.len {
+					param_type := param_types[fi_idx]
+					// Build a struct literal string directly (avoids sanitize_c_number_literal)
+					mut lit := '(${param_type}){'
+					mut first := true
+					for i := fi_idx; i < call_args.len; i++ {
+						fi := call_args[i]
+						if fi is ast.FieldInit {
+							if !first {
+								lit += ', '
+							}
+							lit += '.${fi.name} = '
+							// Render the value expression to a temporary string builder
+							mut tmp := strings.new_builder(32)
+							old_sb := g.sb
+							g.sb = tmp
+							g.expr(fi.value)
+							tmp = g.sb
+							g.sb = old_sb
+							lit += tmp.str()
+							first = false
+						}
+					}
+					lit += '}'
+					field_init_struct_literal = lit
+					field_init_start_idx = fi_idx
+					// Trim call_args to only non-FieldInit args
+					mut new_args := []ast.Expr{cap: fi_idx + 1}
+					for i := 0; i < fi_idx; i++ {
+						new_args << call_args[i]
+					}
+					call_args = unsafe { new_args }
+					handled = true
+				}
+			}
+			if !handled {
+				// No param types known, strip FieldInit as fallback
+				for i, arg in call_args {
+					if arg is ast.FieldInit {
+						call_args[i] = arg.value
+					}
+				}
+			}
 		}
 	}
 	if name != '' {
@@ -1584,6 +1733,72 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 	if c_name in ['os__exit', 'builder__exit'] {
 		c_name = 'exit'
 	}
+	// Remap method calls where the transformer resolved the wrong receiver type.
+	// e.g. string indexing gives u8 but transformer defaults to int.
+	if c_name == 'int__ascii_str' {
+		c_name = 'u8__ascii_str'
+	}
+	if c_name == 'int__get_filetype' {
+		c_name = 'os__Stat__get_filetype'
+	}
+	// int__free is generated as temp cleanup for int__ascii_str result.
+	// After remapping, the result is string, so free via string__free(&arg).
+	if c_name == 'int__free' && call_args.len == 1 {
+		g.sb.write_string('string__free(&')
+		g.expr(call_args[0])
+		g.sb.write_string(')')
+		return
+	}
+	// Flag enum methods: int__set(a, b) → (a |= b), int__clear(a, b) → (a &= ~(b))
+	if c_name == 'int__set' && call_args.len == 2 {
+		g.expr(call_args[0])
+		g.sb.write_string(' |= ')
+		g.expr(call_args[1])
+		return
+	}
+	if c_name == 'int__clear' && call_args.len == 2 {
+		g.expr(call_args[0])
+		g.sb.write_string(' &= ~(')
+		g.expr(call_args[1])
+		g.sb.write_string(')')
+		return
+	}
+	if c_name == 'int__has' && call_args.len == 2 {
+		g.sb.write_string('((')
+		g.expr(call_args[0])
+		g.sb.write_string(' & ')
+		g.expr(call_args[1])
+		g.sb.write_string(') != 0)')
+		return
+	}
+	// When call has more args than params, pack trailing args into a struct compound literal.
+	// This happens when the transformer expands struct init args into individual values.
+	if param_types := g.fn_param_types[c_name] {
+		if call_args.len > param_types.len && param_types.len >= 1 {
+			struct_param_idx := param_types.len - 1
+			struct_type := param_types[struct_param_idx]
+			// Only pack if the param type looks like a struct (not a primitive)
+			if struct_type != '' && !is_c_primitive_type(struct_type)
+				&& !struct_type.ends_with('*') {
+				mut new_args := []ast.Expr{cap: param_types.len}
+				for i := 0; i < struct_param_idx; i++ {
+					new_args << call_args[i]
+				}
+				// Build struct literal string from remaining args
+				mut struct_lit := '(${struct_type}){'
+				for i := struct_param_idx; i < call_args.len; i++ {
+					if i > struct_param_idx {
+						struct_lit += ', '
+					}
+					struct_lit += g.expr_to_string(call_args[i])
+				}
+				struct_lit += '}'
+				field_init_struct_literal = struct_lit
+				field_init_start_idx = struct_param_idx
+				call_args = unsafe { new_args }
+			}
+		}
+	}
 	g.sb.write_string('${c_name}(')
 	mut total_args := call_args.len
 	if param_types := g.fn_param_types[c_name] {
@@ -1598,6 +1813,11 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 	for i in 0 .. total_args {
 		if i > 0 {
 			g.sb.write_string(', ')
+		}
+		// Emit pre-rendered struct literal for FieldInit args
+		if field_init_struct_literal != '' && i == field_init_start_idx {
+			g.sb.write_string(field_init_struct_literal)
+			continue
 		}
 		if i < call_args.len {
 			if c_name == 'signal' && i == 1 {

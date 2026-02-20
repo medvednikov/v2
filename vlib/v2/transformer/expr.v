@@ -48,6 +48,26 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 					return t.lower_assoc_expr(assoc, true)
 				}
 			}
+			// Merge &Type(expr) into CastExpr with pointer type: &mapnode(x) → ((mapnode*)(x))
+			if expr.op == .amp {
+				inner := t.transform_expr(expr.expr)
+				if inner is ast.CastExpr {
+					return ast.Expr(ast.CastExpr{
+						typ:  ast.PrefixExpr{
+							op:   .amp
+							expr: inner.typ
+							pos:  expr.pos
+						}
+						expr: inner.expr
+						pos:  inner.pos
+					})
+				}
+				return ast.Expr(ast.PrefixExpr{
+					op:   expr.op
+					expr: inner
+					pos:  expr.pos
+				})
+			}
 			ast.Expr(ast.PrefixExpr{
 				op:   expr.op
 				expr: t.transform_expr(expr.expr)
