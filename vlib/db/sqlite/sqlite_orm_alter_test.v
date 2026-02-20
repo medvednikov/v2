@@ -342,8 +342,8 @@ fn test_create_skips_fields_marked_skip() {
 			]
 		},
 		orm.TableField{
-			name: 'secret'
-			typ:  typeof[string]().idx
+			name:  'secret'
+			typ:   typeof[string]().idx
 			attrs: [
 				VAttribute{
 					name: 'skip'

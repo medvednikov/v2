@@ -84,8 +84,7 @@ pub fn (db DB) create(table orm.Table, fields []orm.TableField) ! {
 			}
 			field_name := get_field_sql_name(field)
 			if field_name !in existing_columns {
-				add_column_query := orm.orm_column_add_gen(.pg, table, '"', field,
-					pg_type_from_v) or {
+				add_column_query := orm.orm_column_add_gen(.pg, table, '"', field, pg_type_from_v) or {
 					// Skip fields that can't be added (e.g., skip, primary)
 					continue
 				}

@@ -861,13 +861,21 @@ fn get_type_default(col_typ string, sql_dialect SQLDialect) string {
 			'0.0'
 		}
 		upper_typ.contains('BOOL') {
-			if sql_dialect == .pg { 'FALSE' } else { '0' }
+			if sql_dialect == .pg {
+				'FALSE'
+			} else {
+				'0'
+			}
 		}
 		upper_typ.contains('TEXT') || upper_typ.contains('VARCHAR') || upper_typ.contains('CHAR') {
 			"''"
 		}
 		upper_typ.contains('TIMESTAMP') || upper_typ.contains('DATE') || upper_typ.contains('TIME') {
-			if sql_dialect == .pg { 'NOW()' } else { 'CURRENT_TIMESTAMP' }
+			if sql_dialect == .pg {
+				'NOW()'
+			} else {
+				'CURRENT_TIMESTAMP'
+			}
 		}
 		else {
 			'0'

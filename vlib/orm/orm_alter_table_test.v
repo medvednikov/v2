@@ -3,14 +3,14 @@ import db.sqlite
 
 // Initial struct with fewer fields
 struct UserV1 {
-	id   int    @[primary; sql: serial]
+	id   int @[primary; sql: serial]
 	name string
 }
 
 // Extended struct with additional fields
 @[table: 'UserV1']
 struct UserV2 {
-	id    int    @[primary; sql: serial]
+	id    int @[primary; sql: serial]
 	name  string
 	email string
 	age   int
@@ -19,7 +19,7 @@ struct UserV2 {
 // Struct with optional field
 @[table: 'UserV1']
 struct UserV3 {
-	id       int     @[primary; sql: serial]
+	id       int @[primary; sql: serial]
 	name     string
 	email    string
 	age      int
@@ -29,12 +29,12 @@ struct UserV3 {
 // Struct with default value
 @[table: 'UserV1']
 struct UserV4 {
-	id       int     @[primary; sql: serial]
+	id       int @[primary; sql: serial]
 	name     string
 	email    string
 	age      int
 	nickname ?string
-	score    int     @[default: '100']
+	score    int @[default: '100']
 }
 
 fn test_create_adds_missing_columns() {
