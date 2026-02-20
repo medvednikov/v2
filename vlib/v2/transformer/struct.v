@@ -149,8 +149,16 @@ fn (mut t Transformer) apply_smartcast_field_access_ctx(sumtype_expr ast.Expr, f
 
 fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Expr {
 	// Transform value expressions
+	// Guard against corrupt array (null data pointer with non-zero len)
+	if expr.exprs.len < 0 || expr.exprs.len > 10000 {
+		return ast.Expr(expr)
+	}
 	mut exprs := []ast.Expr{cap: expr.exprs.len}
 	for e in expr.exprs {
+		if !expr_has_valid_data(e) {
+			exprs << e
+			continue
+		}
 		exprs << t.transform_expr(e)
 	}
 
@@ -159,7 +167,7 @@ fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Exp
 	mut array_typ := expr.typ
 	mut elem_type_expr := ast.empty_expr
 	// Check for ArrayFixedType or ArrayType (expr.typ is ast.Type sum type)
-	if expr.typ is ast.Type {
+	if expr_has_valid_data(expr.typ) && expr.typ is ast.Type {
 		if expr.typ is ast.ArrayFixedType {
 			is_fixed = true
 		} else if expr.typ is ast.ArrayType {
@@ -185,9 +193,9 @@ fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Exp
 		}
 	}
 	// Also check for [x, y, z]! syntax - parser marks this with len: PostfixExpr{op: .not}
-	if expr.len is ast.PostfixExpr {
+	if expr_has_valid_data(expr.len) && expr.len is ast.PostfixExpr {
 		postfix := expr.len as ast.PostfixExpr
-		if postfix.op == .not && postfix.expr is ast.EmptyExpr {
+		if postfix.op == .not && expr_has_valid_data(postfix.expr) && postfix.expr is ast.EmptyExpr {
 			is_fixed = true
 		}
 	}
@@ -197,9 +205,9 @@ fn (mut t Transformer) transform_array_init_expr(expr ast.ArrayInitExpr) ast.Exp
 		return ast.ArrayInitExpr{
 			typ:   array_typ
 			exprs: exprs
-			init:  t.transform_expr(expr.init)
-			cap:   if expr.cap !is ast.EmptyExpr { t.transform_expr(expr.cap) } else { expr.cap }
-			len:   if expr.len !is ast.EmptyExpr { t.transform_expr(expr.len) } else { expr.len }
+			init:  if expr_has_valid_data(expr.init) { t.transform_expr(expr.init) } else { expr.init }
+			cap:   if expr_has_valid_data(expr.cap) && expr.cap !is ast.EmptyExpr { t.transform_expr(expr.cap) } else { expr.cap }
+			len:   if expr_has_valid_data(expr.len) && expr.len !is ast.EmptyExpr { t.transform_expr(expr.len) } else { expr.len }
 			pos:   expr.pos
 		}
 	}

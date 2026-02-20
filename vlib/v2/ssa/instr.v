@@ -96,9 +96,9 @@ pub mut:
 	op OpCode
 	// Operands are IDs of other Values
 	operands []ValueID
+	typ      TypeID // Result type
 pub:
 	block BlockID
-	typ   TypeID // Result type
 
 	pos        token.Pos
 	atomic_ord AtomicOrdering

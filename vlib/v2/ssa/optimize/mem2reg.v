@@ -79,7 +79,40 @@ fn promote_memory_to_register(mut m ssa.Module) {
 		// Insert Phis
 		for blk_id, allocs in ctx.phi_placements {
 			for alloc_id in allocs {
-				typ := m.type_store.types[m.values[alloc_id].typ].elem_type
+				mut typ := m.type_store.types[m.values[alloc_id].typ].elem_type
+				// Fix type mismatch: if any store writes a struct value larger
+				// than the alloca's element type, use the struct type instead.
+				// This handles cases where expr_type() returned i64 fallback
+				// but the actual stored values are multi-word structs (e.g.,
+				// sumtypes from match expressions lowered to if-else chains).
+				if typ > 0 && typ < m.type_store.types.len {
+					alloca_nf := m.type_store.types[typ].fields.len
+					for b_id in func.blocks {
+						for vid in m.blocks[b_id].instrs {
+							if m.values[vid].kind != .instruction {
+								continue
+							}
+							si := m.instrs[m.values[vid].index]
+							if si.op == .store && si.operands.len >= 2
+								&& si.operands[1] == alloc_id {
+								stored_val := si.operands[0]
+								if stored_val > 0 && stored_val < m.values.len {
+									st := m.values[stored_val].typ
+									if st > 0 && st < m.type_store.types.len
+										&& m.type_store.types[st].kind == .struct_t {
+										stored_nf := m.type_store.types[st].fields.len
+										if stored_nf > alloca_nf {
+											typ = st
+											// Also update the alloca's type
+											new_ptr := m.type_store.get_ptr(st)
+											m.values[alloc_id].typ = new_ptr
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 				phi_val := m.add_instr_front(.phi, blk_id, typ, [])
 				m.values[phi_val].name = '${m.values[alloc_id].name}.phi_${blk_id}'
 			}

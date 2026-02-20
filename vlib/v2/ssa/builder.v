@@ -33,6 +33,10 @@ mut:
 	// Track mut pointer params (e.g., mut buf &u8) that need extra dereference
 	// when used in expressions (buf is ptr(ptr(i8)), but user sees buf as &u8)
 	mut_ptr_params map[string]bool
+	// Track all mut params (e.g., mut arr []T) that need a load in build_addr
+	// when passed to another function as mut. The alloca stores ptr(T), and
+	// build_addr should return the ptr(T) value, not the alloca ptr(ptr(T)).
+	mut_params map[string]bool
 	// Track array variable element types for correct indexing.
 	// Maps variable name -> SSA TypeID of the element type.
 	// Needed when type checker positions are unavailable (transformer-generated code).
@@ -471,13 +475,6 @@ fn (mut b Builder) register_struct_fields(decl ast.StructDecl) {
 		field_names: field_names
 	}
 
-	if name in ['ast__Ident', 'ast__CallOrCastExpr', 'ast__SelectorExpr', 'token__Pos', 'ast__Expr', 'ast__Stmt'] {
-		eprintln('[ssa] STRUCT ${name}: type_id=${type_id} fields=${field_types.len} size=${b.type_byte_size(type_id)}')
-		for fi2, ft2 in field_types {
-			ft_info := b.mod.type_store.types[ft2]
-			eprintln('[ssa]   ${name}.field[${fi2}] ${field_names[fi2]}: type=${ft2} kind=${ft_info.kind} size=${b.type_byte_size(ft2)} nfields=${ft_info.fields.len}')
-		}
-	}
 }
 
 // register_struct is the legacy combined registration (used for Phase 1a core types).
@@ -505,12 +502,6 @@ fn (mut b Builder) register_struct(decl ast.StructDecl) {
 	b.struct_types[name] = type_id
 	b.mod.c_struct_names[type_id] = name
 
-	if name in ['string', 'array'] {
-		eprintln('[ssa] register_struct ${name}: type_id=${type_id} fields=${field_types.len} size=${b.type_byte_size(type_id)}')
-		for fi2, ft2 in field_types {
-			eprintln('[ssa]   field[${fi2}] ${field_names[fi2]}: type=${ft2} size=${b.type_byte_size(ft2)}')
-		}
-	}
 }
 
 fn (mut b Builder) register_enum(decl ast.EnumDecl) {
@@ -566,9 +557,6 @@ fn (mut b Builder) register_sumtype(decl ast.TypeDecl) {
 	})
 	b.struct_types[name] = type_id
 	b.mod.c_struct_names[type_id] = name
-	if name == 'ast__Expr' || name == 'ast__Stmt' {
-		eprintln('[ssa] register_sumtype: ${name} type_id=${type_id} size=${b.type_byte_size(type_id)}')
-	}
 
 	// Store variant names for sumtype boxing in build_return
 	mut variant_names := []string{cap: decl.variants.len}
@@ -1296,6 +1284,7 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 	// Reset local variables
 	b.vars = map[string]ValueID{}
 	b.mut_ptr_params = map[string]bool{}
+	b.mut_params = map[string]bool{}
 	b.label_blocks = map[string]BlockID{}
 	b.array_var_elem_types = map[string]TypeID{}
 
@@ -1356,6 +1345,12 @@ fn (mut b Builder) build_fn(decl ast.FnDecl) {
 		if param.is_mut && param_type < b.mod.type_store.types.len
 			&& b.mod.type_store.types[param_type].kind == .ptr_t {
 			b.mut_ptr_params[param.name] = true
+		}
+		// Track all mut params so build_addr can load from alloca.
+		// For mut struct params (e.g., mut arr []T), the alloca stores ptr(struct),
+		// and build_addr needs to return ptr(struct), not ptr(ptr(struct)).
+		if param.is_mut {
+			b.mut_params[param.name] = true
 		}
 	}
 
@@ -1555,7 +1550,16 @@ fn (mut b Builder) build_assign(stmt ast.AssignStmt) {
 				}
 				if ptr != 0 {
 					if stmt.op == .assign {
-						b.mod.add_instr(.store, b.cur_block, 0, [rhs_val, ptr])
+						// Wrap variant into sumtype if target variable is a sumtype
+						mut store_val := rhs_val
+						rhs_type := b.mod.values[rhs_val].typ
+						ptr_typ := b.mod.values[ptr].typ
+						if ptr_typ > 0 && ptr_typ < b.mod.type_store.types.len
+							&& b.mod.type_store.types[ptr_typ].kind == .ptr_t {
+							elem_typ := b.mod.type_store.types[ptr_typ].elem_type
+							store_val = b.wrap_sumtype(rhs_val, rhs_type, elem_typ)
+						}
+						b.mod.add_instr(.store, b.cur_block, 0, [store_val, ptr])
 					} else {
 						// Compound assignment (+=, -=, etc.)
 						ptr_typ := b.mod.values[ptr].typ
@@ -1585,7 +1589,16 @@ fn (mut b Builder) build_assign(stmt ast.AssignStmt) {
 			base := b.build_addr(lhs)
 			if base != 0 {
 				if stmt.op == .assign {
-					b.mod.add_instr(.store, b.cur_block, 0, [rhs_val, base])
+					// Wrap variant into sumtype if field is a sumtype
+					mut store_val := rhs_val
+					rhs_type := b.mod.values[rhs_val].typ
+					base_ptr_typ := b.mod.values[base].typ
+					if base_ptr_typ > 0 && base_ptr_typ < b.mod.type_store.types.len
+						&& b.mod.type_store.types[base_ptr_typ].kind == .ptr_t {
+						field_typ := b.mod.type_store.types[base_ptr_typ].elem_type
+						store_val = b.wrap_sumtype(rhs_val, rhs_type, field_typ)
+					}
+					b.mod.add_instr(.store, b.cur_block, 0, [store_val, base])
 				} else {
 					// Compound assignment (+=, -=, etc.)
 					ptr_typ := b.mod.values[base].typ
@@ -1744,7 +1757,6 @@ fn (mut b Builder) build_return(stmt ast.ReturnStmt) {
 						data_val,
 						idx1,
 					])
-					eprintln('[ssa] build_return: sumtype boxing for ${variant_c_name} -> ${sumtype_c_name} tag=${tag_val} in ${b.cur_func}')
 				}
 			}
 		}
@@ -2054,7 +2066,7 @@ fn (mut b Builder) build_expr(expr ast.Expr) ValueID {
 			return b.build_call_or_cast(expr)
 		}
 		ast.AsCastExpr {
-			return b.build_expr(expr.expr)
+			return b.build_as_cast(expr)
 		}
 		ast.AssocExpr {
 			return b.mod.get_or_add_const(b.mod.type_store.get_int(64), '0')
@@ -2607,10 +2619,6 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 			ret_type = fn_ret
 		}
 	}
-	if fn_name.contains('parse_file') {
-		eprintln('[ssa] build_call: ${fn_name} ret_type=${ret_type} size=${b.type_byte_size(ret_type)}')
-	}
-
 	// Check if this is a function pointer field call (e.g., m.hash_fn(pkey))
 	// rather than a method call. If the selector field matches a struct field name
 	// and the resolved function name is not in fn_index, it's a function pointer call.
@@ -2806,6 +2814,11 @@ fn (mut b Builder) build_call(expr ast.CallExpr) ValueID {
 					alloca := b.mod.add_instr(.alloca, b.cur_block, ptr_type, []ValueID{})
 					b.mod.add_instr(.store, b.cur_block, 0, [args[ai], alloca])
 					args[ai] = alloca
+				}
+				// Sumtype wrapping: struct arg but param is a sumtype with different type.
+				// E.g., passing ast.Ident where ast.Expr is expected.
+				if arg_type != param_type && param_kind == .struct_t {
+					args[ai] = b.wrap_sumtype(args[ai], arg_type, param_type)
 				}
 			}
 		}
@@ -3293,25 +3306,10 @@ fn (mut b Builder) try_record_array_elem_type(name string, typ ast.Expr) {
 	// Check if the type expression is an array type
 	if typ is ast.Type {
 		if typ is ast.ArrayType {
-			if name == 'files' {
-				et := typ.elem_type
-				cur_name := b.mod.funcs[b.cur_func].name
-				eprintln('[ssa] files param elem_type expr kind: ${et.type_name()} in fn ${cur_name}')
-				if et is ast.SelectorExpr {
-					lname := if et.lhs is ast.Ident { et.lhs.name } else { '?' }
-					eprintln('[ssa]   selector: ${lname}.${et.rhs.name}')
-					mod_q := '${lname}__${et.rhs.name}'
-					eprintln('[ssa]   looking for ${mod_q} in struct_types: ${mod_q in b.struct_types}')
-				} else if et is ast.Ident {
-					eprintln('[ssa]   ident: ${et.name}')
-				}
-			}
 			elem_type := b.ast_type_to_ssa(typ.elem_type)
 			i64_t := b.mod.type_store.get_int(64)
 			if elem_type != 0 && elem_type != i64_t {
 				b.array_var_elem_types[name] = elem_type
-				elem_size := b.type_byte_size(elem_type)
-				eprintln('[ssa] recorded array elem type: ${name} -> type_id=${elem_type} size=${elem_size}')
 			}
 		}
 	}
@@ -3372,21 +3370,12 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 		// generated IndexExprs (e.g., for-in-array lowering) that have no position ID.
 		i64_t := b.mod.type_store.get_int(64)
 		if result_type == i64_t {
-			if expr.lhs is ast.Ident {
-				eprintln('[ssa] build_index: ${expr.lhs.name}[] result_type is i64 fallback, checking env...')
-			}
 			if b.env != unsafe { nil } {
 				lhs_pos := expr.lhs.pos()
-				if expr.lhs is ast.Ident && (expr.lhs.name == 'files' || expr.lhs.name == 'source_files') {
-					eprintln('[ssa] build_index: ${expr.lhs.name}[] pos.id=${lhs_pos.id} fn=${b.mod.funcs[b.cur_func].name}')
-				}
 				if lhs_pos.id != 0 {
 					if arr_typ := b.env.get_expr_type(lhs_pos.id) {
 						if arr_typ is types.Array {
 							inferred := b.type_to_ssa(arr_typ.elem_type)
-							if expr.lhs is ast.Ident && expr.lhs.name == 'files' {
-								eprintln('[ssa] build_index: files[] env resolved: inferred=${inferred} size=${b.type_byte_size(inferred)} fn=${b.mod.funcs[b.cur_func].name}')
-							}
 							if inferred != 0 {
 								result_type = inferred
 							}
@@ -3400,13 +3389,7 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 			if expr.lhs is ast.Ident {
 				if elem_t := b.array_var_elem_types[expr.lhs.name] {
 					result_type = elem_t
-					eprintln('[ssa] build_index: resolved ${expr.lhs.name}[] elem type from tracking: type_id=${elem_t} size=${b.type_byte_size(elem_t)}')
-				} else {
-					eprintln('[ssa] build_index: WARNING ${expr.lhs.name}[] not in array_var_elem_types (${b.array_var_elem_types.len} entries), fn=${b.mod.funcs[b.cur_func].name}')
 				}
-			} else {
-				lhs_name := expr.lhs.name()
-				eprintln('[ssa] build_index: WARNING non-ident array lhs type=${expr.lhs.type_name()} name=${lhs_name}, elem type unknown (i64 fallback)')
 			}
 		}
 
@@ -3497,6 +3480,44 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 	return b.mod.add_instr(.get_element_ptr, b.cur_block, result_type, [base, index])
 }
 
+// infer_if_branch_type checks the last statement of a branch's statement list
+// to infer the result type when expr_type returned i64 fallback.
+fn (mut b Builder) infer_if_branch_type(stmts []ast.Stmt, i64_t TypeID, current_type TypeID) TypeID {
+	if stmts.len > 0 {
+		last := stmts[stmts.len - 1]
+		if last is ast.ExprStmt {
+			if last.expr is ast.StringLiteral || last.expr is ast.StringInterLiteral {
+				str_type := b.get_string_type()
+				if str_type != 0 {
+					return str_type
+				}
+			} else if last.expr is ast.Ident {
+				ident_name := (last.expr as ast.Ident).name
+				if alloca_id := b.vars[ident_name] {
+					alloca_val := b.mod.values[alloca_id]
+					if alloca_val.typ > 0
+						&& alloca_val.typ < b.mod.type_store.types.len {
+						alloca_typ := b.mod.type_store.types[alloca_val.typ]
+						if alloca_typ.kind == .ptr_t && alloca_typ.elem_type > 0
+							&& alloca_typ.elem_type < b.mod.type_store.types.len {
+							elem := b.mod.type_store.types[alloca_typ.elem_type]
+							if elem.kind == .struct_t {
+								return alloca_typ.elem_type
+							}
+						}
+					}
+				}
+			} else {
+				inferred := b.expr_type(last.expr)
+				if inferred != i64_t && inferred != 0 {
+					return inferred
+				}
+			}
+		}
+	}
+	return current_type
+}
+
 fn (mut b Builder) build_if_expr(node ast.IfExpr) ValueID {
 	// If used as expression, returns a value
 	mut result_type := b.expr_type(ast.Expr(node))
@@ -3505,50 +3526,21 @@ fn (mut b Builder) build_if_expr(node ast.IfExpr) ValueID {
 	// IfExpr chains without position IDs, so expr_type returns i64 fallback.
 	i64_t := b.mod.type_store.get_int(64)
 	if result_type == i64_t {
-		// Check if "then" branch last statement is a string literal or string expr
-		if node.stmts.len > 0 {
-			last := node.stmts[node.stmts.len - 1]
-			if last is ast.ExprStmt {
-				if last.expr is ast.StringLiteral || last.expr is ast.StringInterLiteral {
-					str_type := b.get_string_type()
-					if str_type != 0 {
-						result_type = str_type
-					}
-				} else if last.expr is ast.Ident {
-					// Look up the identifier's SSA type from variables or function return types.
-					// This handles transformer-generated patterns like:
-					//   _t := fn_returning_struct()
-					//   src := if _t { _t } else { fallback }
-					// where _t has a struct type (e.g., string) but the IfExpr has no type annotation.
-					ident_name := (last.expr as ast.Ident).name
-					if alloca_id := b.vars[ident_name] {
-						alloca_val := b.mod.values[alloca_id]
-						if alloca_val.typ > 0
-							&& alloca_val.typ < b.mod.type_store.types.len {
-							alloca_typ := b.mod.type_store.types[alloca_val.typ]
-							if alloca_typ.kind == .ptr_t && alloca_typ.elem_type > 0
-								&& alloca_typ.elem_type < b.mod.type_store.types.len {
-								elem := b.mod.type_store.types[alloca_typ.elem_type]
-								if elem.kind == .struct_t {
-									result_type = alloca_typ.elem_type
-								}
-							}
-						}
-					}
-				} else {
-					// Try to infer type from the expression using expr_type.
-					// This handles CallExpr, SelectorExpr, etc. that may return struct types.
-					inferred := b.expr_type(last.expr)
-					if inferred != i64_t && inferred != 0 {
-						result_type = inferred
-					}
+		// Check then branch, then else branch for type inference
+		result_type = b.infer_if_branch_type(node.stmts, i64_t, result_type)
+		// If still i64, check else branch
+		if result_type == i64_t && node.else_expr !is ast.EmptyExpr {
+			if node.else_expr is ast.IfExpr {
+				else_if := node.else_expr as ast.IfExpr
+				if else_if.cond is ast.EmptyExpr {
+					// Pure else block
+					result_type = b.infer_if_branch_type(else_if.stmts, i64_t, result_type)
 				}
 			}
 		}
 	}
 	result_alloca := b.mod.add_instr(.alloca, b.cur_block, b.mod.type_store.get_ptr(result_type),
 		[]ValueID{})
-
 	then_block := b.mod.add_block(b.cur_func, 'ifx_then')
 	merge_block := b.mod.add_block(b.cur_func, 'ifx_merge')
 	has_else := node.else_expr !is ast.EmptyExpr
@@ -3578,6 +3570,22 @@ fn (mut b Builder) build_if_expr(node ast.IfExpr) ValueID {
 		}
 	}
 	if then_val != 0 {
+		// If the branch value's type is a struct larger than the alloca's
+		// element type, upgrade the alloca to match. This handles cases where
+		// expr_type returned i64 fallback but the actual value is a struct
+		// (e.g., sumtype from match expressions lowered to if-else chains).
+		if then_val > 0 && then_val < b.mod.values.len {
+			val_typ_id := b.mod.values[then_val].typ
+			if val_typ_id > 0 && val_typ_id < b.mod.type_store.types.len {
+				val_typ := b.mod.type_store.types[val_typ_id]
+				if val_typ.kind == .struct_t && val_typ_id != result_type {
+					result_type = val_typ_id
+					new_ptr_type := b.mod.type_store.get_ptr(result_type)
+					b.mod.values[result_alloca].typ = new_ptr_type
+					b.mod.instrs[b.mod.values[result_alloca].index].typ = new_ptr_type
+				}
+			}
+		}
 		b.mod.add_instr(.store, b.cur_block, 0, [then_val, result_alloca])
 	}
 	if !b.block_has_terminator(b.cur_block) {
@@ -3611,6 +3619,19 @@ fn (mut b Builder) build_if_expr(node ast.IfExpr) ValueID {
 			else_val = b.build_expr(node.else_expr)
 		}
 		if else_val != 0 {
+			// Same upgrade logic for else branch
+			if else_val > 0 && else_val < b.mod.values.len {
+				val_typ_id := b.mod.values[else_val].typ
+				if val_typ_id > 0 && val_typ_id < b.mod.type_store.types.len {
+					val_typ := b.mod.type_store.types[val_typ_id]
+					if val_typ.kind == .struct_t && val_typ_id != result_type {
+						result_type = val_typ_id
+						new_ptr_type := b.mod.type_store.get_ptr(result_type)
+						b.mod.values[result_alloca].typ = new_ptr_type
+						b.mod.instrs[b.mod.values[result_alloca].index].typ = new_ptr_type
+					}
+				}
+			}
 			b.mod.add_instr(.store, b.cur_block, 0, [else_val, result_alloca])
 		}
 		if !b.block_has_terminator(b.cur_block) {
@@ -3634,10 +3655,6 @@ fn (mut b Builder) build_array_init_expr(expr ast.ArrayInitExpr) ValueID {
 		mut elem_type := b.mod.type_store.get_int(32) // default int
 		if elem_vals.len > 0 {
 			elem_type = b.mod.values[elem_vals[0]].typ
-		}
-		elem_size := b.type_byte_size(elem_type)
-		if elem_size > 16 {
-			eprintln('[ssa] build_array_init: large elem type=${elem_type} size=${elem_size} kind=${b.mod.type_store.types[elem_type].kind}')
 		}
 		// Allocate fixed-size array on stack and store each element.
 		// Use array_t so that GEP uses element-size scaling (not struct-field offsets).
@@ -3716,6 +3733,48 @@ fn (mut b Builder) build_array_init_expr(expr ast.ArrayInitExpr) ValueID {
 	return b.mod.get_or_add_const(arr_type, '0')
 }
 
+fn (mut b Builder) build_as_cast(expr ast.AsCastExpr) ValueID {
+	// Sumtype 'as' cast: extract the variant from a sumtype value.
+	// For sumtypes {_tag: i64, _data: i64}, _data holds either:
+	//   - a heap pointer (for large variants > 8 bytes)
+	//   - the value directly (for small variants <= 8 bytes)
+	src := b.build_expr(expr.expr)
+	src_typ_id := b.mod.values[src].typ
+	if src_typ_id > 0 && src_typ_id < b.mod.type_store.types.len {
+		src_typ := b.mod.type_store.types[src_typ_id]
+		// Check if source is a sumtype (struct with _tag, _data fields)
+		is_sumtype := src_typ.kind == .struct_t && src_typ.fields.len == 2
+			&& src_typ.field_names.len == 2 && src_typ.field_names[0] == '_tag'
+			&& src_typ.field_names[1] == '_data'
+		if is_sumtype {
+			// Resolve target variant type
+			target_type := b.ast_type_to_ssa(expr.typ)
+			i64_t := b.mod.type_store.get_int(64)
+			i32_t := b.mod.type_store.get_int(32)
+			// Extract _data field (index 1)
+			data_val := b.mod.add_instr(.extractvalue, b.cur_block, i64_t, [
+				src,
+				b.mod.get_or_add_const(i32_t, '1'),
+			])
+			// Check if target type is a large struct that needs dereferencing
+			target_size := b.type_byte_size(target_type)
+			if target_size > 8 {
+				// _data is a heap pointer: load the variant struct from it
+				ptr_type := b.mod.type_store.get_ptr(target_type)
+				ptr_val := b.mod.add_instr(.bitcast, b.cur_block, ptr_type, [data_val])
+				return b.mod.add_instr(.load, b.cur_block, target_type, [ptr_val])
+			}
+			// For small types (<=8 bytes), _data holds the value directly
+			if target_type != i64_t {
+				return b.mod.add_instr(.bitcast, b.cur_block, target_type, [data_val])
+			}
+			return data_val
+		}
+	}
+	// Fallback: not a sumtype, just pass through
+	return b.build_expr(expr.expr)
+}
+
 fn (mut b Builder) build_init_expr(expr ast.InitExpr) ValueID {
 	// Struct initialization: Type{ field: value, ... }
 	// Uses struct_init opcode: keeps aggregates as SSA values for better optimization.
@@ -3736,20 +3795,6 @@ fn (mut b Builder) build_init_expr(expr ast.InitExpr) ValueID {
 
 	if num_fields == 0 {
 		// Not a known struct or has no fields: fall back to zero constant
-		type_name := if expr.typ is ast.Ident {
-			(expr.typ as ast.Ident).name
-		} else if expr.typ is ast.SelectorExpr {
-			sel := expr.typ as ast.SelectorExpr
-			lhs_name := if sel.lhs is ast.Ident { (sel.lhs as ast.Ident).name } else { '?' }
-			'<sel:${lhs_name}.${sel.rhs.name}>'
-		} else {
-			'<tag=${unsafe { (&u64(&expr.typ))[0] }}>'
-		}
-		if type_name != '' && type_name != 'int' && type_name != 'i64' && type_name != 'u64'
-			&& !type_name.starts_with('Array_') && !type_name.starts_with('Map_') {
-			type_kind := b.mod.type_store.types[struct_type].kind
-			eprintln('[ssa] build_init_expr ZERO fallback: type="${type_name}" struct_type=${struct_type} kind=${type_kind} nfields=${expr.fields.len} in ${b.cur_module} func=${b.cur_func}')
-		}
 		return b.mod.get_or_add_const(struct_type, '0')
 	}
 
@@ -3778,7 +3823,10 @@ fn (mut b Builder) build_init_expr(expr ast.InitExpr) ValueID {
 
 		if idx := initialized_fields[fname] {
 			if idx >= 0 && idx < expr.fields.len {
-				field_vals << b.build_expr(expr.fields[idx].value)
+				val := b.build_expr(expr.fields[idx].value)
+				val_type := b.mod.values[val].typ
+				// Wrap variant into sumtype if field is a sumtype
+				field_vals << b.wrap_sumtype(val, val_type, field_type)
 			} else {
 				field_vals << b.mod.get_or_add_const(field_type, '0')
 			}
@@ -3831,9 +3879,6 @@ fn (mut b Builder) build_cast(expr ast.CastExpr) ValueID {
 						if val_typ < b.mod.type_store.types.len
 							&& b.mod.type_store.types[val_typ].kind == .ptr_t {
 							elem_type := b.mod.type_store.types[val_typ].elem_type
-							et := b.mod.type_store.types[elem_type]
-							fn_nm := if b.cur_func >= 0 && b.cur_func < b.mod.funcs.len { b.mod.funcs[b.cur_func].name } else { '?' }
-							eprintln('[ssa] sumtype heap-copy: elem_type=${elem_type} kind=${et.kind} fields=${et.fields.len} in ${fn_nm}')
 							// Load from stack, allocate on heap, store
 							loaded := b.mod.add_instr(.load, b.cur_block, elem_type, [
 								ptr_val,
@@ -3983,19 +4028,14 @@ fn (b &Builder) sizeof_value(expr ast.Expr) int {
 					if b.cur_module.len > 0 {
 						qualified := '${b.cur_module}__${expr.name}'
 						if tid := b.struct_types[qualified] {
-							sz := b.type_byte_size(tid)
-							eprintln('[sizeof] ${expr.name} -> ${qualified} = ${sz} (in ${b.cur_module})')
-							return sz
+							return b.type_byte_size(tid)
 						}
 					}
 					// Try builtin__ prefix
 					builtin_q := 'builtin__${expr.name}'
 					if tid := b.struct_types[builtin_q] {
-						sz := b.type_byte_size(tid)
-						eprintln('[sizeof] ${expr.name} -> ${builtin_q} = ${sz} (in ${b.cur_module})')
-						return sz
+						return b.type_byte_size(tid)
 					}
-					eprintln('[sizeof] FALLBACK: ${expr.name} = 8 (in ${b.cur_module})')
 					8 // pointer size fallback
 				}
 			}
@@ -4025,11 +4065,8 @@ fn (b &Builder) sizeof_value(expr ast.Expr) int {
 			if lhs_name.len > 0 && rhs_name.len > 0 {
 				qualified := '${lhs_name}__${rhs_name}'
 				if tid := b.struct_types[qualified] {
-					sz := b.type_byte_size(tid)
-					eprintln('[sizeof] ${lhs_name}.${rhs_name} -> ${qualified} = ${sz}')
-					return sz
+					return b.type_byte_size(tid)
 				}
-				eprintln('[sizeof] SELECTOR FALLBACK: ${lhs_name}.${rhs_name} -> ${qualified} = 8')
 			}
 			return 8
 		}
@@ -4037,6 +4074,74 @@ fn (b &Builder) sizeof_value(expr ast.Expr) int {
 			return 8
 		}
 	}
+}
+
+// wrap_sumtype wraps a variant-typed value into a sumtype {_tag, _data} pair if needed.
+// Returns the original value unchanged if no wrapping is needed.
+fn (mut b Builder) wrap_sumtype(val ValueID, val_type TypeID, target_type TypeID) ValueID {
+	if val_type == target_type || val_type == 0 || target_type == 0 {
+		return val
+	}
+	if target_type >= b.mod.type_store.types.len {
+		return val
+	}
+	target_typ := b.mod.type_store.types[target_type]
+	if target_typ.kind != .struct_t {
+		return val
+	}
+	if target_typ.fields.len != 2 || target_typ.field_names.len != 2 {
+		return val
+	}
+	if target_typ.field_names[0] != '_tag' || target_typ.field_names[1] != '_data' {
+		return val
+	}
+	// Target is a sumtype. Find the variant index for the value type.
+	sumtype_c_name := b.mod.c_struct_names[target_type] or { return val }
+	if sumtype_c_name == '' {
+		return val
+	}
+	variants := b.sumtype_variants[sumtype_c_name] or { return val }
+	val_c_name := b.mod.c_struct_names[val_type] or { return val }
+	mut variant_idx := -1
+	for vi, vname in variants {
+		if vname == val_c_name {
+			variant_idx = vi
+			break
+		}
+	}
+	if variant_idx < 0 {
+		return val
+	}
+	// Wrap: create {_tag: variant_idx, _data: boxed_value}
+	i64_t := b.mod.type_store.get_int(64)
+	i32_t := b.mod.type_store.get_int(32)
+	tag_val := b.mod.get_or_add_const(i64_t, '${variant_idx}')
+	// Box the value: for structs > 8 bytes, heap-alloc + store
+	val_size := b.type_byte_size(val_type)
+	data_val := if val_size > 8 {
+		// Heap-box: heap_alloc + store, then cast to voidptr
+		val_ptr_type := b.mod.type_store.get_ptr(val_type)
+		voidptr_type := b.mod.type_store.get_ptr(b.mod.type_store.get_int(8))
+		heap_ptr := b.mod.add_instr(.heap_alloc, b.cur_block, val_ptr_type, []ValueID{})
+		b.mod.add_instr(.store, b.cur_block, 0, [val, heap_ptr])
+		b.mod.add_instr(.bitcast, b.cur_block, voidptr_type, [heap_ptr])
+	} else {
+		// Small variant: cast to i64
+		b.mod.add_instr(.bitcast, b.cur_block, i64_t, [val])
+	}
+	// Build sumtype: insertvalue(undef, tag, 0), insertvalue(prev, data, 1)
+	undef_val := b.mod.get_or_add_const(target_type, 'undef')
+	tag_inserted := b.mod.add_instr(.insertvalue, b.cur_block, target_type, [
+		undef_val,
+		tag_val,
+		b.mod.get_or_add_const(i32_t, '0'),
+	])
+	data_as_i64 := b.mod.add_instr(.bitcast, b.cur_block, i64_t, [data_val])
+	return b.mod.add_instr(.insertvalue, b.cur_block, target_type, [
+		tag_inserted,
+		data_as_i64,
+		b.mod.get_or_add_const(i32_t, '1'),
+	])
 }
 
 fn (b &Builder) type_byte_size(tid TypeID) int {
@@ -4174,11 +4279,11 @@ fn (mut b Builder) build_addr(expr ast.Expr) ValueID {
 		ast.Ident {
 			if expr.name in b.vars {
 				ptr := b.vars[expr.name]
-				// For mut pointer params (e.g., mut buf &u8), the alloca stores ptr(ptr(T)).
-				// When used as a mut arg to another function (build_addr call),
-				// return the loaded value (ptr(ptr(T))) instead of the alloca (ptr(ptr(ptr(T)))).
-				// This forwards the same indirection level instead of adding another layer.
-				if expr.name in b.mut_ptr_params {
+				// For mut params, the alloca stores the pointer value (parameter).
+				// build_addr should return the pointer value, not the alloca address.
+				// - mut buf &u8: alloca=ptr(ptr(ptr(u8))), load→ptr(ptr(u8))
+				// - mut arr []T: alloca=ptr(ptr(array_struct)), load→ptr(array_struct)
+				if expr.name in b.mut_params {
 					ptr_typ := b.mod.values[ptr].typ
 					elem_typ := b.mod.type_store.types[ptr_typ].elem_type
 					return b.mod.add_instr(.load, b.cur_block, elem_typ, [ptr])

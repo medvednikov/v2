@@ -159,6 +159,14 @@ fn asm_cmp_reg(rn Reg, rm Reg) u32 {
 	return 0xEB00001F | (u32(rm) << 16) | (u32(rn) << 5)
 }
 
+// === Sign Extension ===
+
+// sxtw xd, wn (sign-extend 32-bit to 64-bit)
+// Encoded as: SBFM Xd, Xn, #0, #31
+fn asm_sxtw(rd Reg, rn Reg) u32 {
+	return 0x93407C00 | (u32(rn) << 5) | u32(rd)
+}
+
 // === Conditional Set ===
 
 // cset rd, eq

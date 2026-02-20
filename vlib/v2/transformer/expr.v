@@ -1176,56 +1176,60 @@ fn (mut t Transformer) transform_if_expr(expr ast.IfExpr) ast.Expr {
 					}
 					// Fallback: Even without tag info, we need to handle smartcast correctly.
 					// The outer condition (lhs_infix) is an is-check that should push smartcast.
-					// Transform else_expr FIRST without smartcast, use pre-transformed version.
-					transformed_else_fallback := t.transform_expr(expr.else_expr)
-					// For the outer condition, transform LHS (for nested smartcasts)
-					transformed_outer_lhs := t.transform_expr(lhs_infix.lhs)
-					// We can't generate tag check without knowing the tag, so just keep the is-check
-					// (cleanc will handle it), but we need smartcast for body/inner condition
-					smartcast_expr := t.expr_to_string(lhs_infix.lhs)
-					// Get variant name for smartcast context
-					mut fallback_variant := variant_name
-					if variant_module != '' {
-						fallback_variant = '${variant_module}__${variant_name}'
-					}
-					// For full variant name (type casts), always include module prefix
-					fallback_variant_full := if variant_module != '' {
-						'${variant_module}__${variant_name}'
-					} else if t.cur_module != '' && t.cur_module != 'main'
-						&& t.cur_module != 'builtin' {
-						'${t.cur_module}__${variant_name}'
-					} else {
-						variant_name
-					}
-					// Use empty sumtype name since we couldn't find it
-					t.push_smartcast_full(smartcast_expr, fallback_variant, fallback_variant_full,
-						'')
-					// Transform inner condition and body with smartcast
-					transformed_rest_fallback := t.transform_expr(cond.rhs)
-					transformed_body_fallback := t.transform_stmts(expr.stmts)
-					// Pop smartcast before using pre-transformed else
-					t.pop_smartcast()
-					inner_if := ast.IfExpr{
-						cond:      transformed_rest_fallback
-						stmts:     transformed_body_fallback
-						else_expr: transformed_else_fallback
-						pos:       expr.pos
-					}
-					// Keep original is-check condition (let cleanc handle it)
-					outer_if := ast.IfExpr{
-						cond:      ast.InfixExpr{
-							op:  lhs_infix.op
-							lhs: transformed_outer_lhs
-							rhs: lhs_infix.rhs
-							pos: lhs_infix.pos
+					// Only enter this path when variant_name is non-empty; when empty,
+					// fall through to normal code path to avoid using potentially stale locals.
+					if variant_name != '' {
+						// Transform else_expr FIRST without smartcast, use pre-transformed version.
+						transformed_else_fallback := t.transform_expr(expr.else_expr)
+						// For the outer condition, transform LHS (for nested smartcasts)
+						transformed_outer_lhs := t.transform_expr(lhs_infix.lhs)
+						// We can't generate tag check without knowing the tag, so just keep the is-check
+						// (cleanc will handle it), but we need smartcast for body/inner condition
+						smartcast_expr := t.expr_to_string(lhs_infix.lhs)
+						// Get variant name for smartcast context
+						mut fallback_variant := variant_name
+						if variant_module != '' {
+							fallback_variant = '${variant_module}__${variant_name}'
 						}
-						stmts:     [ast.Stmt(ast.ExprStmt{
-							expr: inner_if
-						})]
-						else_expr: transformed_else_fallback
-						pos:       expr.pos
+						// For full variant name (type casts), always include module prefix
+						fallback_variant_full := if variant_module != '' {
+							'${variant_module}__${variant_name}'
+						} else if t.cur_module != '' && t.cur_module != 'main'
+							&& t.cur_module != 'builtin' {
+							'${t.cur_module}__${variant_name}'
+						} else {
+							variant_name
+						}
+						// Use empty sumtype name since we couldn't find it
+						t.push_smartcast_full(smartcast_expr, fallback_variant, fallback_variant_full,
+							'')
+						// Transform inner condition and body with smartcast
+						transformed_rest_fallback := t.transform_expr(cond.rhs)
+						transformed_body_fallback := t.transform_stmts(expr.stmts)
+						// Pop smartcast before using pre-transformed else
+						t.pop_smartcast()
+						inner_if := ast.IfExpr{
+							cond:      transformed_rest_fallback
+							stmts:     transformed_body_fallback
+							else_expr: transformed_else_fallback
+							pos:       expr.pos
+						}
+						// Keep original is-check condition (let cleanc handle it)
+						outer_if := ast.IfExpr{
+							cond:      ast.InfixExpr{
+								op:  lhs_infix.op
+								lhs: transformed_outer_lhs
+								rhs: lhs_infix.rhs
+								pos: lhs_infix.pos
+							}
+							stmts:     [ast.Stmt(ast.ExprStmt{
+								expr: inner_if
+							})]
+							else_expr: transformed_else_fallback
+							pos:       expr.pos
+						}
+						return outer_if
 					}
-					return outer_if
 				}
 			}
 			// Check if RHS is an is-check: if cond && x is Type { ... }

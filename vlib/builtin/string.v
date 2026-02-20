@@ -832,6 +832,10 @@ fn (s string) < (a string) bool {
 
 @[direct_array_access]
 fn (s string) + (a string) string {
+	if s.len < 0 || s.len > 0x7FFFFFF || a.len < 0 || a.len > 0x7FFFFFF {
+		eprintln('STRING+: corrupt s.len=${s.len} a.len=${a.len} s.str=${voidptr(s.str)} a.str=${voidptr(a.str)}')
+		panic('string__+: corrupt string')
+	}
 	new_len := a.len + s.len
 	mut res := string{
 		str: unsafe { malloc_noscan(new_len + 1) }

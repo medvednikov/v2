@@ -20,11 +20,11 @@ pub enum ValueKind {
 
 pub struct Value {
 pub:
-	id  ValueID
-	typ TypeID
+	id ValueID
 	// Index into the specific arena (instrs, blocks, globals)
 	index int
 pub mut:
+	typ TypeID
 	kind ValueKind
 	name string
 	uses []ValueID

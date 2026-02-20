@@ -350,12 +350,13 @@ fn (mut g Gen) gen_func(func mir.Function) {
 					if callee_id > 0 && callee_id < g.mod.values.len {
 						cname := g.mod.values[callee_id].name
 						for f in g.mod.funcs {
-							if f.name == cname && f.typ > 0
-								&& f.typ < g.mod.type_store.types.len {
-								callee_ret := g.mod.type_store.types[f.typ]
-								if callee_ret.kind == .struct_t {
-									call_ret_typ = callee_ret
-									call_ret_typ_id = f.typ
+							if f.name == cname {
+								if f.typ > 0 && f.typ < g.mod.type_store.types.len {
+									callee_ret := g.mod.type_store.types[f.typ]
+									if callee_ret.kind == .struct_t {
+										call_ret_typ = callee_ret
+										call_ret_typ_id = f.typ
+									}
 								}
 								break
 							}
@@ -401,7 +402,6 @@ fn (mut g Gen) gen_func(func mir.Function) {
 	if g.stack_size > 40000 || func.name.contains('parser__Parser__expr') || func.name.contains('parser__Parser__ident') {
 		eprintln('[arm64] stack_size for ${func.name}: ${g.stack_size} (slot_offset=${slot_offset})')
 	}
-
 	g.macho.add_symbol('_' + func.name, u64(g.curr_offset), true, 1)
 
 	// Prologue
@@ -848,7 +848,6 @@ fn (mut g Gen) gen_instr(val_id int) {
 			mut val_reg := if src_is_byval_on_stack {
 				// Large struct by value on stack: compute its address
 				src_off2 := g.stack_map[effective_src]
-				eprintln('[arm64] store: src byval on stack, src_off=${src_off2} val_size=${val_size} in ${g.cur_func_name}')
 				g.emit_add_fp_imm(8, src_off2)
 				8
 			} else if src_addr_override_id > 0 {
@@ -893,13 +892,34 @@ fn (mut g Gen) gen_instr(val_id int) {
 					}
 				}
 				if !src_has_storage && !src_points_to_struct {
-					g.emit_mov_reg(10, 31)
-					for i in 0 .. num_fields {
-						g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
+					// Source has no storage: if it's in a register, store it as
+					// the first word and zero remaining words.
+					if val_reg >= 0 && val_reg < 31 && num_fields >= 1 {
+						g.emit(asm_str_imm(Reg(val_reg), Reg(ptr_reg), 0))
+						if num_fields > 1 {
+							g.emit_mov_reg(10, 31)
+							for i in 1 .. num_fields {
+								g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
+							}
+						}
+					} else {
+						g.emit_mov_reg(10, 31)
+						for i in 0 .. num_fields {
+							g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
+						}
 					}
 				} else {
 					mut can_copy_from_src_ptr := false
 					mut src_ptr_reg := 11
+					// Limit copy to the source value's actual size to avoid
+					// reading past a smaller stack slot (e.g., i64 source
+					// stored to a string struct alloca).
+					src_num_fields := (val_size + 7) / 8
+					copy_fields := if src_num_fields > 0 && src_num_fields < num_fields {
+						src_num_fields
+					} else {
+						num_fields
+					}
 					if src_points_to_struct {
 						if val_reg != src_ptr_reg {
 							g.emit_mov_reg(src_ptr_reg, val_reg)
@@ -910,17 +930,26 @@ fn (mut g Gen) gen_instr(val_id int) {
 						can_copy_from_src_ptr = true
 					}
 					if can_copy_from_src_ptr {
-						for i in 0 .. num_fields {
+						for i in 0 .. copy_fields {
 							g.emit(asm_ldr_imm(Reg(10), Reg(src_ptr_reg), u32(i)))
 							g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
+						}
+						// Zero remaining fields if source is smaller
+						if copy_fields < num_fields {
+							g.emit_mov_reg(10, 31)
+							for i in copy_fields .. num_fields {
+								g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
+							}
 						}
 					} else if num_fields == 1 {
 						// Single-slot struct values in registers can be stored directly.
 						g.emit(asm_str(Reg(val_reg), Reg(ptr_reg)))
 					} else {
-						// Keep behavior deterministic when aggregate source bytes are unavailable.
+						// Source in register but destination needs multiple words:
+						// store register value as first word, zero the rest.
+						g.emit(asm_str_imm(Reg(val_reg), Reg(ptr_reg), 0))
 						g.emit_mov_reg(10, 31)
-						for i in 0 .. num_fields {
+						for i in 1 .. num_fields {
 							g.emit(asm_str_imm(Reg(10), Reg(ptr_reg), u32(i)))
 						}
 					}
@@ -978,21 +1007,32 @@ fn (mut g Gen) gen_instr(val_id int) {
 			mut loaded_into_aggregate_slot := false
 			mut force_spill_small_struct := false
 			if g.cur_func_name.contains('collect_runtime_const_inits') {
-				result_typ_id2 := g.mod.values[val_id].typ
-				result_size2 := g.type_size(result_typ_id2)
-				if result_size2 >= 32 {
-					kind2 := if result_typ_id2 < g.mod.type_store.types.len { g.mod.type_store.types[result_typ_id2].kind } else { .void_t }
-					has_slot := val_id in g.stack_map
-					eprintln('[arm64] LOAD in collect_runtime: typ_id=${result_typ_id2} size=${result_size2} kind=${kind2} has_slot=${has_slot}')
 				}
-			}
 
 			// ValueID 0 is the SSA null/invalid sentinel.
 			if ptr_id <= 0 || ptr_id >= g.mod.values.len {
 				g.emit_mov_imm64(dest_reg, 0)
 			} else {
 				ptr_reg := g.get_operand_reg(ptr_id, 9)
-				result_typ_id := g.mod.values[val_id].typ
+				mut result_typ_id := g.mod.values[val_id].typ
+				// If the result type is not a struct but the pointer's elem type IS a struct,
+				// use the pointer's type information instead. This fixes cases where SSA type
+				// inference fell back to i64 but the pointer actually points to a struct
+				// (e.g., string field access from sumtype cast).
+				if result_typ_id > 0 && result_typ_id < g.mod.type_store.types.len
+					&& g.mod.type_store.types[result_typ_id].kind != .struct_t {
+					ptr_typ_id := g.mod.values[ptr_id].typ
+					if ptr_typ_id > 0 && ptr_typ_id < g.mod.type_store.types.len {
+						ptr_typ := g.mod.type_store.types[ptr_typ_id]
+						if ptr_typ.kind == .ptr_t && ptr_typ.elem_type > 0
+							&& ptr_typ.elem_type < g.mod.type_store.types.len {
+							elem_typ := g.mod.type_store.types[ptr_typ.elem_type]
+							if elem_typ.kind == .struct_t {
+								result_typ_id = ptr_typ.elem_type
+							}
+						}
+					}
+				}
 				if result_typ_id > 0 && result_typ_id < g.mod.type_store.types.len {
 					result_typ := g.mod.type_store.types[result_typ_id]
 					result_size := g.type_size(result_typ_id)
@@ -1029,7 +1069,15 @@ fn (mut g Gen) gen_instr(val_id int) {
 						match load_size {
 							1 { g.emit(asm_ldr_b(Reg(dest_reg), Reg(ptr_reg))) }
 							2 { g.emit(asm_ldr_h(Reg(dest_reg), Reg(ptr_reg))) }
-							4 { g.emit(asm_ldr_w(Reg(dest_reg), Reg(ptr_reg))) }
+							4 {
+								g.emit(asm_ldr_w(Reg(dest_reg), Reg(ptr_reg)))
+								// Sign-extend 32-bit loads for signed int types.
+								// LDR Wn zero-extends, but V's int is signed and comparisons
+								// use 64-bit CMP, so -1 (0xFFFFFFFF) must become 0xFFFFFFFFFFFFFFFF.
+								if result_typ.kind == .int_t {
+									g.emit(asm_sxtw(Reg(dest_reg), Reg(dest_reg)))
+								}
+							}
 							else { g.emit(asm_ldr(Reg(dest_reg), Reg(ptr_reg))) }
 						}
 						if result_typ.kind == .struct_t && result_size <= 8 && val_id in g.stack_map {
@@ -1062,14 +1110,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					if alloc_size <= 0 {
 						alloc_size = 8
 					}
-					// Debug: check AST struct alloc sizes
-					if ptr_typ.elem_type in g.mod.ssa().c_struct_names {
-						dbg_cname := g.mod.ssa().c_struct_names[ptr_typ.elem_type]
-						if dbg_cname.starts_with('ast__') {
-							eprintln('[arm64] heap_alloc: ${dbg_cname} type=${ptr_typ.elem_type} alloc_size=${alloc_size} in ${g.cur_func_name}')
-						}
 					}
-				}
 			}
 			// calloc(1, size) → x0 = 1, x1 = size
 			g.emit_mov_imm(0, 1)
@@ -1126,16 +1167,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				if elem_size > 0 {
 					scale = elem_size
 				}
-				if g.cur_func_name.contains('collect_runtime_const_inits') {
-					fn_name := if pointee_typ_id < g.mod.type_store.types.len && pointee_typ.kind == .struct_t {
-						field_count := pointee_typ.fields.len
-						'fields=${field_count}'
-					} else {
-						''
-					}
-					eprintln('[arm64] GEP in ${g.cur_func_name}: pointee_typ_id=${pointee_typ_id} kind=${pointee_typ.kind} scale=${scale} ${fn_name}')
 				}
-			}
 			// Ensure index load doesn't clobber base if base is 8
 			idx_scratch := if base_ptr_reg == 8 { 9 } else { 8 }
 			idx_reg := g.get_operand_reg(idx_id, idx_scratch)
@@ -1187,15 +1219,22 @@ fn (mut g Gen) gen_instr(val_id int) {
 				mut effective_ret_typ_id := g.mod.values[val_id].typ
 				mut result_typ := g.mod.type_store.types[effective_ret_typ_id]
 				if result_typ.kind != .struct_t {
+					mut found_callee := false
 					for f in g.mod.funcs {
-						if f.name == fn_name && f.typ > 0 && f.typ < g.mod.type_store.types.len {
-							callee_ret := g.mod.type_store.types[f.typ]
-							if callee_ret.kind == .struct_t {
-								effective_ret_typ_id = f.typ
-								result_typ = callee_ret
+						if f.name == fn_name {
+							found_callee = true
+							if f.typ > 0 && f.typ < g.mod.type_store.types.len {
+								callee_ret := g.mod.type_store.types[f.typ]
+								if callee_ret.kind == .struct_t {
+									effective_ret_typ_id = f.typ
+									result_typ = callee_ret
+								}
 							}
 							break
 						}
+					}
+					if !found_callee && result_typ.kind == .int_t {
+						eprintln('[arm64] UNRESOLVED_CALL: fn=${fn_name} ret=${effective_ret_typ_id} in ${g.cur_func_name}')
 					}
 				}
 				result_size := g.type_size(effective_ret_typ_id)
@@ -1866,6 +1905,16 @@ fn (mut g Gen) gen_instr(val_id int) {
 					}
 				}
 			}
+			// Fallback: single-register copy. Check if destination needs more.
+			if dest_id > 0 && dest_id < g.mod.values.len {
+				d_typ_id := g.mod.values[dest_id].typ
+				if d_typ_id > 0 && d_typ_id < g.mod.type_store.types.len {
+					d_sz := g.type_size(d_typ_id)
+					if d_sz > 8 {
+						eprintln('[arm64] assign FALLBACK for ${d_sz}-byte dest (only 8 copied) in ${g.cur_func_name}')
+					}
+				}
+			}
 			g.load_val_to_reg(8, src_id)
 			g.store_reg_to_val(8, dest_id)
 		}
@@ -2038,7 +2087,16 @@ fn (mut g Gen) gen_instr(val_id int) {
 					match field_elem_size {
 						1 { g.emit(asm_ldr_b(Reg(8), Reg(9))) }
 						2 { g.emit(asm_ldr_h(Reg(8), Reg(9))) }
-						4 { g.emit(asm_ldr_w(Reg(8), Reg(9))) }
+						4 {
+							g.emit(asm_ldr_w(Reg(8), Reg(9)))
+							// Sign-extend 32-bit int fields extracted from structs.
+							if result_type_id > 0
+								&& result_type_id < g.mod.type_store.types.len {
+								if g.mod.type_store.types[result_type_id].kind == .int_t {
+									g.emit(asm_sxtw(Reg(8), Reg(8)))
+								}
+							}
+						}
 						else {}
 					}
 					g.store_reg_to_val(8, val_id)
@@ -2099,18 +2157,6 @@ fn (mut g Gen) gen_instr(val_id int) {
 			struct_typ := g.mod.type_store.types[instr.typ]
 			struct_size := g.type_size(instr.typ)
 			num_chunks := if struct_size > 0 { (struct_size + 7) / 8 } else { 1 }
-			// Debug: check AST struct sizes at codegen time
-			if instr.typ in g.mod.ssa().c_struct_names {
-				si_cname := g.mod.ssa().c_struct_names[instr.typ]
-				if si_cname.starts_with('ast__') || si_cname == 'token__Pos' {
-					eprintln('[arm64] struct_init: ${si_cname} type=${instr.typ} size=${struct_size} nfields=${struct_typ.fields.len} chunks=${num_chunks} result_off=${result_offset} in ${g.cur_func_name}')
-					for si_fi, si_ft in struct_typ.fields {
-						si_fn2 := if si_fi < struct_typ.field_names.len { struct_typ.field_names[si_fi] } else { '?' }
-						eprintln('[arm64]   field[${si_fi}] ${si_fn2}: type=${si_ft} size=${g.type_size(si_ft)} offset=${g.struct_field_offset_bytes(instr.typ, si_fi)}')
-					}
-				}
-			}
-
 			// Zero-initialize the entire struct first
 			g.emit_mov_reg(9, 31) // xzr
 			for i in 0 .. num_chunks {
@@ -2801,6 +2847,13 @@ fn (mut g Gen) load_val_to_reg(reg int, val_id int) {
 			} else {
 				g.emit_mov_imm64(reg, 0)
 			}
+		}
+		// Sign-extend narrow integers (32-bit or smaller) loaded to 64-bit registers.
+		// ARM64 LDR Wn zero-extends but V uses signed int by default, and comparisons
+		// use 64-bit CMP, so 32-bit negative values like -1 (0xFFFFFFFF) would appear
+		// as large positive numbers without sign extension.
+		if val_typ.kind == .int_t && val_typ.width > 0 && val_typ.width <= 32 {
+			g.emit(asm_sxtw(Reg(reg), Reg(reg)))
 		}
 	}
 }

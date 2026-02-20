@@ -115,6 +115,7 @@ pub fn Transformer.new_with_pref(files []ast.File, env &types.Environment, p &pr
 	mut t := &Transformer{
 		pref:                        unsafe { p }
 		env:                         unsafe { env }
+		synth_pos_counter:           -1
 		needed_str_fns:              map[string]string{}
 		needed_array_contains_fns:   map[string]ArrayMethodInfo{}
 		needed_array_index_fns:      map[string]ArrayMethodInfo{}
@@ -405,17 +406,11 @@ pub fn (mut t Transformer) transform_files(files []ast.File) []ast.File {
 	// 	}
 	// }
 	// Pre-pass: collect const declarations that require runtime initialization.
-	C.write(2, c'TF1\n', 4)
 	t.collect_runtime_const_inits(files)
-	C.write(2, c'TF2\n', 4)
 	mut result := []ast.File{cap: files.len}
-	C.write(2, c'TF2a\n', 5)
 	for file in files {
-		C.write(2, c'TF2b\n', 5)
 		result << t.transform_file(file)
-		C.write(2, c'TF2c\n', 5)
 	}
-	C.write(2, c'TF3\n', 4)
 	t.inject_runtime_const_init_fns(mut result)
 	// Generate auto helper functions and add them to the builtin file
 	mut generated_fns := []ast.Stmt{}
@@ -485,26 +480,19 @@ fn (mut t Transformer) collect_runtime_const_inits_for_file(file ast.File, is_na
 
 fn (mut t Transformer) collect_const_decl_inits(mod string, decl ast.ConstDecl, is_native bool) {
 	for field in decl.fields {
-		C.write(2, c'CD1\n', 4)
 		if mod !in t.runtime_const_inits_by_mod {
 			t.runtime_const_modules << mod
 		}
-		C.write(2, c'CD2\n', 4)
 		mut inits := if mod in t.runtime_const_inits_by_mod {
-			C.write(2, c'CD2a\n', 5)
 			t.runtime_const_inits_by_mod[mod]
 		} else {
-			C.write(2, c'CD2b\n', 5)
 			[]RuntimeConstInit{}
 		}
-		C.write(2, c'CD3\n', 4)
 		inits << RuntimeConstInit{
 			name: field.name
 			expr: field.value
 		}
-		C.write(2, c'CD4\n', 4)
 		t.runtime_const_inits_by_mod[mod] = inits
-		C.write(2, c'CD5\n', 4)
 	}
 }
 
@@ -656,25 +644,18 @@ fn (mut t Transformer) inject_main_runtime_const_init_calls(mut files []ast.File
 }
 
 fn (mut t Transformer) transform_file(file ast.File) ast.File {
-	C.write(2, c'TFf1\n', 5)
 	// Set current module for scope lookups
 	t.cur_module = file.mod
-	C.write(2, c'TFf2\n', 5)
 	// Set module scope as starting point
 	if scope := t.get_module_scope(file.mod) {
 		t.scope = scope
 	} else {
 		t.scope = unsafe { nil }
 	}
-	C.write(2, c'TFf3\n', 5)
 
 	mut stmts := []ast.Stmt{cap: file.stmts.len}
-	mut si := 0
 	for stmt in file.stmts {
-		C.write(2, c'S+\n', 3)
 		stmts << t.transform_stmt(stmt)
-		C.write(2, c'S-\n', 3)
-		si++
 	}
 	return ast.File{
 		attributes: file.attributes
@@ -3346,9 +3327,6 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 		}
 	}
 	mut exprs := []ast.Expr{cap: stmt.exprs.len}
-	if t.cur_fn_ret_type_name.contains('Expr') || t.cur_fn_ret_type_name.contains('Stmt') {
-		eprintln('[TF] transform_return_stmt: ret_type=${t.cur_fn_ret_type_name} is_sumtype=${t.is_sum_type(t.cur_fn_ret_type_name)} nexprs=${stmt.exprs.len} mod=${t.cur_module}')
-	}
 	for expr in stmt.exprs {
 		// Resolve enum shorthands in return expressions (e.g., return .string → token__Token__string)
 		if t.cur_fn_ret_type_name != '' {
@@ -3389,9 +3367,6 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 		// double smartcast dereferences (e.g., ((T*)(((T*)(x._data._T))->_data._T))->field).
 		if t.cur_fn_ret_type_name != '' && t.is_sum_type(t.cur_fn_ret_type_name) {
 			if wrapped := t.wrap_sumtype_value_transformed(transformed, t.cur_fn_ret_type_name) {
-				if t.cur_fn_ret_type_name.contains('Expr') || t.cur_fn_ret_type_name.contains('Stmt') {
-					eprintln('[TF] return wrapped OK ret_type=${t.cur_fn_ret_type_name} mod=${t.cur_module}')
-				}
 				exprs << wrapped
 				continue
 			}
@@ -3401,15 +3376,6 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 					exprs << wrapped
 					continue
 				}
-			}
-			if t.cur_fn_ret_type_name.contains('Expr') || t.cur_fn_ret_type_name.contains('Stmt') {
-				mut tn := 'other'
-				if transformed is ast.Ident { tn = 'Ident:' + (transformed as ast.Ident).name }
-				else if transformed is ast.InitExpr { tn = 'InitExpr' }
-				else if transformed is ast.CallExpr { tn = 'CallExpr' }
-				else if transformed is ast.SelectorExpr { tn = 'SelectorExpr' }
-				else if transformed is ast.BasicLiteral { tn = 'BasicLiteral' }
-				eprintln('[TF] return wrap FAILED ret_type=${t.cur_fn_ret_type_name} expr_type=${tn} mod=${t.cur_module}')
 			}
 		}
 		exprs << transformed
@@ -4157,14 +4123,33 @@ fn (t &Transformer) smartcast_context_from_is_check(expr ast.InfixExpr) ?Smartca
 	} else if expr.rhs is ast.SelectorExpr {
 		sel := expr.rhs as ast.SelectorExpr
 		variant_name = sel.rhs.name
+		// Debug: check variant_module corruption after SelectorExpr extraction
+		if variant_module.str != unsafe { nil } && variant_module.len != 0 {
+			eprintln('[smartcast] BUG: variant_module corrupted after sel extraction, len=${variant_module.len}')
+		}
 		if sel.lhs is ast.Ident {
 			variant_module = (sel.lhs as ast.Ident).name
 		}
+	}
+	if variant_name.len < 0 || variant_name.len > 500 {
+		return none
+	}
+	if variant_module.len < 0 || variant_module.len > 500 {
+		variant_module = ''
 	}
 	if variant_name == '' {
 		return none
 	}
 	if expr.op == .eq {
+		// Debug: check if any strings are nil before comparison
+		if variant_name.str == unsafe { nil } {
+			eprintln('[smartcast] BUG: variant_name is nil, len=${variant_name.len}')
+			return none
+		}
+		if variant_module.str == unsafe { nil } {
+			eprintln('[smartcast] BUG: variant_module is nil, len=${variant_module.len}')
+			variant_module = ''
+		}
 		lookup_name := if variant_module != '' {
 			'${variant_module}__${variant_name}'
 		} else {
