@@ -156,6 +156,9 @@ fn (t &Transformer) get_method_return_type(expr ast.Expr) ?types.Type {
 		}
 	}
 	if has_sel {
+		if !expr_has_valid_data(sel_expr.lhs) {
+			return none
+		}
 		method_name := sel_expr.rhs.name
 		mut lookup_type_names := []string{}
 		// Get the receiver type from the checker's stored types
@@ -277,6 +280,9 @@ fn (t &Transformer) lookup_method_return_type(type_names []string, method_name s
 // resolve_expr_type resolves the type of an expression, falling back to scope
 // lookup when the checker didn't store a type at the expression's position.
 fn (t &Transformer) resolve_expr_type(expr ast.Expr) ?types.Type {
+	if !expr_has_valid_data(expr) {
+		return none
+	}
 	// First try the environment (checker stored type)
 	pos := expr.pos()
 	if pos.is_valid() {
@@ -300,6 +306,9 @@ fn (t &Transformer) resolve_expr_type(expr ast.Expr) ?types.Type {
 // expr_returns_option checks if an expression returns an Option type by looking up
 // its type from the checker's environment. Works for both function and method calls.
 fn (t &Transformer) expr_returns_option(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	pos := expr.pos()
 	if pos.is_valid() {
 		if typ := t.env.get_expr_type(pos.id) {
@@ -318,6 +327,9 @@ fn (t &Transformer) expr_returns_option(expr ast.Expr) bool {
 // expr_returns_result checks if an expression returns a Result type by looking up
 // its type from the checker's environment. Works for both function and method calls.
 fn (t &Transformer) expr_returns_result(expr ast.Expr) bool {
+	if !expr_has_valid_data(expr) {
+		return false
+	}
 	pos := expr.pos()
 	if pos.is_valid() {
 		if typ := t.env.get_expr_type(pos.id) {

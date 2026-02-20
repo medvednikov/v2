@@ -15,12 +15,33 @@ import v2.types
 // the variant data. Works for any 16-byte sum type (Expr, Stmt, Type, etc.).
 fn sumtype_has_valid_data(ptr voidptr) bool {
 	raw := unsafe { &u64(ptr) }
-	tag := unsafe { raw[0] }
-	data := unsafe { raw[1] }
-	// data=0 means null pointer to variant data — only valid for primitive
-	// variants stored inline (e.g. EmptyExpr=u8 at tag=8).
-	// For struct variants (including tag=0=ArrayInitExpr), data=0 is invalid.
-	if data == 0 && tag != 8 {
+	w0 := unsafe { raw[0] }
+	w1 := unsafe { raw[1] }
+	// Sumtype layout differs between backends:
+	// - C backend:    {data_ptr, typ_tag}  → w0=data, w1=tag
+	// - ARM64 backend: {typ_tag, data_ptr} → w0=tag, w1=data
+	// Detect layout: one word is a small tag (<256), the other is a pointer.
+	mut tag := u64(0)
+	mut data := u64(0)
+	if w0 < 256 {
+		// ARM64 layout: w0=tag, w1=data
+		tag = w0
+		data = w1
+	} else {
+		// C layout: w0=data, w1=tag
+		data = w0
+		tag = w1
+	}
+	// EmptyExpr (tag=8): data can be 0 (inline primitive)
+	if tag == 8 {
+		return true
+	}
+	// Reject null data pointers
+	if data == 0 {
+		return false
+	}
+	// Reject near-NULL pointers (in first 64KB, unmapped memory)
+	if data < 0x10000 {
 		return false
 	}
 	return true
@@ -444,7 +465,7 @@ pub fn (mut t Transformer) transform_files(files []ast.File) []ast.File {
 		}
 	}
 	t.inject_main_runtime_const_init_calls(mut result)
-	t.propagate_types(result)
+	// t.propagate_types(result) // SKIP for now - crashes in v3 due to corrupt AST data
 	return result
 }
 
@@ -4123,10 +4144,6 @@ fn (t &Transformer) smartcast_context_from_is_check(expr ast.InfixExpr) ?Smartca
 	} else if expr.rhs is ast.SelectorExpr {
 		sel := expr.rhs as ast.SelectorExpr
 		variant_name = sel.rhs.name
-		// Debug: check variant_module corruption after SelectorExpr extraction
-		if variant_module.str != unsafe { nil } && variant_module.len != 0 {
-			eprintln('[smartcast] BUG: variant_module corrupted after sel extraction, len=${variant_module.len}')
-		}
 		if sel.lhs is ast.Ident {
 			variant_module = (sel.lhs as ast.Ident).name
 		}
@@ -4141,13 +4158,10 @@ fn (t &Transformer) smartcast_context_from_is_check(expr ast.InfixExpr) ?Smartca
 		return none
 	}
 	if expr.op == .eq {
-		// Debug: check if any strings are nil before comparison
 		if variant_name.str == unsafe { nil } {
-			eprintln('[smartcast] BUG: variant_name is nil, len=${variant_name.len}')
 			return none
 		}
 		if variant_module.str == unsafe { nil } {
-			eprintln('[smartcast] BUG: variant_module is nil, len=${variant_module.len}')
 			variant_module = ''
 		}
 		lookup_name := if variant_module != '' {

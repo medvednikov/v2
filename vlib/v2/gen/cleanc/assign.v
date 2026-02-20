@@ -8,8 +8,15 @@ import v2.ast
 import v2.types
 
 fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
+	if node.lhs.len == 0 || node.rhs.len == 0 || node.lhs.data == unsafe { nil }
+		|| node.rhs.data == unsafe { nil } {
+		return
+	}
 	lhs := node.lhs[0]
 	rhs := node.rhs[0]
+	if !expr_has_valid_data(lhs) || !expr_has_valid_data(rhs) {
+		return
+	}
 
 	// Multi-declaration with parallel RHS values:
 	// `a, b := x, y` should declare both variables (not just the first one).

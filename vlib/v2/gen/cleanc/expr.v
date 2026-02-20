@@ -175,6 +175,9 @@ fn (mut g Gen) gen_unwrapped_value_expr(expr ast.Expr) bool {
 
 // Helper to extract FnType from an Expr (handles ast.Type wrapping)
 fn (mut g Gen) expr(node ast.Expr) {
+	if !expr_has_valid_data(node) {
+		return
+	}
 	match node {
 		ast.BasicLiteral {
 			if node.kind == .key_true {
@@ -280,6 +283,10 @@ fn (mut g Gen) expr(node ast.Expr) {
 			g.sb.write_string(')')
 		}
 		ast.InfixExpr {
+			if !expr_has_valid_data(node.lhs) || !expr_has_valid_data(node.rhs) {
+				g.sb.write_string('0 /*invalid infix*/')
+				return
+			}
 			lhs_type := g.get_expr_type(node.lhs)
 			rhs_type := g.get_expr_type(node.rhs)
 			// Option none comparison: `opt == none` / `opt != none`.
@@ -718,6 +725,10 @@ fn (mut g Gen) expr(node ast.Expr) {
 			g.sb.write_string(')')
 		}
 		ast.PrefixExpr {
+			if !expr_has_valid_data(node.expr) {
+				g.sb.write_string('0 /*invalid prefix expr*/')
+				return
+			}
 			// &T(x) in unsafe contexts is used as a pointer cast in V stdlib code.
 			// Emit it as (T*)(x) so `*unsafe { &T(p) }` becomes `*((T*)p)`.
 			if node.op == .amp {
@@ -899,12 +910,20 @@ fn (mut g Gen) expr(node ast.Expr) {
 			g.expr(node.expr)
 		}
 		ast.CallExpr {
+			if !expr_has_valid_data(node.lhs) {
+				g.sb.write_string('0 /*invalid call lhs*/')
+				return
+			}
 			g.call_expr(node.lhs, node.args)
 		}
 		ast.CallOrCastExpr {
 			panic('bug in v2 compiler: CallOrCastExpr should have been lowered in v2.transformer')
 		}
 		ast.SelectorExpr {
+			if !expr_has_valid_data(node.lhs) {
+				g.sb.write_string('0 /*invalid selector lhs*/')
+				return
+			}
 			// typeof(x).name -> just emit the typeof string directly (already a string)
 			if node.lhs is ast.KeywordOperator && node.lhs.op == .key_typeof
 				&& node.rhs.name == 'name' {

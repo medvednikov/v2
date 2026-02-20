@@ -3356,12 +3356,23 @@ fn (mut b Builder) try_record_array_elem_type_from_rhs(name string, rhs ast.Expr
 }
 
 fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
-	base := b.build_expr(expr.lhs)
+	mut base := b.build_expr(expr.lhs)
 	index := b.build_expr(expr.expr)
 	mut result_type := b.expr_type(ast.Expr(expr))
 
-	base_type_id := b.mod.values[base].typ
+	mut base_type_id := b.mod.values[base].typ
 	array_type := b.get_array_type()
+	str_type := b.get_string_type()
+
+	// If base is ptr(array) or ptr(string), load the struct through the pointer first.
+	// This happens for mut array/string parameters where the SSA value is ptr(struct).
+	if array_type != 0 && base_type_id != array_type && base_type_id < b.mod.type_store.types.len {
+		base_typ := b.mod.type_store.types[base_type_id]
+		if base_typ.kind == .ptr_t && (base_typ.elem_type == array_type || base_typ.elem_type == str_type) {
+			base = b.mod.add_instr(.load, b.cur_block, base_typ.elem_type, [base])
+			base_type_id = base_typ.elem_type
+		}
+	}
 
 	// Check if base is a dynamic array (array struct) — need to access .data field
 	if array_type != 0 && base_type_id == array_type {
@@ -3439,7 +3450,6 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 	}
 
 	// Check if base is a string struct — index into .str (field 0) data pointer
-	str_type := b.get_string_type()
 	if str_type != 0 && base_type_id == str_type {
 		// Extract .str field (field 0) — pointer to u8 data
 		i8_t := b.mod.type_store.get_int(8)
@@ -4346,12 +4356,21 @@ fn (mut b Builder) build_addr(expr ast.Expr) ValueID {
 					}
 				}
 			}
-			base := b.build_expr(expr.lhs)
+			mut base := b.build_expr(expr.lhs)
 			index := b.build_expr(expr.expr)
 			mut result_type := b.expr_type(ast.Expr(expr))
 			// For dynamic arrays, extract .data pointer first (mirrors build_index logic)
-			base_type_id := b.mod.values[base].typ
+			mut base_type_id := b.mod.values[base].typ
 			array_type := b.get_array_type()
+			// If base is ptr(array), load the struct through the pointer first.
+			if array_type != 0 && base_type_id != array_type
+				&& base_type_id < b.mod.type_store.types.len {
+				base_typ := b.mod.type_store.types[base_type_id]
+				if base_typ.kind == .ptr_t && base_typ.elem_type == array_type {
+					base = b.mod.add_instr(.load, b.cur_block, base_typ.elem_type, [base])
+					base_type_id = base_typ.elem_type
+				}
+			}
 			if array_type != 0 && base_type_id == array_type {
 				i64_t := b.mod.type_store.get_int(64)
 				if result_type == i64_t {

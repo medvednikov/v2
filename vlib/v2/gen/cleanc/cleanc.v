@@ -803,6 +803,9 @@ fn mangle_alias_component(name string) string {
 }
 
 fn zero_value_for_type(t string) string {
+	if t.str == 0 || t.len == 0 || u64(t.str) < 0x10000 {
+		return '0'
+	}
 	trimmed := t.trim_space()
 	if trimmed == '' {
 		return '0'

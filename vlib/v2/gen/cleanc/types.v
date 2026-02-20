@@ -9,9 +9,27 @@ import v2.types
 
 fn sumtype_has_valid_data(ptr voidptr) bool {
 	raw := unsafe { &u64(ptr) }
-	tag := unsafe { raw[0] }
-	data := unsafe { raw[1] }
-	if tag != 0 && tag != 8 && data == 0 {
+	w0 := unsafe { raw[0] }
+	w1 := unsafe { raw[1] }
+	// Sumtype layout differs between backends:
+	// - C backend:    {data_ptr, typ_tag}  → w0=data, w1=tag
+	// - ARM64 backend: {typ_tag, data_ptr} → w0=tag, w1=data
+	mut tag := u64(0)
+	mut data := u64(0)
+	if w0 < 256 {
+		tag = w0
+		data = w1
+	} else {
+		data = w0
+		tag = w1
+	}
+	if tag == 8 {
+		return true
+	}
+	if data == 0 {
+		return false
+	}
+	if data < 0x10000 {
 		return false
 	}
 	return true
@@ -706,7 +724,7 @@ fn (mut g Gen) method_receiver_base_type(expr ast.Expr) string {
 		}
 	}
 	// Fast path: env pos.id O(1) lookup (covers most non-Ident receivers).
-	if g.env != unsafe { nil } {
+	if g.env != unsafe { nil } && expr_has_valid_data(expr) {
 		pos := expr.pos()
 		if pos.is_valid() {
 			if raw_type := g.env.get_expr_type(pos.id) {
@@ -867,6 +885,9 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 	if g.env == unsafe { nil } {
 		return none
 	}
+	if !expr_has_valid_data(e) {
+		return none
+	}
 	pos := e.pos()
 	if pos.id != 0 {
 		if typ := g.env.get_expr_type(pos.id) {
@@ -889,6 +910,9 @@ fn (g &Gen) get_expr_type_from_env(e ast.Expr) ?string {
 // form (void*, char*, u8*) so downstream pointer detection (-> vs .) works correctly.
 fn (g &Gen) get_env_c_type(e ast.Expr) ?string {
 	if g.env == unsafe { nil } {
+		return none
+	}
+	if !expr_has_valid_data(e) {
 		return none
 	}
 	pos := e.pos()
@@ -980,6 +1004,36 @@ fn (mut g Gen) get_local_var_c_type(name string) ?string {
 
 // get_expr_type returns the C type string for an expression
 fn (mut g Gen) get_expr_type(node ast.Expr) string {
+	if !expr_has_valid_data(node) {
+		return ''
+	}
+	// Validate inner Expr fields for compound nodes to prevent deep NULL dereferences.
+	// Also validate 2nd-level inner fields for deeply nested compound exprs.
+	match node {
+		ast.SelectorExpr {
+			if !expr_has_valid_data(node.lhs) { return 'int' }
+			if node.lhs is ast.SelectorExpr && !expr_has_valid_data(node.lhs.lhs) { return 'int' }
+			if node.lhs is ast.CallExpr && !expr_has_valid_data(node.lhs.lhs) { return 'int' }
+			if node.lhs is ast.IndexExpr && !expr_has_valid_data(node.lhs.lhs) { return 'int' }
+		}
+		ast.InfixExpr { if !expr_has_valid_data(node.lhs) || !expr_has_valid_data(node.rhs) {
+			return 'int' } }
+		ast.PrefixExpr { if !expr_has_valid_data(node.expr) { return 'int' } }
+		ast.ParenExpr { if !expr_has_valid_data(node.expr) { return 'int' } }
+		ast.IndexExpr {
+			if !expr_has_valid_data(node.lhs) { return 'int' }
+			if node.lhs is ast.SelectorExpr && !expr_has_valid_data(node.lhs.lhs) { return 'int' }
+		}
+		ast.CallExpr {
+			if !expr_has_valid_data(node.lhs) { return 'int' }
+			if node.lhs is ast.SelectorExpr && !expr_has_valid_data(node.lhs.lhs) { return 'int' }
+		}
+		ast.CastExpr { if !expr_has_valid_data(node.typ) { return 'int' } }
+		ast.AsCastExpr { if !expr_has_valid_data(node.typ) { return 'int' } }
+		ast.InitExpr { if !expr_has_valid_data(node.typ) { return 'int' } }
+		ast.ArrayInitExpr { if !expr_has_valid_data(node.typ) { return 'array' } }
+		else {}
+	}
 	// For identifiers, check function scope first
 	if node is ast.Ident {
 		if node.name == 'err' {
@@ -1031,7 +1085,7 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 	}
 	// For IndexExpr on pointer-to-pointer or pointer-to-string types, prefer raw-type-based
 	// inference over env (env may store the wrong type, e.g. char instead of char*).
-	if node is ast.IndexExpr {
+	if node is ast.IndexExpr && expr_has_valid_data(node.lhs) {
 		if lhs_raw := g.get_raw_type(node.lhs) {
 			if lhs_raw is types.Pointer {
 				if lhs_raw.base_type is types.Pointer || lhs_raw.base_type is types.String {
@@ -1082,6 +1136,9 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return 'string'
 		}
 		ast.SelectorExpr {
+			if !expr_has_valid_data(node.lhs) {
+				return 'int'
+			}
 			field_type := g.selector_field_type(node)
 			if field_type != '' {
 				return field_type
@@ -1091,6 +1148,9 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 		ast.InfixExpr {
 			if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .and, .logical_or] {
 				return 'bool'
+			}
+			if !expr_has_valid_data(node.lhs) || !expr_has_valid_data(node.rhs) {
+				return 'int'
 			}
 			lhs_t := g.get_expr_type(node.lhs)
 			rhs_t := g.get_expr_type(node.rhs)
@@ -1103,9 +1163,15 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return lhs_t
 		}
 		ast.ParenExpr {
+			if !expr_has_valid_data(node.expr) {
+				return 'int'
+			}
 			return g.get_expr_type(node.expr)
 		}
 		ast.PrefixExpr {
+			if !expr_has_valid_data(node.expr) {
+				return 'int'
+			}
 			if node.op == .mul {
 				// Dereference: *(T*)(x) -> T
 				inner_t := g.get_expr_type(node.expr)
@@ -1133,6 +1199,9 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return g.get_if_expr_type(node)
 		}
 		ast.IndexExpr {
+			if !expr_has_valid_data(node.lhs) {
+				return 'int'
+			}
 			if node.lhs is ast.SelectorExpr {
 				elem_type := g.fixed_array_selector_elem_type(node.lhs)
 				if elem_type != '' {
@@ -1202,9 +1271,29 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return 'int'
 		}
 		ast.InitExpr {
+			if !expr_has_valid_data(node.typ) {
+				return 'int'
+			}
 			return g.expr_type_to_c(node.typ)
 		}
 		ast.ArrayInitExpr {
+			if !expr_has_valid_data(node.typ) {
+				return 'array'
+			}
+			// Additional validation: check if this looks like a real ArrayInitExpr
+			// vs an uninitialized Expr{} (tag=0 = ArrayInitExpr, all fields zero).
+			if node.exprs.data == unsafe { nil } && node.exprs.len != 0 {
+				return 'array'
+			}
+			// Validate exprs array pointer when len > 0
+			if node.exprs.len > 0 && node.exprs.len < 10000
+				&& node.exprs.data == unsafe { nil } {
+				return 'array'
+			}
+			// Validate exprs array has sane len
+			if node.exprs.len < 0 || node.exprs.len > 10000 {
+				return 'array'
+			}
 			mut elem := g.extract_array_elem_type(node.typ)
 			if elem != '' {
 				if g.is_dynamic_array_type(node.typ) {
@@ -1253,6 +1342,9 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return 'array'
 		}
 		ast.CallExpr {
+			if !expr_has_valid_data(node.lhs) {
+				return 'int'
+			}
 			if node.lhs is ast.Ident
 				&& node.lhs.name in ['array__pop', 'array__pop_left', 'array__first', 'array__last']
 				&& node.args.len > 0 {
@@ -1260,7 +1352,7 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 				if elem_type != '' {
 					return elem_type
 				}
-			} else if node.lhs is ast.SelectorExpr
+			} else if node.lhs is ast.SelectorExpr && expr_has_valid_data(node.lhs.lhs)
 				&& node.lhs.rhs.name in ['pop', 'pop_left', 'first', 'last'] {
 				arr_expr := if node.args.len > 0 { node.args[0] } else { node.lhs.lhs }
 				elem_type := g.infer_array_elem_type_from_expr(arr_expr)
@@ -1274,9 +1366,15 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return 'int'
 		}
 		ast.CastExpr {
+			if !expr_has_valid_data(node.typ) {
+				return 'int'
+			}
 			return g.expr_type_to_c(node.typ)
 		}
 		ast.AsCastExpr {
+			if !expr_has_valid_data(node.typ) {
+				return 'int'
+			}
 			return g.expr_type_to_c(node.typ)
 		}
 		ast.StringInterLiteral {
@@ -1297,6 +1395,9 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 
 // expr_type_to_c converts an AST type expression to a C type string
 fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
+	if !expr_has_valid_data(e) {
+		return 'int'
+	}
 	match e {
 		ast.Ident {
 			name := e.name
@@ -1334,6 +1435,9 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			return name
 		}
 		ast.PrefixExpr {
+			if !expr_has_valid_data(e.expr) {
+				return 'void*'
+			}
 			if e.op == .amp {
 				return g.expr_type_to_c(e.expr) + '*'
 			}
@@ -1346,6 +1450,9 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			return 'void*'
 		}
 		ast.SelectorExpr {
+			if !expr_has_valid_data(e.lhs) {
+				return 'int'
+			}
 			if e.lhs is ast.Ident {
 				// C interop types: C.FILE -> FILE, C.tm -> struct tm
 				if e.lhs.name == 'C' {
@@ -1370,12 +1477,18 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 		}
 		ast.Type {
 			if e is ast.ArrayType {
+				if !expr_has_valid_data(e.elem_type) {
+					return 'array'
+				}
 				elem_type := mangle_alias_component(g.expr_type_to_c(e.elem_type))
 				array_type := 'Array_' + elem_type
 				g.register_alias_type(array_type)
 				return array_type
 			}
 			if e is ast.ArrayFixedType {
+				if !expr_has_valid_data(e.elem_type) || !expr_has_valid_data(e.len) {
+					return 'array'
+				}
 				elem_type := mangle_alias_component(g.expr_type_to_c(e.elem_type))
 				size_str := expr_to_int_str(e.len)
 				fixed_type := 'Array_fixed_' + elem_type + '_' + size_str
@@ -1394,6 +1507,9 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 				return g.register_tuple_alias(elem_types)
 			}
 			if e is ast.MapType {
+				if !expr_has_valid_data(e.key_type) || !expr_has_valid_data(e.value_type) {
+					return 'map'
+				}
 				key_c := g.expr_type_to_c(e.key_type)
 				value_c := g.expr_type_to_c(e.value_type)
 				key_type := mangle_alias_component(key_c)
@@ -1407,12 +1523,18 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 				return map_type
 			}
 			if e is ast.OptionType {
+				if !expr_has_valid_data(e.base_type) {
+					return 'int'
+				}
 				base_type := mangle_alias_component(g.expr_type_to_c(e.base_type))
 				option_type := '_option_' + base_type
 				g.register_alias_type(option_type)
 				return option_type
 			}
 			if e is ast.ResultType {
+				if !expr_has_valid_data(e.base_type) {
+					return 'int'
+				}
 				base_type := mangle_alias_component(g.expr_type_to_c(e.base_type))
 				result_type := '_result_' + base_type
 				g.register_alias_type(result_type)
@@ -1430,6 +1552,9 @@ fn (mut g Gen) expr_type_to_c(e ast.Expr) string {
 			return 'int'
 		}
 		ast.ModifierExpr {
+			if !expr_has_valid_data(e.expr) {
+				return 'int'
+			}
 			// Handle shared/mut modifiers: unwrap and use the inner type
 			return g.expr_type_to_c(e.expr)
 		}
@@ -1540,7 +1665,8 @@ fn (mut g Gen) get_raw_type(node ast.Expr) ?types.Type {
 		return none
 	}
 	// Fast path: env pos.id O(1) lookup for non-compound expressions.
-	if node !is ast.Ident && node !is ast.SelectorExpr && node !is ast.IndexExpr {
+	if node !is ast.Ident && node !is ast.SelectorExpr && node !is ast.IndexExpr
+		&& expr_has_valid_data(node) {
 		pos := node.pos()
 		if pos.is_valid() {
 			return g.env.get_expr_type(pos.id)
@@ -1709,9 +1835,11 @@ fn (mut g Gen) get_raw_type(node ast.Expr) ?types.Type {
 		}
 	}
 	// Try environment lookup by position
-	pos := node.pos()
-	if pos.is_valid() {
-		return g.env.get_expr_type(pos.id)
+	if expr_has_valid_data(node) {
+		pos := node.pos()
+		if pos.is_valid() {
+			return g.env.get_expr_type(pos.id)
+		}
 	}
 	return none
 }
@@ -2006,6 +2134,9 @@ fn selector_struct_field_type_from_type(t types.Type, field_name string) ?types.
 }
 
 fn (mut g Gen) selector_field_type(sel ast.SelectorExpr) string {
+	if !expr_has_valid_data(sel.lhs) {
+		return ''
+	}
 	// Fast path: use the type checker's env pos.id lookup (O(1) array access).
 	// Uses get_env_c_type (alias-preserving) since alias types like
 	// strings__Builder, ssa__TypeID are correct for struct field types.

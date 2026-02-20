@@ -1421,18 +1421,20 @@ fn (t &Transformer) get_field_array_elem_c_name(struct_name string, field_name s
 	return ''
 }
 
+fn (t &Transformer) get_struct_type_name_from_selector(expr ast.SelectorExpr) string {
+	if expr.lhs is ast.Ident {
+		lhs_type := t.get_var_type_name(expr.lhs.name)
+		if lhs_type != '' {
+			return lhs_type.trim_left('&').trim_right('*')
+		}
+	}
+	return ''
+}
+
 // type_to_name converts a Type to its name string
 fn (t &Transformer) get_struct_field_type(expr ast.SelectorExpr) ?types.Type {
 	// Try to get the struct type from scope (for local variables and receivers)
-	mut struct_type_name := ''
-	if expr.lhs is ast.Ident {
-		lhs_name := expr.lhs.name
-		lhs_type := t.get_var_type_name(lhs_name)
-		if lhs_type != '' {
-			// Remove pointer indicators: both V-style (&T) and C-style (T*)
-			struct_type_name = lhs_type.trim_left('&').trim_right('*')
-		}
-	}
+	struct_type_name := t.get_struct_type_name_from_selector(expr)
 
 	// If we have a type name, look it up in the environment
 	if struct_type_name != '' {

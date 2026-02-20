@@ -340,6 +340,44 @@ fn (mut g Gen) gen_func(func mir.Function) {
 				continue
 			}
 
+			if instr.op == .load {
+				// Check if the load's pointer operand points to a struct type.
+				// The .load handler upgrades result_typ_id to the pointer's elem
+				// type when the SSA result type fell back to i64 but the pointer
+				// actually points to a struct. We must allocate the stack slot
+				// based on the true struct size to prevent overflow.
+				if val_typ.kind != .struct_t && instr.operands.len > 0 {
+					ptr_id := instr.operands[0]
+					if ptr_id > 0 && ptr_id < g.mod.values.len {
+						ptr_typ_id := g.mod.values[ptr_id].typ
+						if ptr_typ_id > 0 && ptr_typ_id < g.mod.type_store.types.len {
+							ptr_typ := g.mod.type_store.types[ptr_typ_id]
+							if ptr_typ.kind == .ptr_t && ptr_typ.elem_type > 0
+								&& ptr_typ.elem_type < g.mod.type_store.types.len {
+								elem_typ := g.mod.type_store.types[ptr_typ.elem_type]
+								if elem_typ.kind == .struct_t {
+									mut load_struct_size := g.type_size(ptr_typ.elem_type)
+									if load_struct_size <= 0 {
+										load_struct_size = if elem_typ.fields.len > 0 {
+											elem_typ.fields.len * 8
+										} else {
+											8
+										}
+									}
+									if load_struct_size > 8 {
+										slot_offset = (slot_offset + 15) & ~0xF
+										slot_offset += load_struct_size
+										g.stack_map[val_id] = -slot_offset
+										slot_offset += 8
+										continue
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+
 			if instr.op == .call {
 				// Check if call returns a struct (directly from value type or
 				// from callee signature when value type fell back to i64).
@@ -399,7 +437,7 @@ fn (mut g Gen) gen_func(func mir.Function) {
 	}
 
 	g.stack_size = (slot_offset + 16) & ~0xF
-	if g.stack_size > 40000 || func.name.contains('parser__Parser__expr') || func.name.contains('parser__Parser__ident') {
+	if g.stack_size > 40000 || func.name.contains('parser__Parser__expr') || func.name.contains('parser__Parser__ident') || func.name.contains('smartcast_context') {
 		eprintln('[arm64] stack_size for ${func.name}: ${g.stack_size} (slot_offset=${slot_offset})')
 	}
 	g.macho.add_symbol('_' + func.name, u64(g.curr_offset), true, 1)
@@ -1838,12 +1876,14 @@ fn (mut g Gen) gen_instr(val_id int) {
 							}
 							if !can_copy {
 								if src_off := g.stack_map[src_id] {
-									// Materialize string_literal values before
-									// reading from their stack slot.
+									// For string_literal sources used by PHI .assign
+									// copies, we must always materialize the struct
+									// on the stack. Phi copies can appear on multiple
+									// branch paths, and a lazy materialization on one
+									// path leaves the slot uninitialized on other paths.
 									if src_id > 0 && src_id < g.mod.values.len
-										&& g.mod.values[src_id].kind == .string_literal
-										&& src_id !in g.string_literal_offsets {
-										g.load_val_to_reg(src_ptr_reg, src_id)
+										&& g.mod.values[src_id].kind == .string_literal {
+										g.materialize_string_literal_to_stack(src_id)
 									}
 									if dest_size > 16
 										&& g.large_aggregate_stack_value_is_pointer(src_id) {
@@ -2879,6 +2919,64 @@ fn (mut g Gen) load_fnptr_to_reg(reg int, val_id int) {
 	} else {
 		g.emit_mov_imm64(reg, 0)
 	}
+}
+
+// materialize_string_literal_to_stack ensures a string literal's struct fields
+// (str pointer, len, is_lit) are written to its stack slot. Unlike load_val_to_reg
+// which skips materialization after the first call, this always emits stores.
+// This is needed for PHI .assign copies that may execute on paths where the
+// original lazy materialization didn't happen.
+fn (mut g Gen) materialize_string_literal_to_stack(val_id int) {
+	val := g.mod.values[val_id]
+	if val.kind != .string_literal {
+		return
+	}
+	base_offset := g.stack_map[val_id] or { return }
+
+	// Compute struct field layout
+	str_typ := g.mod.type_store.types[val.typ]
+	mut len_off := 8
+	mut is_lit_off := 12
+	mut len_sz := 4
+	mut is_lit_sz := 4
+	if str_typ.kind == .struct_t && str_typ.fields.len >= 3 {
+		len_off = g.struct_field_offset_bytes(val.typ, 1)
+		is_lit_off = g.struct_field_offset_bytes(val.typ, 2)
+		len_sz = g.type_size(str_typ.fields[1])
+		is_lit_sz = g.type_size(str_typ.fields[2])
+		if len_sz <= 0 { len_sz = 4 }
+		if is_lit_sz <= 0 { is_lit_sz = 4 }
+	}
+
+	str_content := val.name
+	str_len := val.index
+
+	// Ensure the cstring data exists (create if first time)
+	mut str_data_offset := 0
+	if existing := g.string_literal_offsets[val_id] {
+		str_data_offset = existing
+	} else {
+		str_data_offset = g.macho.str_data.len
+		g.macho.str_data << str_content.bytes()
+		g.macho.str_data << 0
+		g.string_literal_offsets[val_id] = str_data_offset
+	}
+
+	// Always store str pointer to stack (using reg 9 as scratch)
+	sym_idx := g.macho.add_symbol('L_str_${str_data_offset}', u64(str_data_offset), false, 2)
+	g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_page21, true)
+	g.emit(asm_adrp(Reg(9)))
+	g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_pageoff12, false)
+	g.emit(asm_add_pageoff(Reg(9)))
+	g.emit_str_reg_offset(9, 29, base_offset)
+
+	// Always store len
+	g.emit_mov_imm64(10, str_len)
+	g.emit_str_reg_offset_sized(10, 29, base_offset + len_off, len_sz)
+
+	// Always store is_lit = 1
+	g.emit_mov_imm64(10, 1)
+	g.emit_str_reg_offset_sized(10, 29, base_offset + is_lit_off, is_lit_sz)
 }
 
 fn (mut g Gen) store_reg_to_val(reg int, val_id int) {

@@ -9,11 +9,36 @@ import v2.types
 
 // sumtype_has_valid_data checks if a sum type value has a valid (non-null) _data pointer.
 // For the arm64 native backend, sum type values may have _data=0 due to codegen limitations.
+// Works for any 16-byte sum type (Expr, Stmt, Type, etc.).
 fn sumtype_has_valid_data(ptr voidptr) bool {
 	raw := unsafe { &u64(ptr) }
-	tag := unsafe { raw[0] }
-	data := unsafe { raw[1] }
-	if tag != 0 && tag != 8 && data == 0 {
+	w0 := unsafe { raw[0] }
+	w1 := unsafe { raw[1] }
+	// Sumtype layout differs between backends:
+	// - C backend:    {data_ptr, typ_tag}  → w0=data, w1=tag
+	// - ARM64 backend: {typ_tag, data_ptr} → w0=tag, w1=data
+	// Detect layout: one word is a small tag (<256), the other is a pointer.
+	mut tag := u64(0)
+	mut data := u64(0)
+	if w0 < 256 {
+		// ARM64 layout: w0=tag, w1=data
+		tag = w0
+		data = w1
+	} else {
+		// C layout: w0=data, w1=tag
+		data = w0
+		tag = w1
+	}
+	// EmptyExpr (tag=8): data can be 0 (inline primitive)
+	if tag == 8 {
+		return true
+	}
+	// Reject null data pointers
+	if data == 0 {
+		return false
+	}
+	// Reject near-NULL pointers (in first 64KB, unmapped memory)
+	if data < 0x10000 {
 		return false
 	}
 	return true
@@ -942,6 +967,12 @@ fn (mut w Walker) walk_expr(expr ast.Expr, mod_name string) {
 	}
 	match expr {
 		ast.ArrayInitExpr {
+			// Tag=0 (ArrayInitExpr) can be a false match from zero-initialized Expr values
+			// in the ARM64 backend (default Expr{} has tag=0). Validate exprs array before iterating.
+			if expr.exprs.len < 0 || expr.exprs.len > 10000
+				|| (expr.exprs.len > 0 && expr.exprs.data == unsafe { nil }) {
+				return
+			}
 			w.walk_expr(expr.typ, mod_name)
 			for item in expr.exprs {
 				w.walk_expr(item, mod_name)

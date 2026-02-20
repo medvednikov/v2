@@ -501,7 +501,21 @@ fn (mut g Gen) gen_sum_variant_field_selector(node ast.SelectorExpr) bool {
 		}
 	}
 	if lhs_sum_type == '' {
-		lhs_sum_type = g.get_expr_type(node.lhs)
+		if !expr_has_valid_data(node.lhs) {
+			return false
+		}
+		// Use safe env-only lookup to avoid deep crashes in get_expr_type on corrupt AST.
+		if t := g.get_expr_type_from_env(node.lhs) {
+			lhs_sum_type = t
+		} else {
+			// Fallback: try get_expr_type which may crash on deeply corrupt inner fields.
+			// Only safe for simple exprs (Ident, BasicLiteral).
+			if node.lhs is ast.Ident {
+				lhs_sum_type = g.get_expr_type(node.lhs)
+			} else {
+				return false
+			}
+		}
 	}
 	mut variants := []string{}
 	if vs := g.sum_type_variants[lhs_sum_type] {

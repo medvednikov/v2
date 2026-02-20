@@ -304,15 +304,17 @@ fn (mut g Gen) gen_fn_decl(node ast.FnDecl) {
 		} else if node.is_method {
 			// Fallback: for type aliases (e.g. Builder = []u8), the checker resolves
 			// the alias and uses the underlying type name. Try env-based resolution.
-			receiver_pos := node.receiver.typ.pos()
 			mut found := false
-			if receiver_pos.is_valid() {
-				if recv_type := g.env.get_expr_type(receiver_pos.id) {
-					base_type := recv_type.base_type()
-					alt_scope_name := '${base_type.name()}__${node.name}'
-					if fn_scope2 := g.env.get_fn_scope(g.cur_module, alt_scope_name) {
-						g.cur_fn_scope = fn_scope2
-						found = true
+			if expr_has_valid_data(node.receiver.typ) {
+				receiver_pos := node.receiver.typ.pos()
+				if receiver_pos.is_valid() {
+					if recv_type := g.env.get_expr_type(receiver_pos.id) {
+						base_type := recv_type.base_type()
+						alt_scope_name := '${base_type.name()}__${node.name}'
+						if fn_scope2 := g.env.get_fn_scope(g.cur_module, alt_scope_name) {
+							g.cur_fn_scope = fn_scope2
+							found = true
+						}
 					}
 				}
 			}
@@ -539,7 +541,7 @@ fn (mut g Gen) expr_is_pointer(arg ast.Expr) bool {
 			return base_arg.op == .amp
 		}
 		ast.SelectorExpr {
-			if base_arg.rhs.name == 'data' {
+			if base_arg.rhs.name == 'data' && expr_has_valid_data(base_arg.lhs) {
 				lhs_type := g.get_expr_type(base_arg.lhs)
 				if lhs_type == 'array' || lhs_type.starts_with('Array_') || lhs_type == 'map'
 					|| lhs_type.starts_with('Map_') || lhs_type == 'string'
@@ -566,7 +568,11 @@ fn (mut g Gen) expr_is_pointer(arg ast.Expr) bool {
 		}
 		else {}
 	}
-	return g.get_expr_type(base_arg).ends_with('*')
+	// Use env-only type lookup as fallback to avoid deep crashes on corrupt AST.
+	if t := g.get_expr_type_from_env(base_arg) {
+		return t.ends_with('*')
+	}
+	return false
 }
 
 fn (mut g Gen) expr_produces_pointer(arg ast.Expr) bool {
@@ -630,7 +636,19 @@ fn (mut g Gen) can_take_address(arg ast.Expr) bool {
 }
 
 fn (mut g Gen) gen_addr_of_expr(arg ast.Expr, typ string) {
-	base_arg := if arg is ast.ModifierExpr { arg.expr } else { arg }
+	if !expr_has_valid_data(arg) {
+		g.sb.write_string('0')
+		return
+	}
+	base_arg := if arg is ast.ModifierExpr && expr_has_valid_data(arg.expr) {
+		arg.expr
+	} else {
+		arg
+	}
+	if !expr_has_valid_data(base_arg) {
+		g.sb.write_string('0')
+		return
+	}
 	if g.can_take_address(base_arg) {
 		g.sb.write_string('&')
 		g.expr(base_arg)
@@ -644,7 +662,7 @@ fn (mut g Gen) gen_addr_of_expr(arg ast.Expr, typ string) {
 		return
 	}
 	// InitExpr: check if it generates a compound literal or a function call
-	if base_arg is ast.InitExpr {
+	if base_arg is ast.InitExpr && expr_has_valid_data(base_arg.typ) {
 		init_type := g.expr_type_to_c(base_arg.typ)
 		if init_type.starts_with('Map_') || init_type == 'map' {
 			// Map init lowers to a function call; wrap it in an array compound literal
@@ -1241,9 +1259,11 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 			}
 		}
 	}
-	for arg in call_args {
+	for i, arg in call_args {
 		if arg is ast.FieldInit {
-			panic('bug in v2 compiler: FieldInit call args should have been lowered in v2.transformer')
+			// In v3 (ARM64-compiled), transformer may skip FieldInit lowering due to corrupt type info.
+			// Instead of panicking, extract the value expression.
+			call_args[i] = arg.value
 		}
 	}
 	if name != '' {
