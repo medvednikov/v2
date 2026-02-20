@@ -469,7 +469,7 @@ fn (mut b Builder) register_struct_fields(decl ast.StructDecl) {
 		field_names: field_names
 	}
 
-	if name == 'ast__File' || name == 'builder__Builder' {
+	if name in ['ast__File', 'builder__Builder', 'transformer__Transformer', 'map', 'DenseArray'] {
 		eprintln('[ssa] ${name} struct: type_id=${type_id} fields=${field_types.len} size=${b.type_byte_size(type_id)}')
 		for fi2, ft2 in field_types {
 			eprintln('[ssa]   field[${fi2}] ${field_names[fi2]}: type=${ft2} size=${b.type_byte_size(ft2)}')
@@ -2426,23 +2426,13 @@ fn (mut b Builder) build_prefix(expr ast.PrefixExpr) ValueID {
 				return addr
 			}
 			// No addressable location (e.g. function call return value) –
-			// For struct types, use heap allocation so the pointer survives
-			// the current scope (needed for sum type boxing where _data
-			// must outlive the wrapping function).
-			// For scalars, use stack alloca (they're typically short-lived).
+			// Always heap-allocate so the pointer survives the current scope.
 			val_type := b.mod.values[val].typ
 			if val_type != 0 {
 				ptr_type := b.mod.type_store.get_ptr(val_type)
-				typ_info := b.mod.type_store.types[val_type]
-				if typ_info.kind == .struct_t {
-					// Heap-allocate struct values to ensure pointer validity
-					heap_ptr := b.mod.add_instr(.heap_alloc, b.cur_block, ptr_type, []ValueID{})
-					b.mod.add_instr(.store, b.cur_block, 0, [val, heap_ptr])
-					return heap_ptr
-				}
-				alloca := b.mod.add_instr(.alloca, b.cur_block, ptr_type, []ValueID{})
-				b.mod.add_instr(.store, b.cur_block, 0, [val, alloca])
-				return alloca
+				heap_ptr := b.mod.add_instr(.heap_alloc, b.cur_block, ptr_type, []ValueID{})
+				b.mod.add_instr(.store, b.cur_block, 0, [val, heap_ptr])
+				return heap_ptr
 			}
 			return val
 		}
@@ -3050,12 +3040,32 @@ fn (mut b Builder) build_selector(expr ast.SelectorExpr) ValueID {
 			return b.mod.get_or_add_const(b.mod.type_store.get_int(64), check_typ.len.str())
 		}
 	}
-	// If base is a pointer to struct (mut param or heap alloc), auto-deref
+	// If base is a pointer to struct (mut param or heap alloc), use GEP + load
+	// instead of loading the entire struct and extracting a field.
+	// This avoids loading huge structs (e.g. 1176-byte Transformer) onto the stack
+	// just to access a single field.
 	base_typ := b.mod.values[base].typ
 	if base_typ < b.mod.type_store.types.len && b.mod.type_store.types[base_typ].kind == .ptr_t {
 		pointee := b.mod.type_store.types[base_typ].elem_type
 		if pointee < b.mod.type_store.types.len && b.mod.type_store.types[pointee].kind == .struct_t {
-			base = b.mod.add_instr(.load, b.cur_block, pointee, [base])
+			// Compute field index first (before dereferencing)
+			// We need a temporary base with the struct type for field_index to work
+			field_idx := b.field_index(expr, base)
+			// Determine result type from struct field types
+			mut result_type := TypeID(0)
+			struct_typ := b.mod.type_store.types[pointee]
+			if field_idx < struct_typ.fields.len {
+				result_type = struct_typ.fields[field_idx]
+			}
+			if result_type == 0 {
+				result_type = b.expr_type(ast.Expr(expr))
+			}
+			// GEP: compute pointer to the field within the struct
+			field_ptr_type := b.mod.type_store.get_ptr(result_type)
+			field_ptr := b.mod.add_instr(.get_element_ptr, b.cur_block, field_ptr_type, [base,
+				b.mod.get_or_add_const(b.mod.type_store.get_int(32), field_idx.str())])
+			// Load just the field value
+			return b.mod.add_instr(.load, b.cur_block, result_type, [field_ptr])
 		}
 	}
 	field_idx := b.field_index(expr, base)
@@ -3079,6 +3089,7 @@ fn (mut b Builder) build_selector(expr ast.SelectorExpr) ValueID {
 }
 
 fn (mut b Builder) field_index(expr ast.SelectorExpr, base ValueID) int {
+	field_name := expr.rhs.name
 	// Use type environment to find field index
 	if b.env != unsafe { nil } {
 		pos := expr.lhs.pos()
@@ -3087,7 +3098,7 @@ fn (mut b Builder) field_index(expr ast.SelectorExpr, base ValueID) int {
 				st := b.unwrap_to_struct(typ)
 				if st.name != '' {
 					for i, f in st.fields {
-						if f.name == expr.rhs.name {
+						if f.name == field_name {
 							return i
 						}
 					}
@@ -3105,11 +3116,20 @@ fn (mut b Builder) field_index(expr ast.SelectorExpr, base ValueID) int {
 		}
 		if typ.kind == .struct_t {
 			for i, name in typ.field_names {
-				if name == expr.rhs.name {
+				if name == field_name {
 					return i
 				}
 			}
 		}
+	}
+	// Sumtype fields always have a fixed layout: [_tag=0, _data=1]
+	// When the base type isn't properly tracked as a struct (e.g., falls back to
+	// i64 or ptr), we still know the correct indices for these well-known fields.
+	if field_name == '_data' {
+		return 1
+	}
+	if field_name == '_tag' {
+		return 0
 	}
 	return 0
 }
@@ -3160,6 +3180,19 @@ fn (mut b Builder) try_record_array_elem_type(name string, typ ast.Expr) {
 	// Check if the type expression is an array type
 	if typ is ast.Type {
 		if typ is ast.ArrayType {
+			if name == 'files' {
+				et := typ.elem_type
+				cur_name := b.mod.funcs[b.cur_func].name
+				eprintln('[ssa] files param elem_type expr kind: ${et.type_name()} in fn ${cur_name}')
+				if et is ast.SelectorExpr {
+					lname := if et.lhs is ast.Ident { et.lhs.name } else { '?' }
+					eprintln('[ssa]   selector: ${lname}.${et.rhs.name}')
+					mod_q := '${lname}__${et.rhs.name}'
+					eprintln('[ssa]   looking for ${mod_q} in struct_types: ${mod_q in b.struct_types}')
+				} else if et is ast.Ident {
+					eprintln('[ssa]   ident: ${et.name}')
+				}
+			}
 			elem_type := b.ast_type_to_ssa(typ.elem_type)
 			i64_t := b.mod.type_store.get_int(64)
 			if elem_type != 0 && elem_type != i64_t {
@@ -3226,12 +3259,21 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 		// generated IndexExprs (e.g., for-in-array lowering) that have no position ID.
 		i64_t := b.mod.type_store.get_int(64)
 		if result_type == i64_t {
+			if expr.lhs is ast.Ident {
+				eprintln('[ssa] build_index: ${expr.lhs.name}[] result_type is i64 fallback, checking env...')
+			}
 			if b.env != unsafe { nil } {
 				lhs_pos := expr.lhs.pos()
+				if expr.lhs is ast.Ident && (expr.lhs.name == 'files' || expr.lhs.name == 'source_files') {
+					eprintln('[ssa] build_index: ${expr.lhs.name}[] pos.id=${lhs_pos.id} fn=${b.mod.funcs[b.cur_func].name}')
+				}
 				if lhs_pos.id != 0 {
 					if arr_typ := b.env.get_expr_type(lhs_pos.id) {
 						if arr_typ is types.Array {
 							inferred := b.type_to_ssa(arr_typ.elem_type)
+							if expr.lhs is ast.Ident && expr.lhs.name == 'files' {
+								eprintln('[ssa] build_index: files[] env resolved: inferred=${inferred} size=${b.type_byte_size(inferred)} fn=${b.mod.funcs[b.cur_func].name}')
+							}
 							if inferred != 0 {
 								result_type = inferred
 							}
@@ -3247,7 +3289,7 @@ fn (mut b Builder) build_index(expr ast.IndexExpr) ValueID {
 					result_type = elem_t
 					eprintln('[ssa] build_index: resolved ${expr.lhs.name}[] elem type from tracking: type_id=${elem_t} size=${b.type_byte_size(elem_t)}')
 				} else {
-					eprintln('[ssa] build_index: WARNING ${expr.lhs.name}[] elem type unknown (i64 fallback)')
+					eprintln('[ssa] build_index: WARNING ${expr.lhs.name}[] not in array_var_elem_types (${b.array_var_elem_types.len} entries), fn=${b.mod.funcs[b.cur_func].name}')
 				}
 			} else {
 				lhs_name := expr.lhs.name()
@@ -3635,6 +3677,52 @@ fn (mut b Builder) build_init_expr_ptr(expr ast.InitExpr) ValueID {
 }
 
 fn (mut b Builder) build_cast(expr ast.CastExpr) ValueID {
+	// Detect sumtype boxing pattern: (voidptr)&local_var
+	// When casting &value to voidptr, the pointer may escape (stored in _data field).
+	// If the &value resolved to a stack alloca, we must heap-copy to prevent
+	// dangling pointers when the enclosing scope exits.
+	if expr.expr is ast.PrefixExpr {
+		prefix := expr.expr as ast.PrefixExpr
+		if prefix.op == .amp {
+			target_type := b.ast_type_to_ssa(expr.typ)
+			if target_type != 0 && target_type < b.mod.type_store.types.len {
+				tgt := b.mod.type_store.types[target_type]
+				if tgt.kind == .ptr_t && tgt.elem_type == b.mod.type_store.get_int(8) {
+					// Casting to ptr(i8) = voidptr — this is sumtype boxing.
+					// Build the inner value via build_prefix which calls build_addr.
+					ptr_val := b.build_expr(expr.expr)
+					// Check if the result is a stack alloca pointer
+					ptr_v := b.mod.values[ptr_val]
+					is_alloca := ptr_v.kind == .instruction && ptr_v.index >= 0
+						&& ptr_v.index < b.mod.instrs.len
+						&& b.mod.instrs[ptr_v.index].op == .alloca
+					// For sumtype boxing, the pointer must survive scope escape.
+					// Check if the result is a stack-derived pointer (alloca or GEP from alloca).
+					// If so, load the value and heap-copy it.
+					if is_alloca || b.is_stack_derived(ptr_val) {
+						val_typ := ptr_v.typ
+						if val_typ < b.mod.type_store.types.len
+							&& b.mod.type_store.types[val_typ].kind == .ptr_t {
+							elem_type := b.mod.type_store.types[val_typ].elem_type
+							// Load from stack, allocate on heap, store
+							loaded := b.mod.add_instr(.load, b.cur_block, elem_type, [
+								ptr_val,
+							])
+							heap_ptr := b.mod.add_instr(.heap_alloc, b.cur_block, val_typ,
+								[]ValueID{})
+							b.mod.add_instr(.store, b.cur_block, 0, [loaded, heap_ptr])
+							return b.mod.add_instr(.bitcast, b.cur_block, target_type, [
+								heap_ptr,
+							])
+						}
+					}
+					// Not stack-derived — proceed with normal bitcast
+					return b.mod.add_instr(.bitcast, b.cur_block, target_type, [ptr_val])
+				}
+			}
+		}
+	}
+
 	val := b.build_expr(expr.expr)
 	target_type := b.ast_type_to_ssa(expr.typ)
 	src_type := b.mod.values[val].typ
@@ -3911,6 +3999,25 @@ fn (mut b Builder) build_postfix(expr ast.PostfixExpr) ValueID {
 }
 
 // --- Address computation ---
+
+// is_stack_derived checks whether a value is derived from a stack allocation
+// (alloca or GEP/pointer arithmetic from an alloca). Used to detect when
+// sumtype boxing would create dangling pointers.
+fn (b &Builder) is_stack_derived(val ValueID) bool {
+	v := b.mod.values[val]
+	if v.kind != .instruction || v.index < 0 || v.index >= b.mod.instrs.len {
+		return false
+	}
+	instr := b.mod.instrs[v.index]
+	if instr.op == .alloca {
+		return true
+	}
+	// GEP from an alloca is also stack-derived
+	if instr.op == .get_element_ptr && instr.operands.len > 0 {
+		return b.is_stack_derived(instr.operands[0])
+	}
+	return false
+}
 
 fn (mut b Builder) build_addr(expr ast.Expr) ValueID {
 	match expr {

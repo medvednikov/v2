@@ -481,6 +481,13 @@ fn (mut t Transformer) transform_untyped_for_in(stmt ast.ForStmt, for_in ast.For
 	}
 	transformed_expr := t.transform_expr(for_in.expr)
 
+	// Try to infer element type from the iterable expression for proper SSA typing.
+	mut index_pos := token.Pos{}
+	if iter_type := t.get_expr_type(for_in.expr) {
+		value_type := iter_type.value_type()
+		index_pos = t.next_synth_pos()
+		t.register_synth_type(index_pos, value_type)
+	}
 	value_assign := ast.AssignStmt{
 		op:  .decl_assign
 		lhs: [value_lhs]
@@ -490,6 +497,7 @@ fn (mut t Transformer) transform_untyped_for_in(stmt ast.ForStmt, for_in ast.For
 				expr: ast.Ident{
 					name: key_name
 				}
+				pos: index_pos
 			}),
 		]
 	}
@@ -587,6 +595,9 @@ fn (mut t Transformer) transform_array_for_in(stmt ast.ForStmt, for_in ast.ForIn
 	transformed_expr := t.transform_expr(for_in.expr)
 
 	// Build: elem := arr[_idx]
+	// Register element type at a synthetic position so SSA can resolve it.
+	index_pos := t.next_synth_pos()
+	t.register_synth_type(index_pos, value_type)
 	value_assign := ast.AssignStmt{
 		op:  .decl_assign
 		lhs: [value_lhs]
@@ -596,6 +607,7 @@ fn (mut t Transformer) transform_array_for_in(stmt ast.ForStmt, for_in ast.ForIn
 				expr: ast.Ident{
 					name: key_name
 				}
+				pos: index_pos
 			}),
 		]
 	}
@@ -733,6 +745,9 @@ fn (mut t Transformer) transform_fixed_array_for_in(stmt ast.ForStmt, for_in ast
 	transformed_expr := t.transform_expr(for_in.expr)
 
 	// Build: elem := fixed_arr[i]
+	// Register element type at a synthetic position so SSA can resolve it.
+	fix_index_pos := t.next_synth_pos()
+	t.register_synth_type(fix_index_pos, value_type)
 	value_assign := ast.AssignStmt{
 		op:  .decl_assign
 		lhs: [ast.Expr(ast.Ident{
@@ -744,6 +759,7 @@ fn (mut t Transformer) transform_fixed_array_for_in(stmt ast.ForStmt, for_in ast
 				expr: ast.Ident{
 					name: key_name
 				}
+				pos: fix_index_pos
 			}),
 		]
 	}

@@ -398,6 +398,9 @@ fn (mut g Gen) gen_func(func mir.Function) {
 	}
 
 	g.stack_size = (slot_offset + 16) & ~0xF
+	if func.name.contains('collect_runtime_const_inits') {
+		eprintln('[arm64] stack_size for ${func.name}: ${g.stack_size} (slot_offset=${slot_offset})')
+	}
 
 	g.macho.add_symbol('_' + func.name, u64(g.curr_offset), true, 1)
 
@@ -955,6 +958,15 @@ fn (mut g Gen) gen_instr(val_id int) {
 			ptr_id := instr.operands[0]
 			mut loaded_into_aggregate_slot := false
 			mut force_spill_small_struct := false
+			if g.cur_func_name.contains('collect_runtime_const_inits') {
+				result_typ_id2 := g.mod.values[val_id].typ
+				result_size2 := g.type_size(result_typ_id2)
+				if result_size2 >= 32 {
+					kind2 := if result_typ_id2 < g.mod.type_store.types.len { g.mod.type_store.types[result_typ_id2].kind } else { .void_t }
+					has_slot := val_id in g.stack_map
+					eprintln('[arm64] LOAD in collect_runtime: typ_id=${result_typ_id2} size=${result_size2} kind=${kind2} has_slot=${has_slot}')
+				}
+			}
 
 			// ValueID 0 is the SSA null/invalid sentinel.
 			if ptr_id <= 0 || ptr_id >= g.mod.values.len {
@@ -1087,6 +1099,15 @@ fn (mut g Gen) gen_instr(val_id int) {
 				}
 				if elem_size > 0 {
 					scale = elem_size
+				}
+				if g.cur_func_name.contains('collect_runtime_const_inits') {
+					fn_name := if pointee_typ_id < g.mod.type_store.types.len && pointee_typ.kind == .struct_t {
+						field_count := pointee_typ.fields.len
+						'fields=${field_count}'
+					} else {
+						''
+					}
+					eprintln('[arm64] GEP in ${g.cur_func_name}: pointee_typ_id=${pointee_typ_id} kind=${pointee_typ.kind} scale=${scale} ${fn_name}')
 				}
 			}
 			// Ensure index load doesn't clobber base if base is 8

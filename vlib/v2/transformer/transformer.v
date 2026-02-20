@@ -407,8 +407,11 @@ pub fn (mut t Transformer) transform_files(files []ast.File) []ast.File {
 	t.collect_runtime_const_inits(files)
 	C.write(2, c'TF2\n', 4)
 	mut result := []ast.File{cap: files.len}
+	C.write(2, c'TF2a\n', 5)
 	for file in files {
+		C.write(2, c'TF2b\n', 5)
 		result << t.transform_file(file)
+		C.write(2, c'TF2c\n', 5)
 	}
 	C.write(2, c'TF3\n', 4)
 	t.inject_runtime_const_init_fns(mut result)
@@ -462,51 +465,68 @@ fn runtime_const_init_call_name(mod string, fn_name string) string {
 }
 
 fn (mut t Transformer) collect_runtime_const_inits(files []ast.File) {
-	C.write(2, c'CR1\n', 4)
 	is_native := t.pref != unsafe { nil }
 		&& (t.pref.backend == .arm64 || t.pref.backend == .x64)
-	C.write(2, c'CR2\n', 4)
-	mut fcount := u8(0)
 	for file in files {
-		fcount++
-		mut digit := fcount + 48
-		if fcount > 9 {
-			digit = fcount + 55
-		}
-		C.write(2, c'F', 1)
-		C.write(2, &digit, 1)
-		C.write(2, c' ', 1)
-		mut scount := u8(0)
-		for stmt in file.stmts {
-			scount++
-			if stmt is ast.ConstDecl {
-				for field in stmt.fields {
-					// For native backends, any non-integer-evaluable constant needs
-					// runtime init (arrays, strings, maps, struct literals, etc.)
-					// because the ARM64 data section can only store integer values.
-					// For C backends, only constants with call expressions need runtime init.
-					needs_init := if is_native {
-						needs_runtime_init(field.value)
-					} else {
-						t.contains_call_expr(field.value)
-					}
-					if !needs_init {
-						continue
-					}
-					if file.mod !in t.runtime_const_inits_by_mod {
-						t.runtime_const_modules << file.mod
-					}
-					mut inits := t.runtime_const_inits_by_mod[file.mod] or { []RuntimeConstInit{} }
-					inits << RuntimeConstInit{
-						name: field.name
-						expr: field.value
-					}
-					t.runtime_const_inits_by_mod[file.mod] = inits
-				}
-			}
+		t.collect_runtime_const_inits_for_file(file, is_native)
+	}
+}
+
+fn (mut t Transformer) collect_runtime_const_inits_for_file(file ast.File, is_native bool) {
+	stmts := file.stmts
+	for stmt in stmts {
+		if stmt is ast.ConstDecl {
+			t.collect_const_decl_inits(file.mod, stmt, is_native)
 		}
 	}
-	C.write(2, c'CR3\n', 4)
+}
+
+fn (mut t Transformer) collect_const_decl_inits(mod string, decl ast.ConstDecl, is_native bool) {
+	for field in decl.fields {
+		C.write(2, c'CD1\n', 4)
+		if mod !in t.runtime_const_inits_by_mod {
+			t.runtime_const_modules << mod
+		}
+		C.write(2, c'CD2\n', 4)
+		mut inits := if mod in t.runtime_const_inits_by_mod {
+			C.write(2, c'CD2a\n', 5)
+			t.runtime_const_inits_by_mod[mod]
+		} else {
+			C.write(2, c'CD2b\n', 5)
+			[]RuntimeConstInit{}
+		}
+		C.write(2, c'CD3\n', 4)
+		inits << RuntimeConstInit{
+			name: field.name
+			expr: field.value
+		}
+		C.write(2, c'CD4\n', 4)
+		t.runtime_const_inits_by_mod[mod] = inits
+		C.write(2, c'CD5\n', 4)
+	}
+}
+
+fn (mut t Transformer) collect_runtime_const_fields(mod string, fields []ast.FieldInit, is_native bool) {
+	for fi := 0; fi < fields.len; fi++ {
+		field := fields[fi]
+		needs_init := if is_native {
+			needs_runtime_init(field.value)
+		} else {
+			t.contains_call_expr(field.value)
+		}
+		if !needs_init {
+			continue
+		}
+		if mod !in t.runtime_const_inits_by_mod {
+			t.runtime_const_modules << mod
+		}
+		mut inits := t.runtime_const_inits_by_mod[mod] or { []RuntimeConstInit{} }
+		inits << RuntimeConstInit{
+			name: field.name
+			expr: field.value
+		}
+		t.runtime_const_inits_by_mod[mod] = inits
+	}
 }
 
 fn (mut t Transformer) transform_expr_in_module(mod string, expr ast.Expr) ast.Expr {
@@ -634,18 +654,25 @@ fn (mut t Transformer) inject_main_runtime_const_init_calls(mut files []ast.File
 }
 
 fn (mut t Transformer) transform_file(file ast.File) ast.File {
+	C.write(2, c'TFf1\n', 5)
 	// Set current module for scope lookups
 	t.cur_module = file.mod
+	C.write(2, c'TFf2\n', 5)
 	// Set module scope as starting point
 	if scope := t.get_module_scope(file.mod) {
 		t.scope = scope
 	} else {
 		t.scope = unsafe { nil }
 	}
+	C.write(2, c'TFf3\n', 5)
 
 	mut stmts := []ast.Stmt{cap: file.stmts.len}
+	mut si := 0
 	for stmt in file.stmts {
+		C.write(2, c'S+\n', 3)
 		stmts << t.transform_stmt(stmt)
+		C.write(2, c'S-\n', 3)
+		si++
 	}
 	return ast.File{
 		attributes: file.attributes

@@ -48,6 +48,7 @@ pub fn new_builder(prefs &pref.Preferences) &Builder {
 }
 
 pub fn (mut b Builder) build(files []string) {
+	C.write(2, c'B0\n', 3)
 	b.user_files = files
 	mut sw := time.new_stopwatch()
 	$if parallel ? {
