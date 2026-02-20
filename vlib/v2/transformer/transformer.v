@@ -1191,10 +1191,12 @@ fn (mut t Transformer) try_expand_if_guard_stmt(stmt ast.ExprStmt) ?[]ast.Stmt {
 			// Put assignment before the if, then use arr.data as condition
 			// When blank, use temp variable instead of _
 			temp_lhs := if is_blank {
-				[ast.Expr(ast.Ident{
-					name: guard_var_name
-					pos:  synth_pos
-				})]
+				[
+					ast.Expr(ast.Ident{
+						name: guard_var_name
+						pos:  synth_pos
+					}),
+				]
 			} else {
 				guard.stmt.lhs
 			}
