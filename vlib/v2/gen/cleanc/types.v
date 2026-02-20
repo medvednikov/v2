@@ -977,6 +977,10 @@ fn (mut g Gen) remember_runtime_local_type(name string, typ string) {
 
 // get_local_var_c_type looks up a local variable's C type string from the function scope
 fn (mut g Gen) get_local_var_c_type(name string) ?string {
+	if name.str == 0 || u64(name.str) < 0x10000 || u64(name.str) > 0x10000000000
+		|| name.len <= 0 || name.len > 0x7FFFFFF {
+		return none
+	}
 	if local_typ := g.runtime_local_types[name] {
 		return local_typ
 	}
@@ -2245,6 +2249,10 @@ fn is_generic_placeholder_c_type_name(name string) bool {
 }
 
 fn ierror_wrapper_base_from_ident(name string) string {
+	if name.str == 0 || u64(name.str) < 0x10000 || u64(name.str) > 0x10000000000
+		|| name.len <= 0 || name.len > 0x7FFFFFF {
+		return ''
+	}
 	if !name.starts_with('IError_') {
 		return ''
 	}

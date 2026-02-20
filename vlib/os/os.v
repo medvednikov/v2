@@ -842,6 +842,9 @@ pub:
 
 // mkdir_all will create a valid full path of all directories given in `path`.
 pub fn mkdir_all(opath string, params MkdirParams) ! {
+	if opath.str == 0 || u64(opath.str) < 0x10000 || u64(opath.str) > 0x10000000000 || opath.len <= 0 {
+		return error('mkdir_all: invalid path')
+	}
 	if exists(opath) {
 		if is_dir(opath) {
 			return

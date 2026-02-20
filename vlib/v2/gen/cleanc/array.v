@@ -397,6 +397,16 @@ fn (mut g Gen) is_fixed_array_selector(sel ast.SelectorExpr) bool {
 }
 
 fn (mut g Gen) gen_array_init_expr(node ast.ArrayInitExpr) {
+	if !expr_has_valid_data(node.typ) {
+		g.sb.write_string('(array){0}')
+		return
+	}
+	// Validate exprs array
+	if node.exprs.len < 0 || node.exprs.len > 100000
+		|| (node.exprs.len > 0 && node.exprs.data == unsafe { nil }) {
+		g.sb.write_string('(array){0}')
+		return
+	}
 	raw_elem := g.extract_array_elem_type(node.typ)
 	// Convert C pointer syntax to mangled name for composite types:
 	// Array_int* -> Array_intptr (typedef'd alias)

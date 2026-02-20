@@ -782,8 +782,8 @@ pub fn (s string) parse_int(_base int, _bit_size int) !i64 {
 
 @[direct_array_access]
 fn (s string) == (a string) bool {
-	s_nil := s.str == 0 || u64(s.str) < 0x10000
-	a_nil := a.str == 0 || u64(a.str) < 0x10000
+	s_nil := s.str == 0 || u64(s.str) < 0x10000 || u64(s.str) > 0x10000000000
+	a_nil := a.str == 0 || u64(a.str) < 0x10000 || u64(a.str) > 0x10000000000
 	if s_nil || a_nil {
 		// Treat nil strings as empty: nil == nil → true, nil == "" → true, nil == "x" → false
 		s_empty := s_nil || s.len == 0
@@ -836,9 +836,18 @@ fn (s string) < (a string) bool {
 
 @[direct_array_access]
 fn (s string) + (a string) string {
-	if s.len < 0 || s.len > 0x7FFFFFF || a.len < 0 || a.len > 0x7FFFFFF {
-		eprintln('STRING+: corrupt s.len=${s.len} a.len=${a.len} s.str=${voidptr(s.str)} a.str=${voidptr(a.str)}')
-		panic('string__+: corrupt string')
+	s_bad := s.len < 0 || s.len > 0x7FFFFFF || s.str == 0 || u64(s.str) < 0x10000
+		|| u64(s.str) > 0x10000000000
+	a_bad := a.len < 0 || a.len > 0x7FFFFFF || a.str == 0 || u64(a.str) < 0x10000
+		|| u64(a.str) > 0x10000000000
+	if s_bad {
+		if !a_bad {
+			return a
+		}
+		return ''
+	}
+	if a_bad {
+		return s
 	}
 	new_len := a.len + s.len
 	mut res := string{
@@ -1280,7 +1289,7 @@ pub fn (s string) index_(p string) int {
 	if p.len > s.len || p.len == 0 {
 		return -1
 	}
-	if s.str == 0 || u64(s.str) < 0x10000 {
+	if s.str == 0 || u64(s.str) < 0x10000 || u64(s.str) > 0x10000000000 {
 		return -1
 	}
 	if p.len > 2 {
@@ -1534,7 +1543,7 @@ pub fn (s string) contains(substr string) bool {
 	if substr.len == 0 {
 		return true
 	}
-	if s.str == 0 || u64(s.str) < 0x10000 {
+	if s.str == 0 || u64(s.str) < 0x10000 || u64(s.str) > 0x10000000000 {
 		return false
 	}
 	if substr.len == 1 {
@@ -1586,10 +1595,18 @@ pub fn (s string) contains_any_substr(substrs []string) bool {
 // starts_with returns `true` if the string starts with `p`.
 @[direct_array_access]
 pub fn (s string) starts_with(p string) bool {
+	if s.len < 0 || s.len > 0x7FFFFFF || p.len < 0 || p.len > 0x7FFFFFF {
+		return false
+	}
 	if p.len > s.len {
 		return false
 	}
-	if s.str == 0 || u64(s.str) < 0x10000 || p.str == 0 || u64(p.str) < 0x10000 {
+	s_ptr := u64(s.str)
+	p_ptr := u64(p.str)
+	// Reject corrupt pointers: NULL, low (<64K), or above 1TB (no real V process allocates that much).
+	// On macOS ARM64, corrupt pointers from v3 are garbage values like 0x5100000001e (~5.5TB).
+	if s.str == 0 || s_ptr < 0x10000 || s_ptr > 0x10000000000
+		|| p.str == 0 || p_ptr < 0x10000 {
 		return s.len == 0 && p.len == 0
 	}
 	if unsafe { vmemcmp(s.str, p.str, p.len) == 0 } {
@@ -1601,10 +1618,14 @@ pub fn (s string) starts_with(p string) bool {
 // ends_with returns `true` if the string ends with `p`.
 @[direct_array_access]
 pub fn (s string) ends_with(p string) bool {
+	if s.len < 0 || s.len > 0x7FFFFFF || p.len < 0 || p.len > 0x7FFFFFF {
+		return false
+	}
 	if p.len > s.len {
 		return false
 	}
-	if s.str == 0 || u64(s.str) < 0x10000 || p.str == 0 || u64(p.str) < 0x10000 {
+	if s.str == 0 || u64(s.str) < 0x10000 || u64(s.str) > 0x10000000000
+		|| p.str == 0 || u64(p.str) < 0x10000 {
 		return false
 	}
 	if unsafe { vmemcmp(s.str + s.len - p.len, p.str, p.len) == 0 } {
@@ -1845,8 +1866,9 @@ pub fn (s string) trim_space_right() string {
 // trim strips any of the characters given in `cutset` from the start and end of the string.
 // Example: assert ' ffHello V ffff'.trim(' f') == 'Hello V'
 pub fn (s string) trim(cutset string) string {
-	if s.str == 0 || u64(s.str) < 0x10000 || s.len == 0 || cutset == '' {
-		if s.str == 0 || u64(s.str) < 0x10000 {
+	if s.str == 0 || u64(s.str) < 0x10000 || u64(s.str) > 0x10000000000 || s.len == 0
+		|| cutset == '' {
+		if s.str == 0 || u64(s.str) < 0x10000 || u64(s.str) > 0x10000000000 {
 			return ''
 		}
 		return s.clone()

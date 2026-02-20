@@ -510,6 +510,11 @@ fn (g Gen) get_fn_type_from_expr(e ast.Expr) ?ast.FnType {
 fn (mut g Gen) expr_is_pointer(arg ast.Expr) bool {
 	base_arg := if arg is ast.ModifierExpr { arg.expr } else { arg }
 	if base_arg is ast.Ident {
+		if base_arg.name.str == 0 || u64(base_arg.name.str) < 0x10000
+			|| u64(base_arg.name.str) > 0x10000000000 || base_arg.name.len <= 0
+			|| base_arg.name.len > 0x7FFFFFF {
+			return false
+		}
 		if base_arg.name == 'nil' {
 			return true
 		}

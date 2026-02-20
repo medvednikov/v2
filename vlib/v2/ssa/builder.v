@@ -2113,12 +2113,83 @@ fn (mut b Builder) build_basic_literal(lit ast.BasicLiteral) ValueID {
 	}
 }
 
+// Process V string escape sequences into actual byte values.
+// The V2 scanner stores raw escape sequences (e.g., \t as 2 chars), but
+// native backends need the actual bytes (e.g., 0x09 for tab).
+fn process_v_escapes(s string) string {
+	if !s.contains('\\') {
+		return s
+	}
+	mut result := []u8{cap: s.len}
+	mut i := 0
+	for i < s.len {
+		if s[i] == `\\` && i + 1 < s.len {
+			next := s[i + 1]
+			match next {
+				`n` { result << 0x0a }
+				`t` { result << 0x09 }
+				`r` { result << 0x0d }
+				`\\` { result << 0x5c }
+				`'` { result << 0x27 }
+				`"` { result << 0x22 }
+				`0` { result << 0x00 }
+				`a` { result << 0x07 }
+				`b` { result << 0x08 }
+				`f` { result << 0x0c }
+				`v` { result << 0x0b }
+				`x` {
+					// Hex escape: \xNN
+					if i + 3 < s.len {
+						hi := hex_digit(s[i + 2])
+						lo := hex_digit(s[i + 3])
+						if hi >= 0 && lo >= 0 {
+							result << u8(hi * 16 + lo)
+							i += 4
+							continue
+						}
+					}
+					result << s[i]
+					i++
+					continue
+				}
+				else {
+					result << s[i]
+					i++
+					continue
+				}
+			}
+			i += 2
+		} else {
+			result << s[i]
+			i++
+		}
+	}
+	return result.bytestr()
+}
+
+fn hex_digit(c u8) int {
+	if c >= `0` && c <= `9` {
+		return int(c - `0`)
+	}
+	if c >= `a` && c <= `f` {
+		return int(c - `a` + 10)
+	}
+	if c >= `A` && c <= `F` {
+		return int(c - `A` + 10)
+	}
+	return -1
+}
+
 fn (mut b Builder) build_string_literal(lit ast.StringLiteral) ValueID {
 	// Strip surrounding quotes from V string literal values
 	mut val := lit.value
 	if val.len >= 2 && ((val[0] == `'` && val[val.len - 1] == `'`)
 		|| (val[0] == `"` && val[val.len - 1] == `"`)) {
 		val = val[1..val.len - 1]
+	}
+	// Process escape sequences for non-raw strings (native backends need actual bytes)
+	if lit.kind != .raw {
+		val = process_v_escapes(val)
 	}
 	if lit.kind == .c {
 		// C string literal -> raw i8* pointer
@@ -2146,6 +2217,10 @@ fn (mut b Builder) build_string_inter_literal(expr ast.StringInterLiteral) Value
 		if i == expr.values.len - 1 && val.len > 0
 			&& (val[val.len - 1] == `'` || val[val.len - 1] == `"`) {
 			val = val[..val.len - 1]
+		}
+		// Process escape sequences in literal parts (native backends need actual bytes)
+		if expr.kind != .raw {
+			val = process_v_escapes(val)
 		}
 		if val.len > 0 {
 			parts << b.mod.add_value_node(.string_literal, str_type, val, val.len)

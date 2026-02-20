@@ -308,6 +308,9 @@ pub fn ls(path string) ![]string {
 
 // mkdir creates a new directory with the specified path.
 pub fn mkdir(path string, params MkdirParams) ! {
+	if path.str == 0 || u64(path.str) < 0x10000 || u64(path.str) > 0x10000000000 || path.len <= 0 {
+		return error('mkdir: invalid path')
+	}
 	if path == '.' {
 		return
 	}

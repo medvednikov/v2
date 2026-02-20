@@ -22,7 +22,8 @@ fn map_hash_string(pkey voidptr) u64 {
 	$if native {
 		// Native backend: use FNV-1a hash instead of C.wyhash
 		// (C.wyhash requires wyhash.h which is C-only)
-		if key.str == 0 || u64(key.str) < 0x10000 {
+		if key.str == 0 || u64(key.str) < 0x10000 || u64(key.str) > 0x10000000000
+			|| key.len <= 0 || key.len > 0x7FFFFFF {
 			return u64(0)
 		}
 		mut hash := u64(14695981039346656037)

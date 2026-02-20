@@ -888,6 +888,9 @@ pub fn getwd() string {
 // Note: this particular rabbit hole is *deep* ...
 @[manualfree]
 pub fn real_path(fpath string) string {
+	if fpath.str == 0 || u64(fpath.str) < 0x10000 || u64(fpath.str) > 0x10000000000 || fpath.len <= 0 {
+		return ''
+	}
 	mut fullpath := [max_path_buffer_size]u8{}
 	mut res := ''
 	$if windows {

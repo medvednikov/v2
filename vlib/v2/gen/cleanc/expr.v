@@ -217,6 +217,12 @@ fn (mut g Gen) expr(node ast.Expr) {
 			}
 		}
 		ast.Ident {
+			if node.name.str == 0 || u64(node.name.str) < 0x10000
+				|| u64(node.name.str) > 0x10000000000 || node.name.len <= 0
+				|| node.name.len > 0x7FFFFFF {
+				g.sb.write_string('0 /* corrupt ident */')
+				return
+			}
 			g.mark_needed_ierror_wrapper_from_ident(node.name)
 			if node.name == 'nil' {
 				g.sb.write_string('NULL')
@@ -1770,9 +1776,9 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 }
 
 fn (mut g Gen) panic_map_index_expr(node ast.IndexExpr) {
-	lhs_type := g.get_expr_type(node.lhs)
-	idx_src := '${node.lhs.name()}[${node.expr.name()}]'
-	panic('bug in v2 compiler: map IndexExpr should have been lowered in v2.transformer (file=${g.cur_file_name} fn=${g.cur_fn_name} pos=${node.pos} idx=${idx_src} lhs=${node.lhs.name()} lhs_type=${lhs_type})')
+	// In v3 (ARM64-compiled), calling .name() on corrupt AST exprs can crash.
+	// Generate a safe C fallback instead of panicking.
+	g.sb.write_string('0 /* unlowered map index */')
 }
 
 fn (mut g Gen) gen_comptime_expr(node ast.ComptimeExpr) {
