@@ -171,6 +171,14 @@ fn (mut t Transformer) transform_expr(expr ast.Expr) ast.Expr {
 			t.transform_selector_expr(expr)
 		}
 		ast.Ident {
+			if expr.name.str == unsafe { nil } {
+				eprintln('[TF] NIL Ident.name in transform_expr! name.len=${expr.name.len} pos.offset=${expr.pos.offset} pos.id=${expr.pos.id}')
+				return ast.Expr(expr)
+			}
+			if expr.name.len > 100000 || expr.name.len < 0 {
+				eprintln('[TF] CORRUPTED Ident.name in transform_expr! name.len=${expr.name.len} name.str_ptr=${voidptr(expr.name.str)}')
+				return ast.Expr(expr)
+			}
 			if expr.name == '@VMODROOT' {
 				return ast.Expr(t.vmodroot_string_literal(expr.pos))
 			}

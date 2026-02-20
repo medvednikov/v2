@@ -17,8 +17,10 @@ fn sumtype_has_valid_data(ptr voidptr) bool {
 	raw := unsafe { &u64(ptr) }
 	tag := unsafe { raw[0] }
 	data := unsafe { raw[1] }
-	// data=0 is only valid for tag=0 (first variant) or tag=8 (EmptyExpr)
-	if tag != 0 && tag != 8 && data == 0 {
+	// data=0 means null pointer to variant data — only valid for primitive
+	// variants stored inline (e.g. EmptyExpr=u8 at tag=8).
+	// For struct variants (including tag=0=ArrayInitExpr), data=0 is invalid.
+	if data == 0 && tag != 8 {
 		return false
 	}
 	return true
@@ -3344,6 +3346,9 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 		}
 	}
 	mut exprs := []ast.Expr{cap: stmt.exprs.len}
+	if t.cur_fn_ret_type_name.contains('Expr') || t.cur_fn_ret_type_name.contains('Stmt') {
+		eprintln('[TF] transform_return_stmt: ret_type=${t.cur_fn_ret_type_name} is_sumtype=${t.is_sum_type(t.cur_fn_ret_type_name)} nexprs=${stmt.exprs.len} mod=${t.cur_module}')
+	}
 	for expr in stmt.exprs {
 		// Resolve enum shorthands in return expressions (e.g., return .string → token__Token__string)
 		if t.cur_fn_ret_type_name != '' {
@@ -3384,6 +3389,9 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 		// double smartcast dereferences (e.g., ((T*)(((T*)(x._data._T))->_data._T))->field).
 		if t.cur_fn_ret_type_name != '' && t.is_sum_type(t.cur_fn_ret_type_name) {
 			if wrapped := t.wrap_sumtype_value_transformed(transformed, t.cur_fn_ret_type_name) {
+				if t.cur_fn_ret_type_name.contains('Expr') || t.cur_fn_ret_type_name.contains('Stmt') {
+					eprintln('[TF] return wrapped OK ret_type=${t.cur_fn_ret_type_name} mod=${t.cur_module}')
+				}
 				exprs << wrapped
 				continue
 			}
@@ -3393,6 +3401,15 @@ fn (mut t Transformer) transform_return_stmt(stmt ast.ReturnStmt) ast.ReturnStmt
 					exprs << wrapped
 					continue
 				}
+			}
+			if t.cur_fn_ret_type_name.contains('Expr') || t.cur_fn_ret_type_name.contains('Stmt') {
+				mut tn := 'other'
+				if transformed is ast.Ident { tn = 'Ident:' + (transformed as ast.Ident).name }
+				else if transformed is ast.InitExpr { tn = 'InitExpr' }
+				else if transformed is ast.CallExpr { tn = 'CallExpr' }
+				else if transformed is ast.SelectorExpr { tn = 'SelectorExpr' }
+				else if transformed is ast.BasicLiteral { tn = 'BasicLiteral' }
+				eprintln('[TF] return wrap FAILED ret_type=${t.cur_fn_ret_type_name} expr_type=${tn} mod=${t.cur_module}')
 			}
 		}
 		exprs << transformed

@@ -1683,6 +1683,44 @@ fn (mut t Transformer) transform_call_or_cast_expr(expr ast.CallOrCastExpr) ast.
 	if !expr_has_valid_data(expr.lhs) || !expr_has_valid_data(expr.expr) {
 		return ast.Expr(expr)
 	}
+	// Debug: validate COCE fields for corruption
+	if expr.lhs is ast.Ident {
+		lhs_ident := expr.lhs as ast.Ident
+		if lhs_ident.name.str == unsafe { nil } || lhs_ident.name.len > 100000 || lhs_ident.name.len < 0 {
+			eprintln('[TF] COCE CORRUPT lhs Ident: name.len=${lhs_ident.name.len} name.str_ptr=${voidptr(lhs_ident.name.str)}')
+			return ast.Expr(expr)
+		}
+	}
+	if expr.expr is ast.Ident {
+		expr_ident := expr.expr as ast.Ident
+		if expr_ident.name.str == unsafe { nil } || expr_ident.name.len > 100000 || expr_ident.name.len < 0 {
+			// Dump raw bytes of the Ident struct (24 bytes expected)
+			ident_ptr := unsafe { &u8(&expr_ident) }
+			eprintln('[TF] COCE CORRUPT expr Ident raw bytes (at ${voidptr(ident_ptr)}):')
+			for bi in 0 .. 32 {
+				b2 := unsafe { ident_ptr[bi] }
+				eprint('${b2:02x} ')
+				if (bi + 1) % 8 == 0 {
+					eprintln('')
+				}
+			}
+			// Also dump the lhs Ident
+			if expr.lhs is ast.Ident {
+				lhs2 := expr.lhs as ast.Ident
+				lhs_ptr := unsafe { &u8(&lhs2) }
+				eprintln('[TF] lhs Ident raw bytes (at ${voidptr(lhs_ptr)}):')
+				for bi in 0 .. 32 {
+					b2 := unsafe { lhs_ptr[bi] }
+					eprint('${b2:02x} ')
+					if (bi + 1) % 8 == 0 {
+						eprintln('')
+					}
+				}
+			}
+			eprintln('[TF] COCE CORRUPT expr Ident: name.len=${expr_ident.name.len} name.str_ptr=${voidptr(expr_ident.name.str)} mod=${t.cur_module}')
+			return ast.Expr(expr)
+		}
+	}
 	// Expand .filter() / .map() calls to hoisted statements + temp variable
 	if expanded := t.try_expand_filter_or_map_expr(expr) {
 		return expanded

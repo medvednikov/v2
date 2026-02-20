@@ -398,7 +398,7 @@ fn (mut g Gen) gen_func(func mir.Function) {
 	}
 
 	g.stack_size = (slot_offset + 16) & ~0xF
-	if func.name.contains('collect_runtime_const_inits') {
+	if g.stack_size > 40000 || func.name.contains('parser__Parser__expr') || func.name.contains('parser__Parser__ident') {
 		eprintln('[arm64] stack_size for ${func.name}: ${g.stack_size} (slot_offset=${slot_offset})')
 	}
 
@@ -832,7 +832,26 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 			// Load source first, then preserve it in a register that will not be clobbered
 			// when loading the destination pointer (which may use x9 plus x11/x12 scratch).
-			mut val_reg := if src_addr_override_id > 0 {
+			//
+			// For large structs (>16 bytes) that are materialized by value on the stack
+			// (not stored as a pointer), we must use the stack address, not load the
+			// first word (which would be the first field's value, not a pointer).
+			mut src_is_byval_on_stack := false
+			effective_src := if src_addr_override_id > 0 { src_addr_override_id } else { src_id }
+			if val_typ.kind == .struct_t && val_size > 16 {
+				if !g.large_struct_stack_value_is_pointer(effective_src) {
+					if _ := g.stack_map[effective_src] {
+						src_is_byval_on_stack = true
+					}
+				}
+			}
+			mut val_reg := if src_is_byval_on_stack {
+				// Large struct by value on stack: compute its address
+				src_off2 := g.stack_map[effective_src]
+				eprintln('[arm64] store: src byval on stack, src_off=${src_off2} val_size=${val_size} in ${g.cur_func_name}')
+				g.emit_add_fp_imm(8, src_off2)
+				8
+			} else if src_addr_override_id > 0 {
 				g.get_operand_reg(src_addr_override_id, 8)
 			} else {
 				g.get_operand_reg(src_id, 8)
@@ -1042,6 +1061,13 @@ fn (mut g Gen) gen_instr(val_id int) {
 					alloc_size = g.type_size(ptr_typ.elem_type)
 					if alloc_size <= 0 {
 						alloc_size = 8
+					}
+					// Debug: check AST struct alloc sizes
+					if ptr_typ.elem_type in g.mod.ssa().c_struct_names {
+						dbg_cname := g.mod.ssa().c_struct_names[ptr_typ.elem_type]
+						if dbg_cname.starts_with('ast__') {
+							eprintln('[arm64] heap_alloc: ${dbg_cname} type=${ptr_typ.elem_type} alloc_size=${alloc_size} in ${g.cur_func_name}')
+						}
 					}
 				}
 			}
@@ -2073,6 +2099,17 @@ fn (mut g Gen) gen_instr(val_id int) {
 			struct_typ := g.mod.type_store.types[instr.typ]
 			struct_size := g.type_size(instr.typ)
 			num_chunks := if struct_size > 0 { (struct_size + 7) / 8 } else { 1 }
+			// Debug: check AST struct sizes at codegen time
+			if instr.typ in g.mod.ssa().c_struct_names {
+				si_cname := g.mod.ssa().c_struct_names[instr.typ]
+				if si_cname.starts_with('ast__') || si_cname == 'token__Pos' {
+					eprintln('[arm64] struct_init: ${si_cname} type=${instr.typ} size=${struct_size} nfields=${struct_typ.fields.len} chunks=${num_chunks} result_off=${result_offset} in ${g.cur_func_name}')
+					for si_fi, si_ft in struct_typ.fields {
+						si_fn2 := if si_fi < struct_typ.field_names.len { struct_typ.field_names[si_fi] } else { '?' }
+						eprintln('[arm64]   field[${si_fi}] ${si_fn2}: type=${si_ft} size=${g.type_size(si_ft)} offset=${g.struct_field_offset_bytes(instr.typ, si_fi)}')
+					}
+				}
+			}
 
 			// Zero-initialize the entire struct first
 			g.emit_mov_reg(9, 31) // xzr

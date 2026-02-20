@@ -1125,11 +1125,42 @@ fn (mut p Parser) expr(min_bp token.BindingPower) ast.Expr {
 				}
 				// work this out after type checking
 				else {
-					lhs = ast.Expr(ast.CallOrCastExpr{
+					// Check args[0] BEFORE creating COCE
+					if args[0] is ast.Ident {
+						ai := args[0] as ast.Ident
+						if ai.name.str == unsafe { nil } || ai.name.len > 100000 || ai.name.len < 0 {
+							eprintln('[PARSER] args[0] ALREADY CORRUPT before COCE creation!')
+						}
+					}
+					coce_tmp := ast.CallOrCastExpr{
 						lhs:  lhs
 						expr: args[0]
 						pos:  pos
-					})
+					}
+					// Check COCE struct BEFORE sumtype boxing
+					if coce_tmp.expr is ast.Ident {
+						ci := coce_tmp.expr as ast.Ident
+						if ci.name.str == unsafe { nil } || ci.name.len > 100000 || ci.name.len < 0 {
+							eprintln('[PARSER] COCE struct CORRUPT BEFORE boxing!')
+						}
+					}
+					lhs = ast.Expr(coce_tmp)
+					// Check COCE AFTER sumtype boxing
+					if lhs is ast.CallOrCastExpr {
+						coce := lhs as ast.CallOrCastExpr
+						if coce.expr is ast.Ident {
+							ci := coce.expr as ast.Ident
+							if ci.name.str == unsafe { nil } || ci.name.len > 100000 || ci.name.len < 0 {
+								eprintln('[PARSER] COCE CORRUPT AFTER boxing!')
+								if coce.lhs is ast.Ident {
+									li := coce.lhs as ast.Ident
+									if li.name.str != unsafe { nil } && li.name.len >= 0 && li.name.len < 100000 {
+										eprintln('[PARSER]   lhs="${li.name}"')
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 			// definitely a call (0 args, or more than 1 arg)
@@ -2123,6 +2154,13 @@ fn (mut p Parser) fn_arguments() []ast.Expr {
 				p.expr(.lowest)
 			}
 		}
+		// Debug: check expr right after p.expr(.lowest) returns
+		if expr is ast.Ident {
+			ei := expr as ast.Ident
+			if ei.name.str == unsafe { nil } || ei.name.len > 100000 || ei.name.len < 0 {
+				eprintln('[PARSER] fn_arguments: expr CORRUPT right after match! name.len=${ei.name.len}')
+			}
+		}
 		// short struct config syntax
 		// TODO: if also supported anywhere else it can be moved to `p.expr()`
 		if p.tok == .colon {
@@ -2140,6 +2178,14 @@ fn (mut p Parser) fn_arguments() []ast.Expr {
 			}
 		} else {
 			args << expr
+			// Debug: check after push
+			last := args[args.len - 1]
+			if last is ast.Ident {
+				li := last as ast.Ident
+				if li.name.str == unsafe { nil } || li.name.len > 100000 || li.name.len < 0 {
+					eprintln('[PARSER] fn_arguments: args[last] CORRUPT after push!')
+				}
+			}
 		}
 		// args << expr
 		if p.tok == .comma {
