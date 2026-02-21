@@ -3199,10 +3199,14 @@ fn (mut b Builder) build_addr(expr ast.Expr) ValueID {
 				// Extract .data field (index 0), cast to element pointer, then GEP
 				i8_t := b.mod.type_store.get_int(8)
 				void_ptr := b.mod.type_store.get_ptr(i8_t)
-				data_ptr := b.mod.add_instr(.extractvalue, b.cur_block, void_ptr, [base,
-					b.mod.get_or_add_const(b.mod.type_store.get_int(32), '0')])
+				data_ptr := b.mod.add_instr(.extractvalue, b.cur_block, void_ptr, [
+					base,
+					b.mod.get_or_add_const(b.mod.type_store.get_int(32), '0'),
+				])
 				elem_ptr_type := b.mod.type_store.get_ptr(result_type)
-				typed_ptr := b.mod.add_instr(.bitcast, b.cur_block, elem_ptr_type, [data_ptr])
+				typed_ptr := b.mod.add_instr(.bitcast, b.cur_block, elem_ptr_type, [
+					data_ptr,
+				])
 				return b.mod.add_instr(.get_element_ptr, b.cur_block, elem_ptr_type, [
 					typed_ptr,
 					index,

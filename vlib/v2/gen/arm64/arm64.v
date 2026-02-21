@@ -1383,7 +1383,6 @@ fn (mut g Gen) gen_instr(val_id int) {
 				fn_ret_typ := g.mod.type_store.types[fn_ret_type]
 				fn_ret_size := g.type_size(fn_ret_type)
 
-
 				// Check if we're returning a pointer but the function expects a struct
 				// This happens when returning local struct variables (expr_init returns pointers)
 				mut is_indirect_struct_return := false

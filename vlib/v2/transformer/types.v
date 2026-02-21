@@ -324,8 +324,7 @@ fn (t &Transformer) find_sumtype_for_variant(variant_name string) string {
 						} else {
 							v
 						}
-						if v == variant_name || v_short == short_variant
-							|| v_short == variant_name {
+						if v == variant_name || v_short == short_variant || v_short == variant_name {
 							return obj_name
 						}
 					}
@@ -337,8 +336,7 @@ fn (t &Transformer) find_sumtype_for_variant(variant_name string) string {
 					} else {
 						v
 					}
-					if v == variant_name || v_short == short_variant
-						|| v_short == variant_name {
+					if v == variant_name || v_short == short_variant || v_short == variant_name {
 						return st_name
 					}
 				}

@@ -358,8 +358,8 @@ fn (mut t Transformer) infer_prop_type(expr ast.Expr) ?types.Type {
 		}
 		ast.InfixExpr {
 			// Comparison operators return bool
-			if expr.op in [.eq, .ne, .lt, .gt, .le, .ge, .key_is, .not_is, .key_in, .not_in,
-				.and, .logical_or] {
+			if expr.op in [.eq, .ne, .lt, .gt, .le, .ge, .key_is, .not_is, .key_in, .not_in, .and,
+				.logical_or] {
 				return types.Type(types.bool_)
 			}
 			// For arithmetic, return the type of the left operand
