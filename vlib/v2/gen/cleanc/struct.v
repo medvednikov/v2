@@ -135,6 +135,7 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 	for i, emb in node.embedded {
 		emb_type := g.expr_type_to_c(emb)
 		g.sb.writeln('\t${emb_type} ${emb_type};')
+		mut registered := false
 		if i < env_struct.embedded.len {
 			embedded := env_struct.embedded[i]
 			for ef in embedded.fields {
@@ -146,6 +147,20 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 					short_key := name.all_after_last('__') + '.' + ef.name
 					g.embedded_field_owner[short_key] = emb_type
 					g.struct_field_types[short_key] = embedded_field_type
+				}
+			}
+			registered = true
+		}
+		// Fallback: when env has no data (--skip-type-check), use struct_known_fields
+		if !registered {
+			if emb_fields := g.struct_known_fields[emb_type] {
+				for ef_name in emb_fields {
+					key := name + '.' + ef_name
+					g.embedded_field_owner[key] = emb_type
+					if name.contains('__') {
+						short_key := name.all_after_last('__') + '.' + ef_name
+						g.embedded_field_owner[short_key] = emb_type
+					}
 				}
 			}
 		}
@@ -208,6 +223,12 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 		field_type := field_lookup_type
 		g.sb.writeln('\t${field_type} ${field_name};')
 	}
+	// Track field names for embedded struct fallback (--skip-type-check)
+	mut field_names := []string{cap: node.fields.len}
+	for field in node.fields {
+		field_names << field.name
+	}
+	g.struct_known_fields[name] = field_names
 	// Add mutex field for shared fields
 	if has_shared_fields {
 		g.sb.writeln('\tsync__RwMutex mtx;')

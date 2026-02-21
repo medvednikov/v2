@@ -520,6 +520,39 @@ fn (mut g Gen) expr(node ast.Expr) {
 				g.sb.write_string(')')
 				return
 			}
+			// string + non-string: convert RHS to string first
+			if node.op == .plus && lhs_type == 'string' && rhs_type != 'string' {
+				g.sb.write_string('string__plus(')
+				g.expr(node.lhs)
+				g.sb.write_string(', ')
+				if rhs_type in ['i64', 'i32', 'int'] {
+					g.sb.write_string('i64__str((i64)(')
+					g.expr(node.rhs)
+					g.sb.write_string('))')
+				} else if rhs_type in ['f64', 'f32'] {
+					g.sb.write_string('f64__str(')
+					g.expr(node.rhs)
+					g.sb.write_string(')')
+				} else {
+					g.sb.write_string('int__str(')
+					g.expr(node.rhs)
+					g.sb.write_string(')')
+				}
+				g.sb.write_string(')')
+				return
+			}
+			// Struct operators: Type__minus, Type__plus for non-primitive types
+			if node.op in [.minus, .plus] && lhs_type != '' && !lhs_type.starts_with('_')
+				&& lhs_type.contains('__') && lhs_type == rhs_type
+				&& lhs_type !in primitive_types && !lhs_type.ends_with('*') {
+				op_name := if node.op == .minus { 'minus' } else { 'plus' }
+				g.sb.write_string('${lhs_type}__${op_name}(')
+				g.expr(node.lhs)
+				g.sb.write_string(', ')
+				g.expr(node.rhs)
+				g.sb.write_string(')')
+				return
+			}
 			if node.op in [.key_in, .not_in] {
 				if node.rhs is ast.ArrayInitExpr {
 					join_op := if node.op == .key_in { ' || ' } else { ' && ' }
@@ -1093,6 +1126,13 @@ fn (mut g Gen) expr(node ast.Expr) {
 						'strconv__pow5_inv_split_64_x', 'strconv__pow5_split_64_x'] {
 						g.sb.write_string('((int)(sizeof(${fixed_name}) / sizeof(${fixed_name}[0])))')
 						return
+					}
+					// Check local variable type for fixed arrays (Array_fixed_*)
+					if local_type := g.get_local_var_c_type(node.lhs.name) {
+						if local_type.starts_with('Array_fixed_') {
+							g.sb.write_string('((int)(sizeof(${node.lhs.name}) / sizeof(${node.lhs.name}[0])))')
+							return
+						}
 					}
 				}
 				if node.lhs is ast.SelectorExpr {
@@ -1830,6 +1870,16 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 				if (elem_type == '' || elem_type == 'int') && node.lhs is ast.Ident {
 					if tracked_elem := g.array_var_elem_types[node.lhs.name] {
 						elem_type = tracked_elem
+					} else if tracked_elem := g.global_array_elem_types[node.lhs.name] {
+						elem_type = tracked_elem
+					} else if g.cur_module != '' && g.cur_module != 'main'
+						&& g.cur_module != 'builtin' && !node.lhs.name.contains('__') {
+						qualified := '${g.cur_module}__${node.lhs.name}'
+						if tracked_elem := g.array_var_elem_types[qualified] {
+							elem_type = tracked_elem
+						} else if tracked_elem2 := g.global_array_elem_types[qualified] {
+							elem_type = tracked_elem2
+						}
 					}
 				}
 			}
@@ -1946,7 +1996,19 @@ fn is_c_macro_name(name string) bool {
 }
 
 fn (mut g Gen) gen_cast_expr(node ast.CastExpr) {
-	type_name := g.expr_type_to_c(node.typ)
+	mut type_name := g.expr_type_to_c(node.typ)
+	// For array data access casts like (int*)arr.data, fix type if arr has tracked elem type
+	if type_name == 'int*' && node.expr is ast.SelectorExpr {
+		sel := node.expr as ast.SelectorExpr
+		if sel.rhs.name == 'data' && sel.lhs is ast.Ident {
+			arr_name := (sel.lhs as ast.Ident).name
+			if tracked := g.array_var_elem_types[arr_name] {
+				type_name = '${tracked}*'
+			} else if tracked := g.global_array_elem_types[arr_name] {
+				type_name = '${tracked}*'
+			}
+		}
+	}
 	// Handle C macros that appear as cast expressions: emit as function calls instead
 	macro_name := if type_name.starts_with('struct ') { type_name[7..] } else { type_name }
 	if is_c_macro_name(macro_name) {

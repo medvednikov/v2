@@ -1156,6 +1156,14 @@ fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
 			return ret
 		}
 	}
+	// Known return types for specialized functions not in fn_return_types
+	if c_name.starts_with('array__contains') {
+		return 'bool'
+	}
+	if c_name.starts_with('array__filter') || c_name.starts_with('array__map')
+		|| c_name == 'array__reverse' || c_name == 'array__clone' || c_name == 'array__slice' {
+		return 'array'
+	}
 	match c_name {
 		'open', 'chdir', 'proc_pidpath' { return 'int' }
 		'signal' { return 'void*' }
@@ -1281,6 +1289,32 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 	// Transformer helper maps directly to builtin implementation name in vlib.
 	if name == 'builtin__new_array_from_c_array_noscan' {
 		name = 'new_array_from_c_array'
+	}
+	// Fix element type in new_array_from_c_array when sizeof type is wrong.
+	// When --skip-type-check defaults elem type to 'int' but elements are actually strings.
+	if name in ['new_array_from_c_array', 'builtin__new_array_from_c_array_noscan']
+		&& call_args.len >= 4 {
+		// Check if the sizeof arg (arg[2]) says 'int' but any element has a different type
+		sizeof_type := g.extract_sizeof_type_name(call_args[2])
+		if sizeof_type == 'int' {
+			// Check elements in the 4th argument (compound literal)
+			actual_elem_type := g.infer_array_init_elem_type(call_args[3])
+			if actual_elem_type != '' && actual_elem_type != 'int' && actual_elem_type != 'int_literal' {
+				// Emit the fixed call manually
+				len_str := g.expr_to_string(call_args[0])
+				cap_str := g.expr_to_string(call_args[1])
+				elems := g.extract_array_init_elements(call_args[3])
+				g.sb.write_string('new_array_from_c_array(${len_str}, ${cap_str}, sizeof(${actual_elem_type}), &(${actual_elem_type}[${len_str}]){')
+				for i, elem in elems {
+					if i > 0 {
+						g.sb.write_string(', ')
+					}
+					g.expr(elem)
+				}
+				g.sb.write_string('})')
+				return
+			}
+		}
 	}
 	if name == 'builtin__array_push_noscan' {
 		name = 'array__push'
@@ -1508,7 +1542,14 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 			arg_types << at
 		}
 		ret_type := g.fn_pointer_return_type(lhs)
-		c_ret := if ret_type == '' { 'void' } else { ret_type }
+		c_ret := if ret_type != '' {
+			ret_type
+		} else if g.cur_fn_ret_type != '' && !g.cur_fn_ret_type.starts_with('_result_')
+			&& !g.cur_fn_ret_type.starts_with('_option_') {
+			g.cur_fn_ret_type
+		} else {
+			'void'
+		}
 		g.sb.write_string('((${c_ret} (*)(')
 		for i, at in arg_types {
 			if i > 0 {
@@ -1529,6 +1570,38 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 		return
 	}
 	if g.gen_array_contains_call(name, call_args) {
+		return
+	}
+	// array__filter: convert inline predicate with 'it' to a manual loop
+	if name == 'array__filter' && call_args.len == 2 {
+		elem_type := g.infer_array_elem_type_from_expr(call_args[0])
+		actual_elem := if elem_type != '' { elem_type } else { 'int' }
+		res_tmp := '_filter_res_${g.tmp_counter}'
+		g.tmp_counter++
+		idx_tmp := '_filter_i_${g.tmp_counter}'
+		g.tmp_counter++
+		g.sb.write_string('({ array ${res_tmp} = __new_array_with_default(0, 0, sizeof(${actual_elem}), NULL); ')
+		g.sb.write_string('for (int ${idx_tmp} = 0; ${idx_tmp} < ')
+		g.expr(call_args[0])
+		g.sb.write_string('.len; ${idx_tmp}++) { ')
+		g.sb.write_string('${actual_elem} it = ((${actual_elem}*)')
+		g.expr(call_args[0])
+		g.sb.write_string('.data)[${idx_tmp}]; ')
+		// Extract condition from &(int){COND} pattern
+		g.sb.write_string('if (')
+		cond_arg := call_args[1]
+		if cond_arg is ast.PrefixExpr && cond_arg.op == .amp {
+			inner := cond_arg.expr
+			if inner is ast.ArrayInitExpr && inner.exprs.len == 1 {
+				g.expr(inner.exprs[0])
+			} else {
+				g.expr(inner)
+			}
+		} else {
+			g.expr(cond_arg)
+		}
+		g.sb.write_string(') { array__push(&${res_tmp}, &(${actual_elem}[1]){it}); } ')
+		g.sb.write_string('} ${res_tmp}; })')
 		return
 	}
 	if name == 'array__eq' && call_args.len == 2 {
@@ -1749,6 +1822,29 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 		g.sb.write_string(')')
 		return
 	}
+	// Remap int__X methods to string__X when receiver is actually a string.
+	// This happens when --skip-type-check defaults receiver type to int.
+	if c_name.starts_with('int__') && call_args.len >= 1 {
+		method := c_name['int__'.len..]
+		// Methods that only exist on specific types (not int)
+		if method in ['vstring_with_len', 'vstring', 'vstring_literal', 'vstring_literal_with_len'] {
+			c_name = 'u8__${method}'
+		} else if method in ['clone', 'clone_static', 'starts_with', 'ends_with', 'contains',
+			'replace', 'split', 'trim', 'trim_left', 'trim_right', 'to_lower', 'to_upper',
+			'index', 'index_', 'last_index', 'substr', 'count', 'repeat'] {
+			// String-only methods (int doesn't have these)
+			c_name = 'string__${method}'
+		} else {
+			first_arg_type := g.get_expr_type(call_args[0])
+			if first_arg_type == 'string' {
+				c_name = 'string__${method}'
+			} else if first_arg_type in ['array', 'Array_string'] || first_arg_type.starts_with('Array_') {
+				c_name = 'array__${method}'
+			} else if first_arg_type == 'map' || first_arg_type.starts_with('Map_') {
+				c_name = 'map__${method}'
+			}
+		}
+	}
 	// Flag enum methods: int__set(a, b) → (a |= b), int__clear(a, b) → (a &= ~(b))
 	if c_name == 'int__set' && call_args.len == 2 {
 		g.expr(call_args[0])
@@ -1770,6 +1866,17 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 		g.expr(call_args[1])
 		g.sb.write_string(') != 0)')
 		return
+	}
+	// os__error_posix/os__error_win32 expect os__SystemError but transformer may pass string.
+	// Wrap the string arg in (os__SystemError){.msg = ARG}.
+	if c_name in ['os__error_posix', 'os__error_win32'] && call_args.len == 1 {
+		arg_type := g.get_expr_type(call_args[0])
+		if arg_type == 'string' || arg_type == '' {
+			g.sb.write_string('${c_name}((os__SystemError){.msg = ')
+			g.expr(call_args[0])
+			g.sb.write_string('})')
+			return
+		}
 	}
 	// When call has more args than params, pack trailing args into a struct compound literal.
 	// This happens when the transformer expands struct init args into individual values.
@@ -1796,6 +1903,31 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 				field_init_struct_literal = struct_lit
 				field_init_start_idx = struct_param_idx
 				call_args = unsafe { new_args }
+			}
+		}
+	}
+	// When arg count matches param count but an arg is a scalar and param expects a struct,
+	// wrap in struct compound literal: os__mkdir_all(path, 0700) → os__mkdir_all(path, (MkdirParams){.mode = 0700})
+	if param_types2 := g.fn_param_types[c_name] {
+		if call_args.len == param_types2.len {
+			for i2, pt in param_types2 {
+				if i2 < call_args.len && pt != '' && !is_c_primitive_type(pt) && !pt.ends_with('*') {
+					arg_type := g.get_expr_type(call_args[i2])
+					if arg_type in ['int', 'int_literal', 'u32', 'i32', ''] {
+						// Check if arg is a literal/simple value that needs struct wrapping
+						if call_args[i2] is ast.BasicLiteral || call_args[i2] is ast.Ident {
+							// Find the first field name of the struct
+							first_field := g.struct_field_types.keys().filter(it.starts_with('${pt}.'))
+							if first_field.len > 0 {
+								field_name := first_field[0].all_after('${pt}.')
+								arg_str := g.expr_to_string(call_args[i2])
+								field_init_struct_literal = '(${pt}){.${field_name} = ${arg_str}}'
+								field_init_start_idx = i2
+								break
+							}
+						}
+					}
+				}
 			}
 		}
 	}

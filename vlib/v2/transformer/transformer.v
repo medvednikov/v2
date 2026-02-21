@@ -4718,6 +4718,17 @@ fn (mut t Transformer) transform_array_init_with_exprs(arr ast.ArrayInitExpr, ex
 			} else {
 				exprs[0]
 			}
+		} else if first is ast.Ident {
+			// Variable reference - try to look up its type
+			if var_type := t.lookup_var_type(first.name) {
+				tn := t.type_to_c_name(var_type)
+				if tn != '' {
+					elem_type_name = tn
+				}
+			}
+			ast.Expr(ast.Ident{
+				name: elem_type_name
+			})
 		} else {
 			exprs[0]
 		}

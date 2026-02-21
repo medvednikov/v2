@@ -299,6 +299,22 @@ fn (mut g Gen) infer_array_elem_type_from_expr(arr_expr ast.Expr) string {
 			}
 		}
 	}
+	// Check tracked array element types (from sizeof(T) in __new_array*)
+	if arr_expr is ast.Ident {
+		if tracked := g.array_var_elem_types[arr_expr.name] {
+			return tracked
+		}
+		if tracked := g.global_array_elem_types[arr_expr.name] {
+			return tracked
+		}
+	} else if arr_expr is ast.PrefixExpr && arr_expr.expr is ast.Ident {
+		if tracked := g.array_var_elem_types[arr_expr.expr.name] {
+			return tracked
+		}
+		if tracked := g.global_array_elem_types[arr_expr.expr.name] {
+			return tracked
+		}
+	}
 	// Last resort: string-based extraction (e.g. Array_int → int).
 	return array_alias_elem_type(arr_type)
 }
@@ -565,6 +581,10 @@ fn (mut g Gen) try_emit_const_dynamic_array_call(name string, value ast.Expr) bo
 		cap_expr = len_expr
 	}
 	data_name := '__const_array_data_${name}'
+	// Track element type for later IndexExpr resolution (for-in loops, etc.)
+	g.array_var_elem_types[name] = elem_type
+	g.global_array_elem_types[name] = elem_type
+	g.global_var_types[name] = 'array'
 	if array_data.exprs.len > 0 {
 		g.sb.write_string('static ${elem_type} ${data_name}[${array_data.exprs.len}] = {')
 		for i, e in array_data.exprs {
@@ -579,6 +599,67 @@ fn (mut g Gen) try_emit_const_dynamic_array_call(name string, value ast.Expr) bo
 		g.sb.writeln('array ${name} = ((array){ .data = NULL, .offset = 0, .len = ${len_expr}, .cap = ${cap_expr}, .flags = 0, .element_size = sizeof(${elem_type}) });')
 	}
 	return true
+}
+
+// extract_sizeof_type_name extracts the type name from a sizeof(TYPE) expression.
+fn (mut g Gen) extract_sizeof_type_name(expr ast.Expr) string {
+	if expr is ast.KeywordOperator && expr.op == .key_sizeof && expr.exprs.len > 0 {
+		return g.expr_type_to_c(expr.exprs[0])
+	}
+	// sizeof might be wrapped in a CastExpr like int(sizeof(TYPE))
+	if expr is ast.CastExpr {
+		return g.extract_sizeof_type_name(expr.expr)
+	}
+	return ''
+}
+
+// infer_array_init_elem_type checks the data argument of new_array_from_c_array
+// and infers the actual element type from the expressions.
+fn (mut g Gen) infer_array_init_elem_type(data_arg ast.Expr) string {
+	// data_arg is typically PrefixExpr(&, CastExpr(ArrayType, ArrayInitExpr([elems])))
+	// Unwrap PrefixExpr(&)
+	inner1 := if data_arg is ast.PrefixExpr && data_arg.op == .amp {
+		data_arg.expr
+	} else {
+		data_arg
+	}
+	// Unwrap CastExpr
+	inner2 := if inner1 is ast.CastExpr {
+		inner1.expr
+	} else {
+		inner1
+	}
+	if inner2 is ast.ArrayInitExpr {
+		for elem in inner2.exprs {
+			if !expr_has_valid_data(elem) {
+				continue
+			}
+			t := g.get_expr_type(elem)
+			if t != '' && t != 'int' && t != 'int_literal' && t != 'void' {
+				return t
+			}
+		}
+	}
+	return ''
+}
+
+// extract_array_init_elements extracts the element expressions from the data
+// argument of new_array_from_c_array.
+fn (g &Gen) extract_array_init_elements(data_arg ast.Expr) []ast.Expr {
+	inner1 := if data_arg is ast.PrefixExpr && data_arg.op == .amp {
+		data_arg.expr
+	} else {
+		data_arg
+	}
+	inner2 := if inner1 is ast.CastExpr {
+		inner1.expr
+	} else {
+		inner1
+	}
+	if inner2 is ast.ArrayInitExpr {
+		return inner2.exprs
+	}
+	return []ast.Expr{}
 }
 
 fn (mut g Gen) gen_fixed_array_cmp_operand(expr ast.Expr, fixed_type string) {

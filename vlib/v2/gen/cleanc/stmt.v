@@ -122,13 +122,13 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 				}
 				expr_type := g.get_expr_type(expr)
 				if expr is ast.Ident && expr.name == 'err' {
-					g.sb.write_string('return (${g.cur_fn_ret_type}){ .is_error=true, .err=')
+					g.sb.write_string('return (${g.cur_fn_ret_type}){ .state=2, .err=')
 					g.expr(expr)
 					g.sb.writeln(' };')
 					return
 				}
 				if expr_type == 'IError' {
-					g.sb.write_string('return (${g.cur_fn_ret_type}){ .is_error=true, .err=')
+					g.sb.write_string('return (${g.cur_fn_ret_type}){ .state=2, .err=')
 					g.expr(expr)
 					g.sb.writeln(' };')
 					return
@@ -243,11 +243,29 @@ fn (mut g Gen) gen_stmt(node ast.Stmt) {
 				expr_type := g.get_expr_type(expr)
 				concrete := expr_type.trim_right('*')
 				if concrete != '' && concrete != 'IError' && concrete != 'int'
-					&& concrete != 'void' && expr_type.ends_with('*') {
+					&& concrete != 'void' {
 					type_id := interface_type_id_for_name(concrete)
 					g.needed_ierror_wrapper_bases[concrete] = true
-					g.sb.write_string('return (IError){ ._object = ')
-					g.expr(expr)
+					if expr_type.ends_with('*') {
+						g.sb.write_string('return (IError){ ._object = ')
+						g.expr(expr)
+					} else {
+						// Non-pointer: use memdup to create heap copy
+						g.sb.write_string('return (IError){ ._object = memdup(&(${concrete}){')
+						// Re-emit the struct initializer fields
+						if expr is ast.InitExpr {
+							for i, f in expr.fields {
+								if i > 0 {
+									g.sb.write_string(', ')
+								}
+								g.sb.write_string('.${f.name} = ')
+								g.expr(f.value)
+							}
+						} else {
+							g.expr(expr)
+						}
+						g.sb.write_string('}, sizeof(${concrete}))')
+					}
 					g.sb.write_string(', ._type_id = ${type_id}')
 					g.sb.write_string(', .type_name = IError_${concrete}_type_name_wrapper')
 					g.sb.write_string(', .msg = IError_${concrete}_msg_wrapper')

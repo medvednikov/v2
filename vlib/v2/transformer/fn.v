@@ -2091,7 +2091,7 @@ fn is_c_type_name_for_cast(name string) bool {
 	if name in ['FILE', 'DIR', 'va_list', 'pthread_t', 'pthread_mutex_t', 'pthread_cond_t',
 		'pthread_rwlock_t', 'pthread_attr_t', 'stat', 'tm', 'timespec', 'timeval', 'dirent',
 		'termios', 'sockaddr', 'sockaddr_in', 'sockaddr_in6', 'sockaddr_un',
-		'mach_timebase_info_data_t', 'IError'] {
+		'mach_timebase_info_data_t', 'utsname', 'IError'] {
 		return true
 	}
 	// C type names that start with uppercase are very likely types, not functions.

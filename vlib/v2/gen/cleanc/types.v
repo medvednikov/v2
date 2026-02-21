@@ -1395,14 +1395,40 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 					return elem
 				}
 			}
+			// For-in loop pattern: ((TYPE*)arr.data)[idx] — check if arr has tracked elem type
+			if node.lhs is ast.CastExpr && node.lhs.expr is ast.SelectorExpr {
+				sel := node.lhs.expr as ast.SelectorExpr
+				if sel.rhs.name == 'data' && sel.lhs is ast.Ident {
+					arr_name := (sel.lhs as ast.Ident).name
+					if tracked := g.array_var_elem_types[arr_name] {
+						return tracked
+					}
+					if tracked := g.global_array_elem_types[arr_name] {
+						return tracked
+					}
+				}
+			}
 			// Pointer indexing: ptr[i] gives the pointed-to type (e.g. StrIntpData*[i] → StrIntpData)
 			if lhs_type.ends_with('*') {
 				return lhs_type[..lhs_type.len - 1]
 			}
-			// Check tracked array element types (from sizeof(T) in __new_array*)
-			if lhs_type == 'array' && node.lhs is ast.Ident {
+			// Check tracked array element types (from sizeof(T) in __new_array* or fixed arrays)
+			if (lhs_type == 'array' || lhs_type == 'int') && node.lhs is ast.Ident {
 				if tracked_elem := g.array_var_elem_types[node.lhs.name] {
 					return tracked_elem
+				}
+				if tracked_elem := g.global_array_elem_types[node.lhs.name] {
+					return tracked_elem
+				}
+				if g.cur_module != '' && g.cur_module != 'main'
+					&& g.cur_module != 'builtin' && !node.lhs.name.contains('__') {
+					qualified := '${g.cur_module}__${node.lhs.name}'
+					if tracked_elem := g.array_var_elem_types[qualified] {
+						return tracked_elem
+					}
+					if tracked_elem := g.global_array_elem_types[qualified] {
+						return tracked_elem
+					}
 				}
 			}
 			// For array__slice/array__clone/etc calls, infer element type from the source array arg

@@ -201,12 +201,16 @@ fn (mut g Gen) gen_if_expr_stmt(node ast.IfExpr) {
 		return
 	}
 	g.sb.write_string('if (')
-	// Detect _result_/_option_ expressions in boolean context and add !.is_error
+	// Detect _result_/_option_ expressions in boolean context and add !.is_error/.state
 	cond_type := g.get_expr_type(node.cond)
 	if cond_type.starts_with('_result_') || cond_type.starts_with('_option_') {
 		g.sb.write_string('!')
 		g.expr(node.cond)
-		g.sb.write_string('.is_error')
+		if cond_type.starts_with('_option_') {
+			g.sb.write_string('.state')
+		} else {
+			g.sb.write_string('.is_error')
+		}
 	} else {
 		g.expr(node.cond)
 	}

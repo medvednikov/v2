@@ -71,7 +71,9 @@ mut:
 	known_modules               map[string]bool    // all module names found in AST files (fallback for --skip-type-check)
 
 	array_var_elem_types        map[string]string  // array variable name → element type (tracked from sizeof(T) in __new_array*)
+	global_array_elem_types     map[string]string  // global/const array name → element type (persists across functions)
 	global_var_types            map[string]string  // global variable name → C type (tracked from global declarations)
+	struct_known_fields         map[string][]string // struct name → list of field names (for embedded struct fallback)
 
 	const_exprs     map[string]string // const name → C expression string (for inlining)
 	const_int_vals  map[string]int    // const name → integer value (for array sizes)

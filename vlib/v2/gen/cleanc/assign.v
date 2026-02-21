@@ -452,6 +452,31 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				typ = 'void*'
 			}
 		}
+		// array__pop/array__last return void*; infer actual element type from the array arg
+		// and dereference: string x = (*(string*)array__pop(&arr))
+		if (typ == 'void*' || typ == 'voidptr') && rhs is ast.CallExpr {
+			call_name := g.resolve_call_name(rhs.lhs, rhs.args.len)
+			if call_name in ['array__pop', 'array__last', 'array__first'] && rhs.args.len >= 1 {
+				arr_arg := rhs.args[0]
+				mut arr_name := ''
+				if arr_arg is ast.Ident {
+					arr_name = arr_arg.name
+				} else if arr_arg is ast.PrefixExpr && arr_arg.expr is ast.Ident {
+					arr_name = arr_arg.expr.name
+				}
+				if arr_name != '' {
+					if elem := g.array_var_elem_types[arr_name] {
+						typ = elem
+						g.write_indent()
+						g.sb.write_string('${typ} ${name} = (*(${typ}*)')
+						g.expr(rhs)
+						g.sb.writeln(');')
+						g.remember_runtime_local_type(name, typ)
+						return
+					}
+				}
+			}
+		}
 		if name != '' && rhs_type.starts_with('_result_') && !typ.starts_with('_result_') {
 			g.sb.write_string('${typ} ${name} = ({ ${rhs_type} _tmp = ')
 			g.expr(rhs)
@@ -468,19 +493,21 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		}
 		if rhs is ast.IfExpr {
 			if !g.if_expr_can_be_ternary(rhs) && rhs.else_expr !is ast.EmptyExpr {
-				// If type is void/empty, infer from the branch's last expression
-				if typ == 'void' || typ == '' {
+				// If type is void/empty/int (fallback), infer from the branch's last expression
+				if typ == 'void' || typ == '' || typ == 'int' {
 					if rhs.stmts.len > 0 {
 						last := rhs.stmts[rhs.stmts.len - 1]
 						if last is ast.ExprStmt {
 							branch_type := g.get_expr_type(last.expr)
-							if branch_type != '' && branch_type != 'void' {
+							if branch_type != '' && branch_type != 'void'
+								&& branch_type != 'int' {
 								typ = branch_type
 							}
 						}
 					}
 				}
 				g.sb.writeln('${typ} ${name};')
+				g.remember_runtime_local_type(name, typ)
 				g.gen_decl_if_expr(name, rhs)
 				return
 			}
@@ -547,6 +574,9 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		if typ == '' || typ == 'void' {
 			typ = 'int'
 		}
+		if name == '_defer_t170' {
+			eprintln('DEBUG _defer_t170: typ=${typ} rhs_kind=${rhs.type_name()} rhs_str=${g.expr_to_string(rhs)}')
+		}
 		g.sb.write_string('${typ} ${name} = ')
 		g.expr(rhs)
 		g.sb.writeln(';')
@@ -561,6 +591,58 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 						elem_t := g.expr_type_to_c(sizeof_arg.exprs[0])
 						if elem_t != '' && elem_t != 'int' && elem_t != 'void' {
 							g.array_var_elem_types[name] = elem_t
+						}
+					}
+				}
+				// Also check data argument elements for new_array_from_c_array
+				if rhs.args.len >= 4 {
+					actual_elem := g.infer_array_init_elem_type(rhs.args[3])
+					if actual_elem != '' && actual_elem != 'int' && actual_elem != 'int_literal' {
+						g.array_var_elem_types[name] = actual_elem
+					}
+				}
+			}
+			// Track elem type from known functions that return typed arrays
+			if name != '' && typ == 'array' && call_name in ['string__split', 'string__split_nth', 'os__ls'] {
+				g.array_var_elem_types[name] = 'string'
+			}
+		}
+		// Track array elem type from ternary expressions (IfExpr)
+		if name != '' && typ == 'array' && rhs is ast.IfExpr {
+			// Check both branches of the ternary for elem type hints
+			// Branch 1: the stmts (true branch)
+			if rhs.stmts.len > 0 {
+				last := rhs.stmts[rhs.stmts.len - 1]
+				if last is ast.ExprStmt {
+					if last.expr is ast.CallExpr {
+						branch_call := g.resolve_call_name(last.expr.lhs, last.expr.args.len)
+						if branch_call.contains('new_array') && last.expr.args.len >= 3 {
+							sizeof_arg := last.expr.args[2]
+							if sizeof_arg is ast.KeywordOperator
+								&& sizeof_arg.op == .key_sizeof {
+								if sizeof_arg.exprs.len > 0 {
+									elem_t := g.expr_type_to_c(sizeof_arg.exprs[0])
+									if elem_t != '' && elem_t != 'int' && elem_t != 'void' {
+										g.array_var_elem_types[name] = elem_t
+									}
+								}
+							}
+						}
+						if branch_call in ['string__split', 'string__split_nth'] {
+							g.array_var_elem_types[name] = 'string'
+						}
+					}
+				}
+			}
+			// Branch 2: the else_expr
+			if rhs.else_expr is ast.IfExpr {
+				else_if := rhs.else_expr as ast.IfExpr
+				if else_if.stmts.len > 0 {
+					last := else_if.stmts[else_if.stmts.len - 1]
+					if last is ast.ExprStmt && last.expr is ast.CallExpr {
+						branch_call := g.resolve_call_name(last.expr.lhs, last.expr.args.len)
+						if branch_call in ['string__split', 'string__split_nth'] {
+							g.array_var_elem_types[name] = 'string'
 						}
 					}
 				}
@@ -679,6 +761,20 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 				return
 			}
 		}
+		// string += X is invalid in C. Lower to: lhs = string__plus(lhs, X)
+		if node.op == .plus_assign {
+			lhs_type := g.get_expr_type(lhs)
+			if lhs_type == 'string' {
+				g.write_indent()
+				g.expr(lhs)
+				g.sb.write_string(' = string__plus(')
+				g.expr(lhs)
+				g.sb.write_string(', ')
+				g.expr(rhs)
+				g.sb.writeln(');')
+				return
+			}
+		}
 		mut lhs_needs_deref := false
 		// Only dereference for plain assignment, not compound assignments (+=, -=, etc.)
 		// For compound assignments on pointers (ptr += x), we want pointer arithmetic.
@@ -730,6 +826,27 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 			g.sb.write_string('(*(${assign_lhs_type}*)')
 			g.expr(rhs)
 			g.sb.write_string(')')
+		} else if node.op == .assign && rhs is ast.CallExpr {
+			// Detect result-returning functions assigned to non-result variables.
+			// Unwrap: x = fn() → ({ _result_T _tmp = fn(); *(T*)...; })
+			if rhs_ret := g.get_call_return_type(rhs.lhs, rhs.args.len) {
+				if rhs_ret.starts_with('_result_') && !assign_lhs_type.starts_with('_result_') {
+					value_type := g.result_value_type(rhs_ret)
+					if value_type != '' && value_type != 'void' {
+						tmp := '_res_unwrap_${g.tmp_counter}'
+						g.tmp_counter++
+						g.sb.write_string('({ ${rhs_ret} ${tmp} = ')
+						g.expr(rhs)
+						g.sb.write_string('; (*(${value_type}*)(((u8*)(&${tmp}.err)) + sizeof(IError))); })')
+					} else {
+						g.expr(rhs)
+					}
+				} else {
+					g.expr(rhs)
+				}
+			} else {
+				g.expr(rhs)
+			}
 		} else {
 			g.expr(rhs)
 		}

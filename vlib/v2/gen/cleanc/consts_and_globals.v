@@ -104,6 +104,7 @@ fn (mut g Gen) gen_global_decl(node ast.GlobalDecl) {
 			fixed_typ := field.typ as ast.ArrayFixedType
 			elem_type := g.expr_type_to_c(fixed_typ.elem_type)
 			g.fixed_array_globals[name] = true
+			g.global_array_elem_types[name] = elem_type
 			g.sb.write_string('${elem_type} ${name}[')
 			g.expr(fixed_typ.len)
 			g.sb.write_string(']')
@@ -307,6 +308,7 @@ fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
 		}
 		if is_fixed_array_const && fixed_array_elem != '' {
 			g.fixed_array_globals[name] = true
+			g.global_array_elem_types[name] = fixed_array_elem
 			if fixed_array_len > 0 {
 				g.sb.write_string('static const ${fixed_array_elem} ${name}[${fixed_array_len}] = ')
 			} else {
@@ -375,6 +377,8 @@ fn (mut g Gen) gen_const_decl(node ast.ConstDecl) {
 					g.sb.writeln('${typ} ${name} = {0};')
 				}
 			} else {
+				value_expr := g.expr_to_string(field.value)
+				g.const_exprs[name] = value_expr
 				g.sb.write_string('#define ${name} ')
 				g.expr(field.value)
 				g.sb.writeln('')
