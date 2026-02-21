@@ -23,9 +23,6 @@ fn (mut t Transformer) propagate_types(files []ast.File) {
 }
 
 fn (mut t Transformer) prop_stmt(stmt ast.Stmt) {
-	if !stmt_has_valid_data(stmt) {
-		return
-	}
 	match stmt {
 		ast.AssertStmt {
 			t.prop_expr(stmt.expr)
@@ -108,9 +105,6 @@ fn (mut t Transformer) prop_stmt(stmt ast.Stmt) {
 }
 
 fn (mut t Transformer) prop_expr(expr ast.Expr) {
-	if !expr_has_valid_data(expr) {
-		return
-	}
 	// Recurse into sub-expressions FIRST so children have types before parent inference
 	match expr {
 		ast.ArrayInitExpr {
@@ -317,9 +311,6 @@ fn (t &Transformer) has_prop_type(id int) bool {
 
 // infer_prop_type tries to determine the type of an expression from its content.
 fn (mut t Transformer) infer_prop_type(expr ast.Expr) ?types.Type {
-	if !expr_has_valid_data(expr) {
-		return none
-	}
 	match expr {
 		ast.BasicLiteral {
 			match expr.kind {
