@@ -118,6 +118,12 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 	if node.language == .c {
 		return
 	}
+	// Guard against corrupt struct name (arm64 backend may produce garbage data)
+	if node.name.str == 0 || u64(node.name.str) < 0x10000
+		|| u64(node.name.str) > 0x10000000000
+		|| node.name.len <= 0 || node.name.len > 0x7FFFFFF {
+		return
+	}
 
 	name := g.get_struct_name(node)
 	body_key := 'body_${name}'
@@ -133,6 +139,9 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 	g.sb.writeln('${keyword} ${name} {')
 	// Embedded structs as fields
 	for i, emb in node.embedded {
+		if !expr_has_valid_data(emb) {
+			continue
+		}
 		emb_type := g.expr_type_to_c(emb)
 		g.sb.writeln('\t${emb_type} ${emb_type};')
 		mut registered := false
@@ -168,6 +177,13 @@ fn (mut g Gen) gen_struct_decl(node ast.StructDecl) {
 	// Regular fields
 	mut has_shared_fields := false
 	for field in node.fields {
+		// Guard against corrupt field names
+		if field.name.str == 0 || u64(field.name.str) < 0x10000
+			|| u64(field.name.str) > 0x10000000000
+			|| field.name.len <= 0 || field.name.len > 0x7FFFFFF {
+			g.sb.writeln('\tint _corrupt_field;')
+			continue
+		}
 		field_name := escape_c_keyword(field.name)
 		field_lookup_type := g.expr_type_to_c(field.typ)
 		field_key := '${name}.${field.name}'

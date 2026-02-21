@@ -86,6 +86,24 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		return
 	}
 
+	// Multi-assign with equal LHS/RHS count: `a[0], a[1] = b[0], b[1]`
+	// Expand to individual assignments for non-decl_assign ops.
+	if node.op == .assign && node.lhs.len > 1 && node.rhs.len == node.lhs.len {
+		for i := 0; i < node.lhs.len; i++ {
+			lhs_i := node.lhs[i]
+			rhs_i := node.rhs[i]
+			if !expr_has_valid_data(lhs_i) || !expr_has_valid_data(rhs_i) {
+				continue
+			}
+			g.write_indent()
+			g.expr(lhs_i)
+			g.sb.write_string(' = ')
+			g.expr(rhs_i)
+			g.sb.writeln(';')
+		}
+		return
+	}
+
 	mut tuple_lhs := []ast.Expr{}
 	if node.lhs.len > 1 {
 		tuple_lhs = shallow_copy_exprs(node.lhs)
@@ -573,9 +591,6 @@ fn (mut g Gen) gen_assign_stmt(node ast.AssignStmt) {
 		}
 		if typ == '' || typ == 'void' {
 			typ = 'int'
-		}
-		if name == '_defer_t170' {
-			eprintln('DEBUG _defer_t170: typ=${typ} rhs_kind=${rhs.type_name()} rhs_str=${g.expr_to_string(rhs)}')
 		}
 		g.sb.write_string('${typ} ${name} = ')
 		g.expr(rhs)

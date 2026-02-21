@@ -1200,7 +1200,9 @@ fn (mut g Gen) expr(node ast.Expr) {
 				}
 			}
 			// module.const / module.var => module__const / module__var
-			if node.lhs is ast.Ident && g.is_module_ident(node.lhs.name) {
+			// But NOT if the name is a local variable (locals shadow module names).
+			if node.lhs is ast.Ident && g.is_module_ident(node.lhs.name)
+				&& g.get_local_var_c_type(node.lhs.name) == none {
 				mod_name := g.resolve_module_name(node.lhs.name)
 				if node.rhs.name.starts_with('${mod_name}__') {
 					g.sb.write_string(node.rhs.name)
@@ -1650,10 +1652,19 @@ fn (mut g Gen) gen_index_expr(node ast.IndexExpr) {
 		// Check if local variable is a fixed array (registered during decl_assign)
 		if local_type := g.get_local_var_c_type(node.lhs.name) {
 			if local_type.starts_with('Array_fixed_') {
-				g.expr(node.lhs)
-				g.sb.write_string('[')
-				g.expr(node.expr)
-				g.sb.write_string(']')
+				if local_type.ends_with('*') {
+					// Pointer to fixed array (mut param): (*b)[i]
+					g.sb.write_string('(*')
+					g.expr(node.lhs)
+					g.sb.write_string(')[')
+					g.expr(node.expr)
+					g.sb.write_string(']')
+				} else {
+					g.expr(node.lhs)
+					g.sb.write_string('[')
+					g.expr(node.expr)
+					g.sb.write_string(']')
+				}
 				return
 			}
 		}
@@ -2083,6 +2094,14 @@ fn (mut g Gen) gen_cast_expr(node ast.CastExpr) {
 		// Empty inner expression (e.g. unresolved C function call) - emit no-op
 		g.sb.write_string('((void)0)')
 	} else {
+		// For assoc expressions lowered from `{ ...ptr }`: if casting pointer to
+		// struct value, dereference first. The transformer handles this when type info
+		// is available, but with --skip-type-check it may not dereference.
+		if !type_name.ends_with('*') && type_name.contains('__') && expr_type.ends_with('*')
+			&& expr_type.trim_right('*') == type_name {
+			g.sb.write_string('(*${inner_str})')
+			return
+		}
 		g.sb.write_string('((${type_name})(${inner_str}))')
 	}
 }

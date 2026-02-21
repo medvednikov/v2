@@ -1161,13 +1161,27 @@ fn (mut g Gen) get_call_return_type(lhs ast.Expr, arg_count int) ?string {
 		return 'bool'
 	}
 	if c_name.starts_with('array__filter') || c_name.starts_with('array__map')
-		|| c_name == 'array__reverse' || c_name == 'array__clone' || c_name == 'array__slice' {
+		|| c_name == 'array__reverse' || c_name.starts_with('array__clone') || c_name == 'array__slice' {
 		return 'array'
 	}
 	match c_name {
 		'open', 'chdir', 'proc_pidpath' { return 'int' }
 		'signal' { return 'void*' }
 		else {}
+	}
+	// Fallback: Array_T__method → array__method (e.g. Array_u8__clone → array__clone)
+	if c_name.starts_with('Array_') && c_name.contains('__') {
+		method := c_name.all_after_last('__')
+		alt := 'array__${method}'
+		if ret := g.fn_return_types[alt] {
+			return ret
+		}
+		if alt.starts_with('array__clone') || alt == 'array__slice' || alt == 'array__reverse' {
+			return 'array'
+		}
+		if alt.starts_with('array__contains') {
+			return 'bool'
+		}
 	}
 	return none
 }
@@ -1661,6 +1675,34 @@ fn (mut g Gen) call_expr(lhs ast.Expr, args []ast.Expr) {
 		g.gen_call_arg(name, 1, call_args[1])
 		g.sb.write_string(', 3)')
 		return
+	}
+	// array__slice on fixed array: u.b[..] → new_array_from_c_array(N, N, sizeof(elem), u.b)
+	// The transformer lowers fixed_arr[..] to array__slice(fixed_arr, 0, N), but
+	// fixed arrays are C arrays (u8[N]) and can't be passed to array__slice (which expects array).
+	if name == 'array__slice' && call_args.len >= 1 {
+		first_arg := call_args[0]
+		mut is_fixed := false
+		mut fixed_elem := ''
+		if first_arg is ast.SelectorExpr && g.is_fixed_array_selector(first_arg) {
+			is_fixed = true
+			fixed_elem = g.fixed_array_selector_elem_type(first_arg)
+		} else if first_arg is ast.Ident {
+			if local_type := g.get_local_var_c_type(first_arg.name) {
+				if local_type.starts_with('Array_fixed_') && !local_type.ends_with('*') {
+					is_fixed = true
+					// Extract elem type from type name like Array_fixed_u8_2
+					parts := local_type.all_after('Array_fixed_').split('_')
+					if parts.len >= 1 {
+						fixed_elem = parts[0]
+					}
+				}
+			}
+		}
+		if is_fixed && fixed_elem != '' {
+			arr_str := g.expr_to_string(first_arg)
+			g.sb.write_string('new_array_from_c_array(sizeof(${arr_str})/sizeof(${fixed_elem}), sizeof(${arr_str})/sizeof(${fixed_elem}), sizeof(${fixed_elem}), ${arr_str})')
+			return
+		}
 	}
 	// array__clone → array__clone_to_depth with automatic depth for deep clone
 	if name == 'array__clone' && call_args.len == 1 {

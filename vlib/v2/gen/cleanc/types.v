@@ -1273,7 +1273,7 @@ fn (mut g Gen) get_expr_type(node ast.Expr) string {
 			return 'int'
 		}
 		ast.InfixExpr {
-			if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .and, .logical_or] {
+			if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .and, .logical_or, .key_in, .not_in] {
 				return 'bool'
 			}
 			if !expr_has_valid_data(node.lhs) || !expr_has_valid_data(node.rhs) {
