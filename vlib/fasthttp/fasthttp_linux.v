@@ -115,7 +115,11 @@ mut:
 	should_close   bool
 	request_arena  voidptr
 	request_active bool
-	start_ns       i64
+	// last_progress_ns is refreshed every time try_drain_write moves bytes. The
+	// write-timeout sweep uses it so a large but actively-draining download is
+	// not force-closed at timeout_in_seconds, while a peer that stalls without
+	// receiving any new bytes still gets torn down.
+	last_progress_ns i64
 	// epollout_armed records whether we actually had to register EPOLLOUT for
 	// this connection. When set, complete_write performs a DEL+ADD on the fd to
 	// re-deliver any pipelined request bytes that arrived during the write as a
@@ -329,6 +333,7 @@ fn try_drain_write(client_fd int, mut state ClientWriteState) DrainStatus {
 			C.MSG_NOSIGNAL)
 		if sent > 0 {
 			state.content_pos += sent
+			state.last_progress_ns = time.sys_mono_now()
 			continue
 		}
 		if sent < 0 {
@@ -354,6 +359,7 @@ fn try_drain_write(client_fd int, mut state ClientWriteState) DrainStatus {
 			remaining := state.file_len - state.file_pos
 			ssize := C.sendfile(client_fd, state.file_fd, &state.file_pos, usize(remaining))
 			if ssize > 0 {
+				state.last_progress_ns = time.sys_mono_now()
 				continue
 			}
 			if ssize == 0 {
@@ -582,16 +588,16 @@ fn process_request(server &Server, epoll_fd int, client_fd int, request_buffer [
 	leave_request_arena_current_thread(arena_ptr)
 
 	mut state := &ClientWriteState{
-		content:        content_bytes
-		content_pos:    0
-		content_owned:  true
-		file_fd:        file_fd
-		file_len:       file_len
-		file_pos:       0
-		should_close:   response.should_close
-		request_arena:  arena_ptr
-		request_active: request_active
-		start_ns:       time.sys_mono_now()
+		content:          content_bytes
+		content_pos:      0
+		content_owned:    true
+		file_fd:          file_fd
+		file_len:         file_len
+		file_pos:         0
+		should_close:     response.should_close
+		request_arena:    arena_ptr
+		request_active:   request_active
+		last_progress_ns: time.sys_mono_now()
 	}
 	// From here on, the state owns end_request bookkeeping.
 	request_active = false
@@ -806,12 +812,15 @@ fn process_events(server &Server, epoll_fd int, listen_fd int) {
 						client_buffers, mut client_read_starts, mut closing_client_fds)
 				}
 			}
-			// Sweep write-side stalls: a client that armed EPOLLOUT but never
-			// drains within `timeout_in_seconds` gets the connection torn down so
-			// the worker isn't pinned waiting for a dead peer.
+			// Sweep write-side stalls: a connection that has not made any send
+			// progress within `timeout_in_seconds` gets torn down so the worker
+			// isn't pinned waiting for a dead peer. A large but actively draining
+			// download keeps refreshing last_progress_ns inside try_drain_write
+			// and therefore survives the sweep even if the total transfer takes
+			// longer than the configured timeout.
 			for client_fd in client_write_states.keys() {
 				state := client_write_states[client_fd] or { continue }
-				if state.start_ns > 0 && now - state.start_ns >= timeout_ns {
+				if state.last_progress_ns > 0 && now - state.last_progress_ns >= timeout_ns {
 					handle_client_closure(server, epoll_fd, client_fd, mut client_fds, mut client_buffers, mut
 						client_read_starts, mut closing_client_fds, mut client_write_states)
 				}
