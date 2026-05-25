@@ -37,32 +37,25 @@ fn (p &Preferences) is_linux_wayland_only_session() bool {
 }
 
 fn (mut p Preferences) expand_lookup_paths() {
-	eprintln('>>> expand_lookup_paths: ENTER vroot=${p.vroot} lookup_path.len=${p.lookup_path.len}')
 	if p.vroot == '' {
 		// Location of all vlib files
 		p.vroot = os.dir(vexe_path())
-		eprintln('>>> expand_lookup_paths: set vroot=${p.vroot}')
 	}
 	p.vlib = os.join_path(p.vroot, 'vlib')
 	p.vmodules_paths = os.vmodules_paths()
-	eprintln('>>> expand_lookup_paths: vlib=${p.vlib} vmodules_paths=${p.vmodules_paths}')
 
 	if p.lookup_path.len == 0 {
 		p.lookup_path = ['@vlib', '@vmodules']
-		eprintln('>>> expand_lookup_paths: defaulted lookup_path=${p.lookup_path}')
 	}
 	mut expanded_paths := []string{}
 	for path in p.lookup_path {
-		eprintln('>>> expand_lookup_paths: iterate path=${path}')
 		match path {
 			'@vlib' { expanded_paths << p.vlib }
 			'@vmodules' { expanded_paths << p.vmodules_paths }
 			else { expanded_paths << path.replace('@vroot', p.vroot) }
 		}
 	}
-	eprintln('>>> expand_lookup_paths: expanded_paths=${expanded_paths}')
 	p.lookup_path = expanded_paths
-	eprintln('>>> expand_lookup_paths: EXIT lookup_path=${p.lookup_path}')
 }
 
 fn (mut p Preferences) expand_exclude_paths() {
@@ -185,12 +178,9 @@ fn (mut p Preferences) disable_tcc_shared_backtraces() {
 
 // fill_with_defaults initializes unset preferences and derives build options from them.
 pub fn (mut p Preferences) fill_with_defaults() {
-	eprintln('>>> fill_with_defaults: ENTER lookup_path=${p.lookup_path}')
 	p.setup_os_and_arch_when_not_explicitly_set()
 	p.expand_lookup_paths()
-	eprintln('>>> fill_with_defaults: AFTER expand_lookup_paths lookup_path=${p.lookup_path} vlib=${p.vlib}')
 	p.expand_exclude_paths()
-	eprintln('>>> fill_with_defaults: AFTER expand_exclude_paths lookup_path=${p.lookup_path}')
 	rpath := os.real_path(p.path)
 	if p.out_name == '' {
 		target_dir := if os.is_dir(rpath) { rpath } else { os.dir(rpath) }

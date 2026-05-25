@@ -14,7 +14,6 @@ pub fn start() {
 }
 
 pub fn compile_c(mut b builder.Builder) {
-	eprintln('>>> compile_c: pref ptr=${voidptr(b.pref):X} lookup_path.len=${b.pref.lookup_path.len} is_verbose=${b.pref.is_verbose} vlib=${b.pref.vlib}')
 	if b.pref.is_verbose {
 		println('all .v files before:')
 	}

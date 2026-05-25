@@ -336,9 +336,7 @@ fn most_recent_timestamp(files []string) i64 {
 
 pub fn (mut b Builder) rebuild(backend_cb FnBackend) {
 	mut sw := time.new_stopwatch()
-	eprintln('>>> rebuild: BEFORE cb, b.pref ptr=${voidptr(b.pref):X} lookup_path.len=${b.pref.lookup_path.len}')
 	backend_cb(mut b)
-	eprintln('>>> rebuild: AFTER cb, b.pref ptr=${voidptr(b.pref):X} lookup_path.len=${b.pref.lookup_path.len}')
 	if b.pref.is_crun {
 		// save the dependencies after the first compilation, they will be used for subsequent ones:
 		mut cm := vcache.new_cache_manager(b.crun_cache_keys)

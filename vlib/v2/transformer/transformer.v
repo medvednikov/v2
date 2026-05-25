@@ -2784,13 +2784,25 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 	mut result := []ast.Stmt{cap: stmts.len}
 	is_native_be := t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64)
 	block_smartcast_depth := t.smartcast_stack.len
-	block_smartcast_stack := t.smartcast_stack.clone()
-	block_smartcast_counts := t.smartcast_expr_counts.clone()
+	// Lazy snapshot: most blocks enter with an empty smartcast stack. Cloning an
+	// empty stack/map is cheap but still allocates; multiply by tens of thousands
+	// of blocks and it adds up. Only snapshot when there is state to restore.
+	has_smartcast_state := block_smartcast_depth > 0
+	block_smartcast_stack := if has_smartcast_state {
+		t.smartcast_stack.clone()
+	} else {
+		[]SmartcastContext{}
+	}
+	block_smartcast_counts := if has_smartcast_state {
+		t.smartcast_expr_counts.clone()
+	} else {
+		map[string]int{}
+	}
 	for stmt in stmts {
 		if t.smartcast_stack.len < block_smartcast_depth {
 			t.smartcast_stack = block_smartcast_stack.clone()
 			t.smartcast_expr_counts = block_smartcast_counts.clone()
-		} else {
+		} else if t.smartcast_stack.len > block_smartcast_depth {
 			t.truncate_smartcasts(block_smartcast_depth)
 		}
 		// Check for OrExpr assignment that expands to multiple statements
@@ -3131,7 +3143,7 @@ fn (mut t Transformer) transform_stmts(stmts []ast.Stmt) []ast.Stmt {
 	if t.smartcast_stack.len < block_smartcast_depth {
 		t.smartcast_stack = block_smartcast_stack.clone()
 		t.smartcast_expr_counts = block_smartcast_counts.clone()
-	} else {
+	} else if t.smartcast_stack.len > block_smartcast_depth {
 		t.truncate_smartcasts(block_smartcast_depth)
 	}
 	return result
