@@ -245,7 +245,9 @@ pub fn (mut g Gen) gen() {
 	g.gen_post_pass()
 	post_ms := f64(time.since(t2)) / f64(time.millisecond)
 	eprintln('ARM64 gen sub: pre=${pre_ms:.1}ms funcs=${funcs_ms:.1}ms post=${post_ms:.1}ms')
-	eprintln('ARM64 gen_func subs: setup=${g.t_setup_ms:.0}ms prepass=${g.t_prepass_ms:.0}ms prologue=${g.t_prologue_ms:.0}ms main=${g.t_main_ms:.0}ms regalloc=${g.t_regalloc_ms:.0}ms')
+	if os.getenv('V2_ARM64_TIME_DETAIL') != '' {
+		eprintln('ARM64 gen_func subs: setup=${g.t_setup_ms:.0}ms prepass=${g.t_prepass_ms:.0}ms prologue=${g.t_prologue_ms:.0}ms main=${g.t_main_ms:.0}ms regalloc=${g.t_regalloc_ms:.0}ms')
+	}
 }
 
 // gen_pre_pass registers global symbols and builds lookup caches.
@@ -6432,22 +6434,22 @@ fn (mut g Gen) store_reg_to_val(reg int, val_id int) {
 		if val_id > 0 && val_id < g.mod.values.len {
 			val_typ_id := g.mod.values[val_id].typ
 			if val_typ_id > 0 && val_typ_id < g.mod.type_store.types.len {
-				val_typ := g.mod.type_store.types[val_typ_id]
-				if val_typ.kind in [.struct_t, .array_t] {
+				val_typ_kind := g.mod.type_store.types[val_typ_id].kind
+				if val_typ_kind == .struct_t || val_typ_kind == .array_t {
 					val_size := g.type_size(val_typ_id)
 					if val_size > 8 && val_size <= 16 {
 						if trace_storeval {
-							eprintln('ARM64 STOREVAL ptr-copy fn=${g.cur_func_name} val=${val_id} typ=${val_typ_id}/${val_typ.kind} size=${val_size} reg=${stored_reg} off=${offset}')
+							eprintln('ARM64 STOREVAL ptr-copy fn=${g.cur_func_name} val=${val_id} typ=${val_typ_id}/${val_typ_kind} size=${val_size} reg=${stored_reg} off=${offset}')
 						}
 						g.copy_ptr_to_fp_bytes(stored_reg, offset, val_size)
 						g.invalidate_last_store()
 						return
 					}
-				}
-				if val_typ.kind == .struct_t && g.type_size(val_typ_id) <= 8 {
-					g.emit_str_reg_offset(stored_reg, 29, offset)
-					g.invalidate_last_store()
-					return
+					if val_typ_kind == .struct_t && val_size <= 8 {
+						g.emit_str_reg_offset(stored_reg, 29, offset)
+						g.invalidate_last_store()
+						return
+					}
 				}
 			}
 		}
