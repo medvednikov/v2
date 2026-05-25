@@ -1402,18 +1402,18 @@ fn (t &Transformer) eval_comptime_flag(name string) bool {
 			return false
 		}
 		'native' {
-			return t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64)
+			return t.is_native_be
 		}
 		// Native backend cannot resolve C.stdout/C.stderr data symbols through GOT,
 		// so use C.write() instead of fwrite() for I/O operations.
 		'builtin_write_buf_to_fd_should_use_c_write' {
-			return t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64)
+			return t.is_native_be
 		}
 		'tinyc' {
 			// For native backends, inline assembly from V source is not supported
 			// by the SSA builder. Pretend we're TinyCC so that $if arm64 && !tinyc
 			// guards select the software fallback path instead of inline asm.
-			return t.pref != unsafe { nil } && (t.pref.backend == .arm64 || t.pref.backend == .x64)
+			return t.is_native_be
 		}
 		'prealloc' {
 			return t.pref != unsafe { nil } && t.pref.prealloc

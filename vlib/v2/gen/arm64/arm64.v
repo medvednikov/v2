@@ -9,6 +9,7 @@ import v2.ssa
 import v2.types
 import encoding.binary
 import os
+import time
 
 pub struct Gen {
 pub:
@@ -117,6 +118,12 @@ pub mut:
 	stats_total_stores   int
 	stats_skipped_stores int
 	stats_cache_hits     int
+	// Profiling timers for gen_func sub-stages.
+	t_setup_ms    f64
+	t_prepass_ms  f64
+	t_prologue_ms f64
+	t_main_ms     f64
+	t_regalloc_ms f64
 }
 
 pub fn Gen.new(mod &mir.Module) &Gen {
@@ -225,26 +232,20 @@ fn (mut g Gen) should_skip_store(val_id int) int {
 	return 0
 }
 
-// is_arm64_dead_module_func returns true if `name` belongs to a backend module
-// (cleanc/c/eval/x64) that is never called at runtime in ARM64 self-host builds.
-// Mirrors the prefix-based strip logic in dead_strip_functions(): keeping these
-// in sync lets us skip codegen entirely instead of emitting then stripping.
-@[inline]
-fn is_arm64_dead_module_func(name string) bool {
-	if name.len < 5 {
-		return false
-	}
-	// Names are stored without the leading underscore here.
-	return name.starts_with('cleanc__') || name.starts_with('c__Gen')
-		|| name.starts_with('eval__') || name.starts_with('x64__')
-}
-
 pub fn (mut g Gen) gen() {
+	t0 := time.now()
 	g.gen_pre_pass()
+	pre_ms := f64(time.since(t0)) / f64(time.millisecond)
+	t1 := time.now()
 	for fi := 0; fi < g.mod.funcs.len; fi++ {
 		g.gen_func(g.mod.funcs[fi])
 	}
+	funcs_ms := f64(time.since(t1)) / f64(time.millisecond)
+	t2 := time.now()
 	g.gen_post_pass()
+	post_ms := f64(time.since(t2)) / f64(time.millisecond)
+	eprintln('ARM64 gen sub: pre=${pre_ms:.1}ms funcs=${funcs_ms:.1}ms post=${post_ms:.1}ms')
+	eprintln('ARM64 gen_func subs: setup=${g.t_setup_ms:.0}ms prepass=${g.t_prepass_ms:.0}ms prologue=${g.t_prologue_ms:.0}ms main=${g.t_main_ms:.0}ms regalloc=${g.t_regalloc_ms:.0}ms')
 }
 
 // gen_pre_pass registers global symbols and builds lookup caches.
@@ -304,6 +305,7 @@ fn (mut g Gen) dead_strip_functions() {
 	if g.fn_starts.len == 0 {
 		return
 	}
+	ds_t0 := time.now()
 	n_fns := g.fn_starts.len
 	// Build sym_idx → fn_idx for resolving relocation targets.
 	mut sym_to_fn := map[int]int{}
@@ -392,25 +394,23 @@ fn (mut g Gen) dead_strip_functions() {
 	}
 	eprintln('ARM64 DEADSTRIP: ${dead_count} dead functions, ${dead_bytes} bytes (${dead_bytes / 1024}KB)')
 	// Build compacted text section: copy prefix, kept functions, suffix.
-	old_text := g.macho.text_data.clone()
+	old_text := g.macho.text_data
 	mut new_text := []u8{cap: old_text.len - dead_bytes}
 	// Copy prefix bytes before first function (if any).
-	for i := 0; i < g.fn_starts[0]; i++ {
-		new_text << old_text[i]
+	if g.fn_starts[0] > 0 {
+		new_text << old_text[..g.fn_starts[0]]
 	}
 	// Copy kept functions in order.
 	for fi := 0; fi < n_fns; fi++ {
 		if !reachable[fi] {
 			continue
 		}
-		for off := g.fn_starts[fi]; off < g.fn_ends[fi]; off++ {
-			new_text << old_text[off]
-		}
+		new_text << old_text[g.fn_starts[fi]..g.fn_ends[fi]]
 	}
 	// Copy suffix bytes after last function (e.g. unresolved stub added by gen_post_pass).
 	last_end := g.fn_ends[n_fns - 1]
-	for off := last_end; off < old_text.len; off++ {
-		new_text << old_text[off]
+	if last_end < old_text.len {
+		new_text << old_text[last_end..]
 	}
 	// Fix up relocation addresses and drop relocations inside dead functions.
 	mut new_relocs := []RelocationInfo{cap: g.macho.relocs.len}
@@ -477,6 +477,8 @@ fn (mut g Gen) dead_strip_functions() {
 		}
 	}
 	g.macho.text_data = new_text
+	ds_ms := f64(time.since(ds_t0)) / f64(time.millisecond)
+	eprintln('ARM64 deadstrip ms=${ds_ms:.1}')
 }
 
 // gen_post_pass emits the unresolved stub, global data, and patches symbol addresses.
@@ -743,24 +745,6 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 		// Don't emit any local symbol — let the linker resolve them as undefined externals.
 		return
 	}
-	// Skip codegen for backend modules that are unreachable on arm64.
-	// dead_strip would discard them anyway (see force-strip-by-prefix logic
-	// below). Emitting a 3-instruction stub here turns 25MB of throwaway
-	// codegen into ~33KB total and lets dead_strip skip text compaction.
-	if is_arm64_dead_module_func(func.name) {
-		fn_start := g.macho.text_data.len
-		g.curr_offset = fn_start
-		sym_name := '_' + func.name
-		sym_idx := g.macho.add_symbol(sym_name, u64(fn_start), false, 1)
-		g.emit(0xD2800000) // mov x0, #0
-		g.emit(0xD2800001) // mov x1, #0
-		g.emit(0xD65F03C0) // ret
-		g.fn_starts << fn_start
-		g.fn_ends << g.macho.text_data.len
-		g.fn_names << sym_name
-		g.fn_sym_ids << sym_idx
-		return
-	}
 	if func.blocks.len == 0 {
 		// Emit a minimal stub: just a ret instruction.
 		fn_start := g.macho.text_data.len
@@ -774,6 +758,7 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 		g.fn_sym_ids << sym_idx
 		return
 	}
+	tf_setup := time.now()
 	g.curr_offset = g.macho.text_data.len
 	g.stack_map.clear()
 	g.alloca_offsets.clear()
@@ -810,7 +795,11 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 	g.cur_func_name = func.name
 	g.x8_save_offset = 0
 	g.mark_sumtype_data_heap_allocas(func)
+	tf_regalloc := time.now()
+	g.t_setup_ms += f64(time.since(tf_setup)) / f64(time.millisecond)
 	g.allocate_registers(func)
+	tf_prepass := time.now()
+	g.t_regalloc_ms += f64(time.since(tf_regalloc)) / f64(time.millisecond)
 	if g.env_dump_funcrefs.len > 0
 		&& (g.env_dump_funcrefs == '*' || func.name == g.env_dump_funcrefs) {
 		eprintln('ARM64 FUNCREFS fn=${func.name} begin')
@@ -1194,6 +1183,8 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 	fn_sym_idx := g.macho.add_symbol(fn_sym_name, u64(g.curr_offset), true, 1)
 	fn_start_off := g.macho.text_data.len
 
+	tf_prologue := time.now()
+	g.t_prepass_ms += f64(time.since(tf_prepass)) / f64(time.millisecond)
 	// Prologue
 	g.emit(asm_stp_fp_lr_pre())
 	g.emit(asm_mov_fp_sp())
@@ -1348,6 +1339,8 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 		g.load_val_to_reg(8, lit_id)
 	}
 
+	tf_main := time.now()
+	g.t_prologue_ms += f64(time.since(tf_prologue)) / f64(time.millisecond)
 	for i := 0; i < func.blocks.len; i++ {
 		g.invalidate_last_store()
 		blk_id := int(func.blocks[i])
@@ -1388,6 +1381,7 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 			g.gen_instr(val_id)
 		}
 	}
+	g.t_main_ms += f64(time.since(tf_main)) / f64(time.millisecond)
 	unresolved := g.total_pending - g.total_resolved
 	if unresolved > 0 {
 		eprintln('BRANCH: fn=${func.name} pending=${g.total_pending} resolved=${g.total_resolved} unresolved=${unresolved} pending_blks_len=${g.pending_label_blks.len}')
@@ -5015,35 +5009,12 @@ fn (mut g Gen) gen_instr(val_id int) {
 	}
 }
 
-fn (g Gen) selected_opcode(instr mir.Instruction) ssa.OpCode {
-	if instr.selected_op == '' {
-		return instr.op
-	}
-	suffix := if instr.selected_op.contains('.') {
-		instr.selected_op.all_after('.')
-	} else {
-		instr.selected_op
-	}
-	return match suffix {
-		'add_rr' { .add }
-		'sub_rr' { .sub }
-		'mul_rr' { .mul }
-		'sdiv_rr' { .sdiv }
-		'and_rr' { .and_ }
-		'or_rr' { .or_ }
-		'xor_rr' { .xor }
-		'load_mr' { .load }
-		'store_rm' { .store }
-		'call' { .call }
-		'call_indirect' { .call_indirect }
-		'call_sret' { .call_sret }
-		'ret' { .ret }
-		'br' { .br }
-		'jmp' { .jmp }
-		'switch' { .switch_ }
-		'copy' { .assign }
-		else { instr.op }
-	}
+@[inline]
+fn (g &Gen) selected_opcode(instr &mir.Instruction) ssa.OpCode {
+	// InsSel's textual selected_op round-trips back to instr.op via an
+	// inverse-identical mapping. Returning instr.op directly skips the
+	// per-instruction string contains/all_after/match work.
+	return instr.op
 }
 
 fn (g &Gen) has_function_named(name string) bool {
@@ -5438,8 +5409,7 @@ fn (g &Gen) scalar_value_is_pointer_payload(val_id int, depth int) bool {
 }
 
 fn (mut g Gen) get_dest_reg(val_id int) int {
-	if val_id in g.reg_map {
-		r := g.reg_map[val_id]
+	if r := g.reg_map[val_id] {
 		if r != 0xFF {
 			return r
 		}
@@ -5449,8 +5419,7 @@ fn (mut g Gen) get_dest_reg(val_id int) int {
 
 fn (mut g Gen) get_operand_reg(val_id int, fallback int) int {
 	// If value is in a callee-saved register, return it
-	if val_id in g.reg_map {
-		r := g.reg_map[val_id]
+	if r := g.reg_map[val_id] {
 		if r != 0xFF {
 			return r
 		}
@@ -6150,8 +6119,7 @@ fn (mut g Gen) get_const_int(val_id int) i64 {
 }
 
 fn (mut g Gen) load_val_to_reg(reg int, val_id int) {
-	if val_id in g.reg_map {
-		r := g.reg_map[val_id]
+	if r := g.reg_map[val_id] {
 		if r != 0xFF {
 			if r != reg {
 				g.emit_mov_reg(reg, r)
@@ -6452,8 +6420,7 @@ fn (mut g Gen) store_reg_to_val(reg int, val_id int) {
 	mut cached_store := false
 	trace_storeval := g.env_trace_storeval.len > 0
 		&& (g.env_trace_storeval == '*' || g.cur_func_name == g.env_trace_storeval)
-	if val_id in g.reg_map {
-		reg_idx := g.reg_map[val_id]
+	if reg_idx := g.reg_map[val_id] {
 		if reg_idx != 0xFF {
 			if reg_idx != reg {
 				g.emit_mov_reg(reg_idx, reg)
@@ -7434,7 +7401,15 @@ fn (mut g Gen) store_entry_arg_to_global(reg int, global_name string, size int) 
 }
 
 fn (mut g Gen) emit(code u32) {
-	write_u32_le(mut g.macho.text_data, code)
+	n := g.macho.text_data.len
+	unsafe { g.macho.text_data.grow_len(4) }
+	unsafe {
+		p := &u8(g.macho.text_data.data) + n
+		p[0] = u8(code)
+		p[1] = u8(code >> 8)
+		p[2] = u8(code >> 16)
+		p[3] = u8(code >> 24)
+	}
 }
 
 fn (mut g Gen) record_pending_label(blk int) {
