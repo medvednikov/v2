@@ -225,6 +225,20 @@ fn (mut g Gen) should_skip_store(val_id int) int {
 	return 0
 }
 
+// is_arm64_dead_module_func returns true if `name` belongs to a backend module
+// (cleanc/c/eval/x64) that is never called at runtime in ARM64 self-host builds.
+// Mirrors the prefix-based strip logic in dead_strip_functions(): keeping these
+// in sync lets us skip codegen entirely instead of emitting then stripping.
+@[inline]
+fn is_arm64_dead_module_func(name string) bool {
+	if name.len < 5 {
+		return false
+	}
+	// Names are stored without the leading underscore here.
+	return name.starts_with('cleanc__') || name.starts_with('c__Gen')
+		|| name.starts_with('eval__') || name.starts_with('x64__')
+}
+
 pub fn (mut g Gen) gen() {
 	g.gen_pre_pass()
 	for fi := 0; fi < g.mod.funcs.len; fi++ {
@@ -727,6 +741,24 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 	if func.is_c_extern {
 		// C extern functions are provided by external libraries (libc, etc.).
 		// Don't emit any local symbol — let the linker resolve them as undefined externals.
+		return
+	}
+	// Skip codegen for backend modules that are unreachable on arm64.
+	// dead_strip would discard them anyway (see force-strip-by-prefix logic
+	// below). Emitting a 3-instruction stub here turns 25MB of throwaway
+	// codegen into ~33KB total and lets dead_strip skip text compaction.
+	if is_arm64_dead_module_func(func.name) {
+		fn_start := g.macho.text_data.len
+		g.curr_offset = fn_start
+		sym_name := '_' + func.name
+		sym_idx := g.macho.add_symbol(sym_name, u64(fn_start), false, 1)
+		g.emit(0xD2800000) // mov x0, #0
+		g.emit(0xD2800001) // mov x1, #0
+		g.emit(0xD65F03C0) // ret
+		g.fn_starts << fn_start
+		g.fn_ends << g.macho.text_data.len
+		g.fn_names << sym_name
+		g.fn_sym_ids << sym_idx
 		return
 	}
 	if func.blocks.len == 0 {

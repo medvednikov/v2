@@ -29,11 +29,18 @@ pub fn compile(command string, pref_ &pref.Preferences, backend_cb FnBackend) {
 	}
 	mut pref_ref := unsafe { pref_ }
 	pref_ref.ccompiler_type = resolve_ccompiler_type(pref_ref.ccompiler, pref_ref.ccompiler_type)
+	eprintln('>>> compile: pref_ ptr=${voidptr(pref_):X} lookup_path.len=${pref_.lookup_path.len} is_verbose=${pref_.is_verbose} vlib=${pref_.vlib}')
 	// Construct the V object from command line arguments
 	mut b := new_builder(pref_)
-	if b.should_rebuild() {
+	eprintln('>>> compile: AFTER new_builder b.pref ptr=${voidptr(b.pref):X} b.pref.lookup_path.len=${b.pref.lookup_path.len}')
+	bp := b.pref
+	eprintln('>>> compile: via local bp ptr=${voidptr(bp):X} bp.lookup_path.len=${bp.lookup_path.len} bp.is_verbose=${bp.is_verbose}')
+	sr := b.should_rebuild()
+	eprintln('>>> compile: should_rebuild=${sr} b.pref.lookup_path.len=${b.pref.lookup_path.len}')
+	if sr {
 		b.rebuild(backend_cb)
 	}
+	eprintln('>>> compile: AFTER rebuild b.pref.lookup_path.len=${b.pref.lookup_path.len}')
 	b.exit_on_invalid_syntax()
 	// running does not require the parsers anymore
 	unsafe { b.myfree() }
