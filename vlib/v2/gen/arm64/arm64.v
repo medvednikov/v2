@@ -28,11 +28,11 @@ pub mut:
 	// Per-block pending label index (linked list head per block id).
 	// pending_head[blk_id] = first index into pending_label_offs (-1 = none).
 	// pending_next[i] = next pending entry for same block (-1 = last).
-	pending_head map[int]int
-	pending_next []int
-	func_count         int
-	total_pending      int
-	total_resolved     int
+	pending_head   []int // indexed by block_id, -1 = no pending labels for this block
+	pending_next   []int
+	func_count     int
+	total_pending  int
+	total_resolved int
 
 	// Register allocation
 	reg_map    map[int]int
@@ -129,13 +129,6 @@ pub mut:
 	t_prologue_ms f64
 	t_main_ms     f64
 	t_regalloc_ms f64
-	t_main_pending_ms f64
-	t_main_instr_ms   f64
-	t_main_blk_ms     f64
-	// Per-opcode profiling (enabled by V2_ARM64_PROFILE_OPS env var).
-	profile_ops bool
-	op_count    []u32
-	op_ns       []i64
 }
 
 pub fn Gen.new(mod &mir.Module) &Gen {
@@ -172,9 +165,6 @@ pub fn Gen.new(mod &mir.Module) &Gen {
 		env_trace_storeval:    os.getenv('V2_ARM64_TRACE_STOREVAL')
 		env_trace_regalloc:    os.getenv('V2_ARM64_TRACE_REGALLOC')
 		env_no_regalloc:       os.getenv('V2_ARM64_NO_REGALLOC').len > 0
-		profile_ops:           os.getenv('V2_ARM64_PROFILE_OPS').len > 0
-		op_count:              []u32{len: 256}
-		op_ns:                 []i64{len: 256}
 	}
 }
 
@@ -262,47 +252,6 @@ pub fn (mut g Gen) gen() {
 	eprintln('ARM64 gen sub: pre=${pre_ms:.1}ms funcs=${funcs_ms:.1}ms post=${post_ms:.1}ms')
 	if os.getenv('V2_ARM64_TIME_DETAIL') != '' {
 		eprintln('ARM64 gen_func subs: setup=${g.t_setup_ms:.0}ms prepass=${g.t_prepass_ms:.0}ms prologue=${g.t_prologue_ms:.0}ms main=${g.t_main_ms:.0}ms regalloc=${g.t_regalloc_ms:.0}ms')
-		eprintln('  main parts: blk=${g.t_main_blk_ms:.0}ms pending=${g.t_main_pending_ms:.0}ms instr=${g.t_main_instr_ms:.0}ms')
-	}
-	if g.profile_ops {
-		mut tot_ns := i64(0)
-		for v in g.op_ns {
-			tot_ns += v
-		}
-		mut op_idxs := []int{}
-		mut op_times := []i64{}
-		for i in 0 .. g.op_count.len {
-			if g.op_count[i] > 0 {
-				op_idxs << i
-				op_times << g.op_ns[i]
-			}
-		}
-		for i in 0 .. op_idxs.len {
-			for j in i + 1 .. op_idxs.len {
-				if op_times[j] > op_times[i] {
-					tmp_t := op_times[i]
-					op_times[i] = op_times[j]
-					op_times[j] = tmp_t
-					tmp_i := op_idxs[i]
-					op_idxs[i] = op_idxs[j]
-					op_idxs[j] = tmp_i
-				}
-			}
-		}
-		eprintln('ARM64 OP PROFILE total_ns=${tot_ns}')
-		mut shown := 0
-		for i in 0 .. op_idxs.len {
-			if shown >= 30 {
-				break
-			}
-			op_i := op_idxs[i]
-			cnt := g.op_count[op_i]
-			ns := op_times[i]
-			total_ms := ns / 1_000_000
-			op_name := unsafe { ssa.OpCode(op_i) }.str()
-			eprintln('  op=${op_name} count=${cnt} total_ms=${total_ms} avg_ns=${ns / i64(cnt)}')
-			shown++
-		}
 	}
 }
 
@@ -821,13 +770,15 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 	g.stack_map.clear()
 	g.alloca_offsets.clear()
 	g.alloca_ptr_cache.clear()
-	// Reuse block_offsets array, grow if needed, only zero this function's blocks
+	// Reuse block_offsets and pending_head arrays, grow if needed, only reset this function's blocks
 	n_blks := g.mod.blocks.len
 	if g.block_offsets.len < n_blks {
 		g.block_offsets = []int{len: n_blks}
+		g.pending_head = []int{len: n_blks}
 		// Fresh allocation needs full -1 init
 		for bo_idx := 0; bo_idx < n_blks; bo_idx++ {
 			g.block_offsets[bo_idx] = -1
+			g.pending_head[bo_idx] = -1
 		}
 	} else {
 		// Only reset blocks belonging to this function
@@ -835,13 +786,13 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 			bid := func.blocks[fbi]
 			if bid >= 0 && bid < g.block_offsets.len {
 				g.block_offsets[bid] = -1
+				g.pending_head[bid] = -1
 			}
 		}
 	}
 	// val_to_block is built once in gen(), not per function
 	g.pending_label_blks.clear()
 	g.pending_label_offs.clear()
-	g.pending_head.clear()
 	g.pending_next.clear()
 	g.func_count++
 	g.total_pending = 0
@@ -1403,16 +1354,15 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 	g.t_prologue_ms += f64(time.since(tf_prologue)) / f64(time.millisecond)
 	for i := 0; i < func.blocks.len; i++ {
 		g.invalidate_last_store()
-		t_blk_start := time.now()
 		blk_id := int(func.blocks[i])
 		g.next_blk = if i + 1 < func.blocks.len { int(func.blocks[i + 1]) } else { -1 }
 		g.cur_blk_id = blk_id
 		blk := g.mod.blocks[blk_id]
 		g.block_offsets[blk_id] = g.macho.text_data.len - g.curr_offset
-		g.t_main_blk_ms += f64(time.since(t_blk_start)) / f64(time.millisecond)
 
-		t_pending_start := time.now()
-		mut pi := g.pending_head[blk_id] or { -1 }
+		// Resolve pending forward branches that target this block via the
+		// per-block linked list (head in pending_head, next-pointers in pending_next).
+		mut pi := g.pending_head[blk_id]
 		for pi != -1 {
 			off := g.pending_label_offs[pi]
 			target := g.block_offsets[blk_id]
@@ -1437,15 +1387,11 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 			pi = g.pending_next[pi]
 		}
 
-		g.t_main_pending_ms += f64(time.since(t_pending_start)) / f64(time.millisecond)
-
-		t_instr_start := time.now()
 		g.cur_blk_instrs = blk.instrs
 		for instr_idx, val_id in blk.instrs {
 			g.cur_blk_instr_idx = instr_idx
 			g.gen_instr(val_id)
 		}
-		g.t_main_instr_ms += f64(time.since(t_instr_start)) / f64(time.millisecond)
 	}
 	g.t_main_ms += f64(time.since(tf_main)) / f64(time.millisecond)
 	unresolved := g.total_pending - g.total_resolved
@@ -1461,13 +1407,6 @@ pub fn (mut g Gen) gen_func(func mir.Function) {
 fn (mut g Gen) gen_instr(val_id int) {
 	instr := g.mod.instrs[g.mod.values[val_id].index]
 	op := g.selected_opcode(instr)
-	if g.profile_ops {
-		g.op_count[int(op)]++
-		tp := time.now()
-		defer {
-			g.op_ns[int(op)] += i64(time.since(tp))
-		}
-	}
 	trace_val := g.env_trace_val.len > 0
 		&& (g.env_trace_val == '*' || g.cur_func_name == g.env_trace_val)
 	if trace_val {
@@ -7488,7 +7427,7 @@ fn (mut g Gen) emit(code u32) {
 fn (mut g Gen) record_pending_label(blk int) {
 	off := g.macho.text_data.len - g.curr_offset
 	new_idx := g.pending_label_offs.len
-	prev_head := g.pending_head[blk] or { -1 }
+	prev_head := g.pending_head[blk]
 	g.pending_label_blks << blk
 	g.pending_label_offs << off
 	g.pending_next << prev_head
