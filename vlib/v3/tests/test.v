@@ -140,6 +140,140 @@ fn weighted_sum(a int, b int, c int, d int, e int, f int, g int, h int) int {
 	return a * 1 + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8
 }
 
+struct Color {
+mut:
+	r int
+	g int
+	b int
+	a int
+}
+
+fn make_point(px int, py int) Point {
+	return Point{
+		x: px
+		y: py
+	}
+}
+
+fn add_points(a Point, b Point) Point {
+	return Point{
+		x: a.x + b.x
+		y: a.y + b.y
+	}
+}
+
+fn abs_val(n int) int {
+	if n < 0 {
+		return 0 - n
+	}
+	return n
+}
+
+fn min_val(a int, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+fn max_val(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+fn clamp(val int, lo int, hi int) int {
+	if val < lo {
+		return lo
+	}
+	if val > hi {
+		return hi
+	}
+	return val
+}
+
+fn collatz_steps(start int) int {
+	mut v := start
+	mut steps := 0
+	for v != 1 {
+		if v % 2 == 0 {
+			v = v / 2
+		} else {
+			v = v * 3 + 1
+		}
+		steps++
+	}
+	return steps
+}
+
+fn sum_digits(n int) int {
+	mut v := n
+	if v < 0 {
+		v = 0 - v
+	}
+	mut s := 0
+	for v > 0 {
+		s += v % 10
+		v = v / 10
+	}
+	return s
+}
+
+fn count_bits(n int) int {
+	mut v := n
+	mut count := 0
+	for v != 0 {
+		count += v & 1
+		v = v >> 1
+	}
+	return count
+}
+
+fn classify(n int) int {
+	if n > 100 {
+		return 3
+	} else if n > 50 {
+		return 2
+	} else if n > 0 {
+		return 1
+	} else {
+		return 0
+	}
+}
+
+fn point_quadrant(p Point) int {
+	if p.x > 0 && p.y > 0 {
+		return 1
+	} else if p.x < 0 && p.y > 0 {
+		return 2
+	} else if p.x < 0 && p.y < 0 {
+		return 3
+	} else if p.x > 0 && p.y < 0 {
+		return 4
+	} else {
+		return 0
+	}
+}
+
+fn make_color(r int, g int, b int, a int) Color {
+	return Color{
+		r: r
+		g: g
+		b: b
+		a: a
+	}
+}
+
+fn color_brightness(c Color) int {
+	return (c.r + c.g + c.b) / 3
+}
+
+fn scale_rect(mut r Rectangle, factor int) {
+	r.width = r.width * factor
+	r.height = r.height * factor
+}
+
 fn modify_struct(mut p Point) {
 	p.x = 999
 	p.y = 888
@@ -998,5 +1132,736 @@ fn main() {
 	n9 := 0 - n8
 	print_int(n9) // 50
 
-	print_str('=== ALL 20 TESTS PASSED ===')
+	// ==================== 21. ELSE-IF CHAINS (5 tests) ====================
+	print_str('--- 21. Else-If Chains ---')
+
+	// 21.1 classify function (> 100)
+	print_int(classify(200)) // 3
+
+	// 21.2 classify (> 50)
+	print_int(classify(75)) // 2
+
+	// 21.3 classify (> 0)
+	print_int(classify(25)) // 1
+
+	// 21.4 classify (<= 0)
+	print_int(classify(0)) // 0
+
+	// 21.5 Multiple else-if inline
+	val21 := 42
+	mut r21 := 0
+	if val21 > 100 {
+		r21 = 5
+	} else if val21 > 50 {
+		r21 = 4
+	} else if val21 > 40 {
+		r21 = 3
+	} else if val21 > 30 {
+		r21 = 2
+	} else {
+		r21 = 1
+	}
+	print_int(r21) // 3
+
+	// ==================== 22. FUNCTION RETURNING STRUCT (5 tests) ====================
+	print_str('--- 22. Function Returning Struct ---')
+
+	// 22.1 Basic make_point
+	rp1 := make_point(10, 20)
+	print_int(rp1.x) // 10
+	print_int(rp1.y) // 20
+
+	// 22.2 make_point with computation
+	rp2 := make_point(3 * 5, 4 * 6)
+	print_int(rp2.x) // 15
+	print_int(rp2.y) // 24
+
+	// 22.3 add_points
+	rp3 := add_points(Point{x: 10, y: 20}, Point{x: 30, y: 40})
+	print_int(rp3.x) // 40
+	print_int(rp3.y) // 60
+
+	// 22.4 Chained struct returns
+	rp4 := add_points(make_point(1, 2), make_point(3, 4))
+	print_int(rp4.x) // 4
+	print_int(rp4.y) // 6
+
+	// 22.5 Return struct used in arithmetic
+	rp5 := make_point(100, 200)
+	print_int(rp5.x + rp5.y) // 300
+
+	// ==================== 23. EARLY RETURN (5 tests) ====================
+	print_str('--- 23. Early Return ---')
+
+	// 23.1 abs positive
+	print_int(abs_val(42)) // 42
+
+	// 23.2 abs negative
+	print_int(abs_val(0 - 17)) // 17
+
+	// 23.3 abs zero
+	print_int(abs_val(0)) // 0
+
+	// 23.4 min
+	print_int(min_val(10, 20)) // 10
+
+	// 23.5 max
+	print_int(max_val(10, 20)) // 20
+
+	// ==================== 24. CLAMP & MULTI-ARG FUNCTIONS (5 tests) ====================
+	print_str('--- 24. Clamp & Multi-Arg Functions ---')
+
+	// 24.1 clamp below
+	print_int(clamp(5, 10, 100)) // 10
+
+	// 24.2 clamp above
+	print_int(clamp(200, 10, 100)) // 100
+
+	// 24.3 clamp in range
+	print_int(clamp(50, 10, 100)) // 50
+
+	// 24.4 clamp at boundary
+	print_int(clamp(10, 10, 100)) // 10
+
+	// 24.5 clamp at upper boundary
+	print_int(clamp(100, 10, 100)) // 100
+
+	// ==================== 25. POSTFIX INC/DEC (5 tests) ====================
+	print_str('--- 25. Postfix Inc/Dec ---')
+
+	// 25.1 Basic increment
+	mut pi1 := 10
+	pi1++
+	print_int(pi1) // 11
+
+	// 25.2 Basic decrement
+	mut pd1 := 10
+	pd1--
+	print_int(pd1) // 9
+
+	// 25.3 Multiple increments
+	mut pi2 := 0
+	pi2++
+	pi2++
+	pi2++
+	pi2++
+	pi2++
+	print_int(pi2) // 5
+
+	// 25.4 Inc and dec combined
+	mut pid := 100
+	pid++
+	pid++
+	pid--
+	print_int(pid) // 101
+
+	// 25.5 Postfix in loop
+	mut pi3 := 0
+	mut cnt25 := 0
+	for pi3 < 10 {
+		pi3++
+		cnt25++
+	}
+	print_int(cnt25) // 10
+
+	// ==================== 26. COMPOUND BITWISE ASSIGNMENT (5 tests) ====================
+	print_str('--- 26. Compound Bitwise Assignment ---')
+
+	// 26.1 OR assign
+	mut bw1 := 0b0011
+	bw1 |= 0b1100
+	print_int(bw1) // 15
+
+	// 26.2 AND assign
+	mut bw2 := 0b1111
+	bw2 &= 0b1010
+	print_int(bw2) // 10
+
+	// 26.3 XOR assign
+	mut bw3 := 0b1100
+	bw3 ^= 0b1010
+	print_int(bw3) // 6
+
+	// 26.4 Shift left assign
+	mut bw4 := 1
+	bw4 <<= 4
+	print_int(bw4) // 16
+
+	// 26.5 Shift right assign
+	mut bw5 := 128
+	bw5 >>= 3
+	print_int(bw5) // 16
+
+	// ==================== 27. COMPLEX BOOLEAN (5 tests) ====================
+	print_str('--- 27. Complex Boolean ---')
+
+	// 27.1 AND chain
+	if 10 > 5 && 20 > 10 && 30 > 20 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// 27.2 OR chain
+	if false || false || true {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// 27.3 Mixed AND/OR
+	if (true && false) || (true && true) {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// 27.4 NOT with AND
+	if !false && !false {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// 27.5 Complex condition
+	v27 := 42
+	if v27 > 10 && v27 < 100 && v27 % 2 == 0 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 28. ITERATIVE ALGORITHMS (5 tests) ====================
+	print_str('--- 28. Iterative Algorithms ---')
+
+	// 28.1 Collatz for 6 (6->3->10->5->16->8->4->2->1 = 8 steps)
+	print_int(collatz_steps(6)) // 8
+
+	// 28.2 Collatz for 27 (111 steps)
+	print_int(collatz_steps(27)) // 111
+
+	// 28.3 Collatz for 1 (0 steps)
+	print_int(collatz_steps(1)) // 0
+
+	// 28.4 Sum digits
+	print_int(sum_digits(12345)) // 15
+
+	// 28.5 Sum digits of large number
+	print_int(sum_digits(99999)) // 45
+
+	// ==================== 29. BIT COUNTING (5 tests) ====================
+	print_str('--- 29. Bit Counting ---')
+
+	// 29.1 count_bits of 0
+	print_int(count_bits(0)) // 0
+
+	// 29.2 count_bits of 7 (111)
+	print_int(count_bits(7)) // 3
+
+	// 29.3 count_bits of 255 (11111111)
+	print_int(count_bits(255)) // 8
+
+	// 29.4 count_bits of 1024 (10000000000)
+	print_int(count_bits(1024)) // 1
+
+	// 29.5 count_bits of 0b10101010
+	print_int(count_bits(0b10101010)) // 4
+
+	// ==================== 30. GLOBAL COUNTER PATTERNS (5 tests) ====================
+	print_str('--- 30. Global Counter Patterns ---')
+
+	// 30.1 Global counter in loop
+	g_count = 0
+	mut ig := 0
+	for ig < 10 {
+		g_count += ig
+		ig++
+	}
+	print_int(g_count) // 45
+
+	// 30.2 Global flag
+	g_flag = false
+	if g_count > 40 {
+		g_flag = true
+	}
+	if g_flag {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// 30.3 Global struct modification in loop
+	g_point.x = 0
+	g_point.y = 0
+	mut ig2 := 1
+	for ig2 <= 5 {
+		g_point.x += ig2
+		g_point.y += ig2 * ig2
+		ig2++
+	}
+	print_int(g_point.x) // 15
+	print_int(g_point.y) // 55
+
+	// 30.4 Global with compound multiply
+	g_val = 1
+	mut ig3 := 1
+	for ig3 <= 5 {
+		g_val *= ig3
+		ig3++
+	}
+	print_int(g_val) // 120
+
+	// 30.5 Global reset and reuse
+	g_val = 999
+	g_val = 0
+	g_val += 42
+	print_int(g_val) // 42
+
+	// ==================== 31. NESTED STRUCT MUTATION (5 tests) ====================
+	print_str('--- 31. Nested Struct Mutation ---')
+
+	// 31.1 Modify nested struct width/height
+	mut rm1 := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 1
+			y: 2
+		}
+	}
+	rm1.width = 50
+	rm1.height = 60
+	print_int(rm1.width) // 50
+	print_int(rm1.height) // 60
+
+	// 31.2 Scale rectangle via function
+	mut rm2 := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	scale_rect(mut rm2, 5)
+	print_int(rm2.width) // 50
+	print_int(rm2.height) // 100
+
+	// 31.3 Multiple rectangle modifications
+	mut rm3 := Rectangle{
+		width:  5
+		height: 5
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	rm3.width += 10
+	rm3.height += 20
+	print_int(rm3.width) // 15
+	print_int(rm3.height) // 25
+
+	// 31.4 Rectangle area after modification
+	mut rm4 := Rectangle{
+		width:  3
+		height: 4
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	rm4.width *= 10
+	rm4.height *= 10
+	print_int(rm4.width * rm4.height) // 1200
+
+	// 31.5 Modify struct then pass to function
+	mut rm5 := Point{
+		x: 5
+		y: 10
+	}
+	rm5.x *= 2
+	rm5.y *= 3
+	scale_point(mut rm5, 2)
+	print_int(rm5.x) // 20
+	print_int(rm5.y) // 60
+
+	// ==================== 32. QUADRANT & STRUCT PASSING (5 tests) ====================
+	print_str('--- 32. Quadrant & Struct Passing ---')
+
+	// 32.1 Quadrant 1
+	print_int(point_quadrant(Point{x: 5, y: 5})) // 1
+
+	// 32.2 Quadrant 2
+	print_int(point_quadrant(Point{x: 0 - 5, y: 5})) // 2
+
+	// 32.3 Quadrant 3
+	print_int(point_quadrant(Point{x: 0 - 5, y: 0 - 5})) // 3
+
+	// 32.4 Quadrant 4
+	print_int(point_quadrant(Point{x: 5, y: 0 - 5})) // 4
+
+	// 32.5 Origin
+	print_int(point_quadrant(Point{x: 0, y: 0})) // 0
+
+	// ==================== 33. 4-FIELD STRUCT (5 tests) ====================
+	print_str('--- 33. 4-Field Struct ---')
+
+	// 33.1 Basic Color init
+	c1 := Color{
+		r: 255
+		g: 128
+		b: 64
+		a: 255
+	}
+	print_int(c1.r) // 255
+	print_int(c1.g) // 128
+
+	// 33.2 Color brightness
+	c2 := Color{
+		r: 90
+		g: 120
+		b: 90
+		a: 255
+	}
+	print_int(color_brightness(c2)) // 100
+
+	// 33.3 make_color function return
+	c3 := make_color(10, 20, 30, 40)
+	print_int(c3.r + c3.g + c3.b + c3.a) // 100
+
+	// 33.4 Color with zero alpha
+	c4 := Color{
+		r: 100
+		g: 200
+		b: 50
+		a: 0
+	}
+	print_int(c4.a) // 0
+	print_int(c4.b) // 50
+
+	// 33.5 Mutable color
+	mut c5 := Color{
+		r: 0
+		g: 0
+		b: 0
+		a: 0
+	}
+	c5.r = 255
+	c5.g = 255
+	c5.b = 255
+	c5.a = 128
+	print_int(c5.r + c5.g + c5.b) // 765
+	print_int(c5.a) // 128
+
+	// ==================== 34. FIBONACCI ITERATIVE (5 tests) ====================
+	print_str('--- 34. Fibonacci Iterative ---')
+
+	// 34.1 Fib(10) iteratively
+	mut fa := 0
+	mut fb := 1
+	for fi := 0; fi < 10; fi++ {
+		tmp := fa + fb
+		fa = fb
+		fb = tmp
+	}
+	print_int(fa) // 55
+
+	// 34.2 Fib(20) iteratively
+	fa = 0
+	fb = 1
+	for fi := 0; fi < 20; fi++ {
+		tmp := fa + fb
+		fa = fb
+		fb = tmp
+	}
+	print_int(fa) // 6765
+
+	// 34.3 Sum of first 10 fib numbers
+	mut fsum := 0
+	fa = 0
+	fb = 1
+	for fi := 0; fi < 10; fi++ {
+		fsum += fa
+		tmp := fa + fb
+		fa = fb
+		fb = tmp
+	}
+	print_int(fsum) // 88
+
+	// 34.4 Count fib numbers below 100
+	mut fcnt := 0
+	fa = 0
+	fb = 1
+	for fa < 100 {
+		fcnt++
+		tmp := fa + fb
+		fa = fb
+		fb = tmp
+	}
+	print_int(fcnt) // 12
+
+	// 34.5 Largest fib below 1000
+	fa = 0
+	fb = 1
+	for fb < 1000 {
+		tmp := fa + fb
+		fa = fb
+		fb = tmp
+	}
+	print_int(fa) // 987
+
+	// ==================== 35. NESTED LOOPS WITH FLOW CONTROL (5 tests) ====================
+	print_str('--- 35. Nested Loops with Flow Control ---')
+
+	// 35.1 Nested with outer break
+	mut sum35 := 0
+	mut r35 := 0
+	for r35 < 10 {
+		mut c35 := 0
+		for c35 < 10 {
+			sum35++
+			c35++
+		}
+		r35++
+		if r35 >= 3 {
+			break
+		}
+	}
+	print_int(sum35) // 30
+
+	// 35.2 Nested with inner continue
+	mut sum35b := 0
+	for r35b := 0; r35b < 5; r35b++ {
+		for c35b := 0; c35b < 5; c35b++ {
+			if c35b % 2 == 0 {
+				continue
+			}
+			sum35b++
+		}
+	}
+	print_int(sum35b) // 10 (5 rows * 2 odd cols)
+
+	// 35.3 Triple nested
+	mut sum35c := 0
+	for i35 := 0; i35 < 3; i35++ {
+		for j35 := 0; j35 < 3; j35++ {
+			for k35 := 0; k35 < 3; k35++ {
+				sum35c++
+			}
+		}
+	}
+	print_int(sum35c) // 27
+
+	// 35.4 Nested with accumulating product
+	mut prod35 := 0
+	for i35 := 1; i35 <= 3; i35++ {
+		for j35 := 1; j35 <= 3; j35++ {
+			prod35 += i35 * j35
+		}
+	}
+	print_int(prod35) // 36
+
+	// 35.5 Skip diagonal
+	mut sum35d := 0
+	for i35 := 0; i35 < 4; i35++ {
+		for j35 := 0; j35 < 4; j35++ {
+			if i35 == j35 {
+				continue
+			}
+			sum35d++
+		}
+	}
+	print_int(sum35d) // 12
+
+	// ==================== 36. COMPLEX MATCH (5 tests) ====================
+	print_str('--- 36. Complex Match ---')
+
+	// 36.1 Match with function call in body
+	x36 := 3
+	match x36 {
+		1 { print_int(fib(5)) }
+		2 { print_int(fib(6)) }
+		3 { print_int(fib(7)) }
+		else { print_int(0) }
+	}
+	// 13
+
+	// 36.2 Match with computation in body
+	x36b := 2
+	match x36b {
+		1 { print_int(10 * 10) }
+		2 { print_int(20 * 20) }
+		3 { print_int(30 * 30) }
+		else { print_int(0) }
+	}
+	// 400
+
+	// 36.3 Match on computed value
+	x36c := 15 % 4
+	match x36c {
+		0 { print_int(100) }
+		1 { print_int(200) }
+		2 { print_int(300) }
+		3 { print_int(400) }
+		else { print_int(500) }
+	}
+	// 400
+
+	// 36.4 Match in loop
+	mut sum36 := 0
+	for i36 := 0; i36 < 5; i36++ {
+		match i36 {
+			0 { sum36 += 1 }
+			1 { sum36 += 10 }
+			2 { sum36 += 100 }
+			else { sum36 += 1000 }
+		}
+	}
+	print_int(sum36) // 1 + 10 + 100 + 1000 + 1000 = 2111
+
+	// 36.5 Sequential matches
+	mut r36 := 0
+	x36d := 5
+	match x36d {
+		5 { r36 += 100 }
+		else { r36 += 1 }
+	}
+	match x36d {
+		5 { r36 += 200 }
+		else { r36 += 2 }
+	}
+	print_int(r36) // 300
+
+	// ==================== 37. CHAINED FUNCTION CALLS (5 tests) ====================
+	print_str('--- 37. Chained Function Calls ---')
+
+	// 37.1 add(add(add(1,2),3),4) = 10
+	print_int(add(add(add(1, 2), 3), 4)) // 10
+
+	// 37.2 Nested mul and add
+	print_int(add(mul(3, 4), mul(5, 6))) // 42
+
+	// 37.3 sub(mul(add(2,3),4),5) = 15
+	print_int(sub(mul(add(2, 3), 4), 5)) // 15
+
+	// 37.4 min of max
+	print_int(min_val(max_val(10, 20), max_val(5, 15))) // 15
+
+	// 37.5 max of min
+	print_int(max_val(min_val(10, 20), min_val(25, 30))) // 25
+
+	// ==================== 38. MIXED ARITHMETIC (5 tests) ====================
+	print_str('--- 38. Mixed Arithmetic ---')
+
+	// 38.1 Shift + add
+	print_int((1 << 8) + 1) // 257
+
+	// 38.2 Bitwise + arithmetic
+	print_int((0xFF & 0x0F) + 16) // 31
+
+	// 38.3 Modulo + multiply
+	print_int((100 % 7) * 10) // 20
+
+	// 38.4 Shift + bitwise
+	print_int((1 << 4) | (1 << 2)) // 20
+
+	// 38.5 Complex expression
+	v38 := 100
+	print_int((v38 * 2 + v38 / 2) - (v38 % 3)) // 249
+
+	// ==================== 39. LARGE COMPUTATIONS (5 tests) ====================
+	print_str('--- 39. Large Computations ---')
+
+	// 39.1 Large factorial (10!)
+	mut lf := 1
+	for li := 1; li <= 10; li++ {
+		lf *= li
+	}
+	print_int(lf) // 3628800
+
+	// 39.2 Power of 2^20
+	mut lp := 1
+	for li := 0; li < 20; li++ {
+		lp *= 2
+	}
+	print_int(lp) // 1048576
+
+	// 39.3 Sum of squares 1..20
+	mut lsq := 0
+	for li := 1; li <= 20; li++ {
+		lsq += li * li
+	}
+	print_int(lsq) // 2870
+
+	// 39.4 Triangular number T(100)
+	mut tri := 0
+	for li := 1; li <= 100; li++ {
+		tri += li
+	}
+	print_int(tri) // 5050
+
+	// 39.5 Product of 1..8
+	print_int(mul_many(1, 2, 3, 4, 5, 6, 7, 8)) // 40320
+
+	// ==================== 40. INTEGRATION TEST (5 tests) ====================
+	print_str('--- 40. Integration Test ---')
+
+	// 40.1 Struct + loop + function
+	mut ip := make_point(0, 0)
+	for ii := 1; ii <= 5; ii++ {
+		ip = add_points(ip, make_point(ii, ii * 2))
+	}
+	print_int(ip.x) // 15
+	print_int(ip.y) // 30
+
+	// 40.2 Conditional + struct + global
+	g_val = 0
+	mut ip2 := Point{
+		x: 1
+		y: 1
+	}
+	for ii := 0; ii < 10; ii++ {
+		if ii % 2 == 0 {
+			ip2.x += ii
+			g_val += 1
+		} else {
+			ip2.y += ii
+		}
+	}
+	print_int(ip2.x) // 1 + 0 + 2 + 4 + 6 + 8 = 21
+	print_int(ip2.y) // 1 + 1 + 3 + 5 + 7 + 9 = 26
+	print_int(g_val) // 5
+
+	// 40.3 Nested function + assert
+	assert abs_val(0 - 42) == 42
+	assert min_val(10, 20) == 10
+	assert max_val(10, 20) == 20
+	print_str('Integration asserts passed')
+
+	// 40.4 Algorithm + match
+	mut sum40 := 0
+	for ii := 1; ii <= 10; ii++ {
+		match classify(ii * 10) {
+			1 { sum40 += 1 }
+			2 { sum40 += 10 }
+			3 { sum40 += 100 }
+			else { sum40 += 0 }
+		}
+	}
+	print_int(sum40) // 10: 1, 20: 1, 30: 1, 40: 1, 50: 1, 60: 10, 70: 10, 80: 10, 90: 10, 100: 10 = 5 + 50 = 55
+	// Actually: 10->1, 20->1, 30->1, 40->1, 50->1, 60->2(>50), 70->2, 80->2, 90->2, 100->2(not >100)
+	// so: 1*5 + 10*5 = 55
+
+	// 40.5 Heap struct in loop with accumulation
+	mut hsum := 0
+	for ii := 0; ii < 5; ii++ {
+		hp := &Point{
+			x: ii * 3
+			y: ii * 7
+		}
+		hsum += hp.x + hp.y
+	}
+	print_int(hsum) // (0+0)+(3+7)+(6+14)+(9+21)+(12+28) = 0+10+20+30+40 = 100
+
+	print_str('=== ALL 40 TESTS PASSED ===')
 }

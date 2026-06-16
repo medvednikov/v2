@@ -255,7 +255,9 @@ fn (mut b Builder) build_stmt(id flat.NodeId) {
 			b.build_assert(node)
 		}
 		.empty {}
-		else {}
+		else {
+			eprintln('build_stmt: unsupported node kind: ${node.kind}')
+		}
 	}
 }
 
@@ -320,10 +322,11 @@ fn (mut b Builder) build_selector_assign(node flat.Node) {
 						rhs_val := b.build_expr(rhs_id)
 						b.m.add_instr(.store, b.cur_block, b.void_type, [rhs_val, field_ptr])
 					} else {
-						cur := b.m.add_instr(.load, b.cur_block, b.i64_type, [field_ptr])
+						field_type := b.deref_type(field_ptr)
+						cur := b.m.add_instr(.load, b.cur_block, field_type, [field_ptr])
 						rhs_val := b.build_expr(rhs_id)
 						op := b.compound_to_op(node.op)
-						result := b.m.add_instr(op, b.cur_block, b.i64_type, [cur, rhs_val])
+						result := b.m.add_instr(op, b.cur_block, field_type, [cur, rhs_val])
 						b.m.add_instr(.store, b.cur_block, b.void_type, [result, field_ptr])
 					}
 				}
@@ -513,6 +516,7 @@ fn (mut b Builder) build_expr(id flat.NodeId) ValueID {
 			return b.m.get_or_add_const(b.i64_type, '0')
 		}
 		else {
+			eprintln('build_expr: unsupported expr kind: ${node.kind}')
 			return b.m.get_or_add_const(b.i64_type, '0')
 		}
 	}
@@ -694,7 +698,7 @@ fn (mut b Builder) build_selector(node flat.Node) ValueID {
 	if base.kind == .ident {
 		if addr := b.vars[base.value] {
 			field_ptr := b.get_field_ptr(addr, field_name)
-			return b.m.add_instr(.load, b.cur_block, b.i64_type, [field_ptr])
+			return b.m.add_instr(.load, b.cur_block, b.deref_type(field_ptr), [field_ptr])
 		}
 	}
 	return b.m.get_or_add_const(b.i64_type, '0')
@@ -713,7 +717,8 @@ fn (mut b Builder) build_struct_init(node flat.Node) ValueID {
 				if fname == field_node.value {
 					offset := b.m.struct_field_offset(typ_id, fi)
 					off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
-					field_ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(b.i64_type), [
+					field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
+					field_ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(field_type), [
 						alloca,
 						off_const,
 					])
@@ -728,7 +733,8 @@ fn (mut b Builder) build_struct_init(node flat.Node) ValueID {
 			if fname !in initialized {
 				offset := b.m.struct_field_offset(typ_id, fi)
 				off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
-				field_ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(b.i64_type), [
+				field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
+				field_ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(field_type), [
 					alloca,
 					off_const,
 				])
@@ -752,7 +758,8 @@ fn (mut b Builder) build_heap_struct_init(node flat.Node) ValueID {
 				if fname == field_node.value {
 					offset := b.m.struct_field_offset(typ_id, fi)
 					off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
-					field_ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(b.i64_type), [
+					field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
+					field_ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(field_type), [
 						alloca,
 						off_const,
 					])
@@ -794,8 +801,8 @@ fn (mut b Builder) build_string_interp(node flat.Node) ValueID {
 			}
 		}
 	}
-	count_const := b.m.get_or_add_const(b.i64_type, '${n}')
-	alloca := b.m.add_instr(.alloca, b.cur_block, b.m.type_store.get_ptr(b.str_type), [])
+	count_const := b.m.get_or_add_const(b.i64_type, '${parts.len}')
+	alloca := b.m.add_instr(.alloca, b.cur_block, b.m.type_store.get_ptr(b.str_type), [count_const])
 	for i, part in parts {
 		off_const := b.m.get_or_add_const(b.i64_type, '${i * b.m.type_size(b.str_type)}')
 		ptr := b.m.add_instr(.get_element_ptr, b.cur_block, b.m.type_store.get_ptr(b.str_type), [
@@ -830,7 +837,8 @@ fn (mut b Builder) get_field_ptr(base_addr ValueID, field_name string) ValueID {
 			if fname == field_name {
 				offset := b.m.struct_field_offset(struct_typ_id, fi)
 				off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
-				ptr_type := b.m.type_store.get_ptr(b.i64_type)
+				field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
+				ptr_type := b.m.type_store.get_ptr(field_type)
 
 				if b.m.type_store.types[b.m.values[base_addr].typ].kind == .ptr_t {
 					inner := b.m.type_store.types[b.m.values[base_addr].typ]

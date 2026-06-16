@@ -52,11 +52,6 @@ fn (mut g Gen) gen_pre_pass() {
 }
 
 fn (mut g Gen) gen_post_pass() {
-	stub_offset := u64(g.macho.text_data.len)
-	g.macho.add_symbol('___unresolved_stub', stub_offset, false, 1)
-	g.emit32(0xD2800000) // mov x0, #0
-	g.emit32(0xD65F03C0) // ret
-
 	for gi in 0 .. g.m.globals.len {
 		for g.macho.data_data.len % 8 != 0 {
 			g.macho.data_data << 0
@@ -126,7 +121,18 @@ fn (mut g Gen) gen_func(func_idx int) {
 			if instr.op == .alloca {
 				ptr_type := g.m.type_store.types[val.typ]
 				elem_size := g.m.type_size(ptr_type.elem_type)
-				alloc_size := if elem_size > 0 { (elem_size + 7) & ~7 } else { 8 }
+				count := if instr.operands.len > 0 {
+					count_val := g.m.values[instr.operands[0]]
+					if count_val.kind == .constant {
+						n := parse_int(count_val.name)
+						if n > 1 { int(n) } else { 1 }
+					} else {
+						1
+					}
+				} else {
+					1
+				}
+				alloc_size := if elem_size > 0 { (elem_size * count + 7) & ~7 } else { 8 }
 				slot_offset = (slot_offset + 15) & ~0xF
 				slot_offset += alloc_size
 				g.alloca_offset[val_id] = -slot_offset
@@ -424,6 +430,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		arg_id := instr.operands[ai]
 		arg_val := g.m.values[arg_id]
 		if arg_reg >= 8 {
+			eprintln('gen_call: too many arguments for ${fn_name}, stack args not yet implemented')
 			break
 		}
 

@@ -199,7 +199,9 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 			g.writeln('}')
 		}
 		.empty {}
-		else {}
+		else {
+			eprintln('gen_node: unsupported node kind: ${node.kind}')
+		}
 	}
 }
 

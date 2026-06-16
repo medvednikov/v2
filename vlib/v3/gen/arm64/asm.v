@@ -488,10 +488,9 @@ fn asm_movz(rd Reg, imm16 u32) u32 {
 	return 0xD2800000 | (imm16 << 5) | u32(rd)
 }
 
-// movk rd, #imm16, lsl #shift (move wide with keep)
-fn asm_movk(rd Reg, imm16 u32, shift int) u32 {
-	hw := u32(shift / 16)
-	return 0xF2800000 | (hw << 21) | (imm16 << 5) | u32(rd)
+// movk rd, #imm16, lsl #(hw*16) (move wide with keep, hw=0..3)
+fn asm_movk(rd Reg, imm16 u32, hw int) u32 {
+	return 0xF2800000 | (u32(hw) << 21) | (imm16 << 5) | u32(rd)
 }
 
 // movn rd, #imm16 (move wide with NOT)

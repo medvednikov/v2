@@ -3,17 +3,20 @@
 import os
 
 const vexe = @VEXE
-const vroot = @VEXEROOT
-const test_v = os.join_path(vroot, 'vlib', 'v3', 'tests', 'test.v')
-const v3_src = os.join_path(vroot, 'vlib', 'v3', 'v3.v')
+const tests_dir = os.dir(@FILE)
+const v3_dir = os.dir(tests_dir)
+const test_v = os.join_path(tests_dir, 'test.v')
+const v3_src = os.join_path(v3_dir, 'v3.v')
 
 fn run(cmd string) os.Result {
+	println('> ${cmd}')
 	return os.execute(cmd)
 }
 
 fn build_v3() string {
 	v3_bin := os.join_path(os.temp_dir(), 'v3_test_runner')
-	r := run('${vexe} -o ${v3_bin} ${v3_src}')
+	cmd := '${vexe} -o ${v3_bin} ${v3_src}'
+	r := run(cmd)
 	if r.exit_code != 0 {
 		eprintln('FAIL: could not build v3')
 		eprintln(r.output)
@@ -23,13 +26,14 @@ fn build_v3() string {
 }
 
 fn run_v1() string {
-	r := run('${vexe} -enable-globals -o ${os.temp_dir()}/v1_test ${test_v}')
+	v1_bin := '${os.temp_dir()}/v1_test'
+	r := run('${vexe} -enable-globals -o ${v1_bin} ${test_v}')
 	if r.exit_code != 0 {
 		eprintln('FAIL: v1 compilation failed')
 		eprintln(r.output)
 		exit(1)
 	}
-	r2 := run('${os.temp_dir()}/v1_test')
+	r2 := run(v1_bin)
 	if r2.exit_code != 0 {
 		eprintln('FAIL: v1 binary crashed (exit ${r2.exit_code})')
 		exit(1)
@@ -38,13 +42,14 @@ fn run_v1() string {
 }
 
 fn run_v3_c(v3_bin string) string {
-	r := run('${v3_bin} ${test_v} -b c -o ${os.temp_dir()}/v3c_test')
+	v3c_bin := '${os.temp_dir()}/v3c_test'
+	r := run('${v3_bin} ${test_v} -b c -o ${v3c_bin}')
 	if r.exit_code != 0 {
 		eprintln('FAIL: v3 C backend compilation failed')
 		eprintln(r.output)
 		exit(1)
 	}
-	r2 := run('${os.temp_dir()}/v3c_test')
+	r2 := run(v3c_bin)
 	if r2.exit_code != 0 {
 		eprintln('FAIL: v3 C binary crashed (exit ${r2.exit_code})')
 		exit(1)
@@ -53,13 +58,14 @@ fn run_v3_c(v3_bin string) string {
 }
 
 fn run_v3_arm64(v3_bin string) string {
-	r := run('${v3_bin} ${test_v} -b arm64 -o ${os.temp_dir()}/v3arm_test')
+	v3arm_bin := '${os.temp_dir()}/v3arm_test'
+	r := run('${v3_bin} ${test_v} -b arm64 -o ${v3arm_bin}')
 	if r.exit_code != 0 {
 		eprintln('FAIL: v3 arm64 backend compilation failed')
 		eprintln(r.output)
 		exit(1)
 	}
-	r2 := run('${os.temp_dir()}/v3arm_test')
+	r2 := run(v3arm_bin)
 	if r2.exit_code != 0 {
 		eprintln('FAIL: v3 arm64 binary crashed (exit ${r2.exit_code})')
 		exit(1)

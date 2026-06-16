@@ -53,7 +53,7 @@ fn main() {
 	prefs := pref.new_preferences()
 	mut p := parser.FlatParser.new(prefs)
 
-	builtin_path := os.join_path(@VEXEROOT, 'vlib', 'v3', 'builtins', 'builtin.v')
+	builtin_path := os.join_path(os.dir(@FILE), 'builtins', 'builtin.v')
 
 	mut files := []string{}
 	if backend == 'arm64' {
