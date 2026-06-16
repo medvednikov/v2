@@ -2,6 +2,7 @@ module main
 
 import os
 import v3.bench
+import v3.flat
 import v3.gen.c as cgen
 import v3.parser
 import v3.pref
@@ -50,9 +51,13 @@ fn main() {
 	files := p.parse_files([input_file], mut file_set)
 	b.step('parse')
 
+	// Flatten AST
+	a := flat.flatten(files)
+	b.step('flatten')
+
 	// Generate C
-	mut g := cgen.Gen.new()
-	c_code := g.gen(files)
+	mut g := cgen.FlatGen.new()
+	c_code := g.gen(&a)
 	b.step('gen C')
 
 	// Write C file
