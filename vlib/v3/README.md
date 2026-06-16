@@ -16,12 +16,12 @@ The transformer lowers match statements to if/else chains and collects struct/gl
 
 | Component   | Lines |
 |-------------|-------|
-| flat parser  | 2,822 |
-| C gen       | 749   |
+| flat parser  | 2,829 |
+| C gen       | 817   |
 | flat AST    | 230   |
-| transformer | 205   |
+| transformer | 206   |
 | driver      | 79    |
-| **total**   | **4,085** |
+| **total**   | **4,161** |
 
 The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~30% fewer lines thanks to the flat AST representation.
 
@@ -38,7 +38,7 @@ Compiling `hello world` (`println('hello world')`):
 | cc        | 38 ms    | 2,912 KB |
 | **total** | **~39 ms** | **2,912 KB** |
 
-Compiling `test.v` (567 lines, 10 test sections: structs, globals, match, recursion, nested loops):
+Compiling `test.v` (1,002 lines, 20 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives):
 
 | Step      | Time     | RSS      |
 |-----------|----------|----------|

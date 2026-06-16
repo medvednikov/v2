@@ -11,6 +11,13 @@ mut:
 	right int
 }
 
+struct Rectangle {
+mut:
+	width  int
+	height int
+	origin Point
+}
+
 __global (
 	g_val   int
 	g_count int
@@ -93,6 +100,70 @@ fn print_int(n int) {
 
 fn print_str(s string) {
 	C.puts(s.str)
+}
+
+fn sum_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
+	return a + b + c + d + e + f + g + h
+}
+
+fn mul_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
+	return a * b * c * d * e * f * g * h
+}
+
+fn max_of_eight(a int, b int, c int, d int, e int, f int, g int, h int) int {
+	mut m := a
+	if b > m {
+		m = b
+	}
+	if c > m {
+		m = c
+	}
+	if d > m {
+		m = d
+	}
+	if e > m {
+		m = e
+	}
+	if f > m {
+		m = f
+	}
+	if g > m {
+		m = g
+	}
+	if h > m {
+		m = h
+	}
+	return m
+}
+
+fn weighted_sum(a int, b int, c int, d int, e int, f int, g int, h int) int {
+	return a * 1 + b * 2 + c * 3 + d * 4 + e * 5 + f * 6 + g * 7 + h * 8
+}
+
+fn modify_struct(mut p Point) {
+	p.x = 999
+	p.y = 888
+}
+
+fn swap_point(mut p Point) {
+	tmp := p.x
+	p.x = p.y
+	p.y = tmp
+}
+
+fn scale_point(mut p Point, factor int) {
+	p.x = p.x * factor
+	p.y = p.y * factor
+}
+
+fn translate_point(mut p Point, dx int, dy int) {
+	p.x = p.x + dx
+	p.y = p.y + dy
+}
+
+fn reset_point(mut p Point) {
+	p.x = 0
+	p.y = 0
 }
 
 // ===================== MAIN TEST FUNCTION =====================
@@ -562,5 +633,370 @@ fn main() {
 	}
 	print_int(x10) // 10
 
-	print_str('=== ALL 10 TESTS PASSED ===')
+	// ==================== 11. MANY ARGUMENTS (5 tests) ====================
+	print_str('--- 11. Many Arguments ---')
+
+	// 11.1 Sum of 8 ones
+	print_int(sum_many(1, 1, 1, 1, 1, 1, 1, 1)) // 8
+
+	// 11.2 Sum of sequence
+	print_int(sum_many(1, 2, 3, 4, 5, 6, 7, 8)) // 36
+
+	// 11.3 Product of small numbers
+	print_int(mul_many(1, 2, 1, 2, 1, 2, 1, 2)) // 16
+
+	// 11.4 Max of 8
+	print_int(max_of_eight(3, 7, 2, 9, 1, 8, 4, 6)) // 9
+
+	// 11.5 Weighted sum
+	print_int(weighted_sum(1, 1, 1, 1, 1, 1, 1, 1)) // 1+2+3+4+5+6+7+8 = 36
+
+	// ==================== 12. MODIFYING STRUCT (5 tests) ====================
+	print_str('--- 12. Modifying Struct via Function ---')
+
+	// 12.1 Basic modify
+	mut pm1 := Point{
+		x: 10
+		y: 20
+	}
+	modify_struct(mut pm1)
+	print_int(pm1.x) // 999
+	print_int(pm1.y) // 888
+
+	// 12.2 Swap
+	mut pm2 := Point{
+		x: 5
+		y: 15
+	}
+	swap_point(mut pm2)
+	print_int(pm2.x) // 15
+	print_int(pm2.y) // 5
+
+	// 12.3 Scale
+	mut pm3 := Point{
+		x: 10
+		y: 20
+	}
+	scale_point(mut pm3, 3)
+	print_int(pm3.x) // 30
+	print_int(pm3.y) // 60
+
+	// 12.4 Translate
+	mut pm4 := Point{
+		x: 5
+		y: 10
+	}
+	translate_point(mut pm4, 100, 200)
+	print_int(pm4.x) // 105
+	print_int(pm4.y) // 210
+
+	// 12.5 Reset
+	mut pm5 := Point{
+		x: 999
+		y: 888
+	}
+	reset_point(mut pm5)
+	print_int(pm5.x) // 0
+	print_int(pm5.y) // 0
+
+	// ==================== 13. ASSERT (5 tests) ====================
+	print_str('--- 13. Assert ---')
+
+	// 13.1 Basic equality
+	assert 1 == 1
+	print_str('Assert 1 passed')
+
+	// 13.2 Computed equality
+	assert 2 + 2 == 4
+	print_str('Assert 2 passed')
+
+	// 13.3 Boolean assert
+	assert true
+	print_str('Assert 3 passed')
+
+	// 13.4 Comparison assert
+	assert 10 > 5
+	print_str('Assert 4 passed')
+
+	// 13.5 Complex expression
+	assert (3 * 4) == (2 * 6)
+	print_str('Assert 5 passed')
+
+	// ==================== 14. HEAP ALLOCATION (5 tests) ====================
+	print_str('--- 14. Heap Allocation ---')
+
+	// 14.1 Basic heap Point
+	hp1 := &Point{
+		x: 10
+		y: 20
+	}
+	print_int(hp1.x) // 10
+	print_int(hp1.y) // 20
+
+	// 14.2 Heap with zero
+	hp2 := &Point{
+		x: 0
+		y: 0
+	}
+	print_int(hp2.x) // 0
+	print_int(hp2.y) // 0
+
+	// 14.3 Heap with computed values
+	hp3 := &Point{
+		x: 5 * 5
+		y: 6 * 6
+	}
+	print_int(hp3.x) // 25
+	print_int(hp3.y) // 36
+
+	// 14.4 Heap Rectangle
+	hr := &Rectangle{
+		width:  100
+		height: 200
+		origin: Point{
+			x: 10
+			y: 20
+		}
+	}
+	print_int(hr.width) // 100
+	print_int(hr.height) // 200
+
+	// 14.5 Heap Node
+	hn := &Node{
+		value: 42
+		left:  1
+		right: 2
+	}
+	print_int(hn.value) // 42
+	print_int(hn.left) // 1
+	print_int(hn.right) // 2
+
+	// ==================== 15. BITWISE OPERATIONS (5 tests) ====================
+	print_str('--- 15. Bitwise Operations ---')
+
+	// 15.1 Basic AND
+	print_int(0b1100 & 0b1010) // 8
+
+	// 15.2 Basic OR
+	print_int(0b1100 | 0b1010) // 14
+
+	// 15.3 Basic XOR
+	print_int(0b1100 ^ 0b1010) // 6
+
+	// 15.4 Mask extraction
+	num := 0xABCD
+	low_byte := num & 0xFF
+	print_int(low_byte) // 0xCD = 205
+
+	// 15.5 Bit set/clear
+	mut flags := 0
+	flags = flags | 0b0001 // set bit 0
+	flags = flags | 0b0100 // set bit 2
+	print_int(flags) // 5
+	flags = flags & 0b1110 // clear bit 0
+	print_int(flags) // 4
+
+	// ==================== 16. SHIFT OPERATIONS (5 tests) ====================
+	print_str('--- 16. Shift Operations ---')
+
+	// 16.1 Left shift basic
+	print_int(1 << 4) // 16
+
+	// 16.2 Right shift basic
+	print_int(32 >> 2) // 8
+
+	// 16.3 Multiple shifts
+	print_int(255 >> 4) // 15
+
+	// 16.4 Shift for multiply
+	val16 := 7
+	print_int(val16 << 3) // 7 * 8 = 56
+
+	// 16.5 Shift for divide
+	val17 := 96
+	print_int(val17 >> 4) // 96 / 16 = 6
+
+	// ==================== 17. MODULO (5 tests) ====================
+	print_str('--- 17. Modulo ---')
+
+	// 17.1 Basic modulo
+	print_int(17 % 5) // 2
+
+	// 17.2 Modulo with larger divisor
+	print_int(100 % 7) // 2
+
+	// 17.3 Even/odd check
+	print_int(15 % 2) // 1 (odd)
+	print_int(16 % 2) // 0 (even)
+
+	// 17.4 Clock arithmetic
+	hour := 23
+	new_hour := (hour + 5) % 24
+	print_int(new_hour) // 4
+
+	// 17.5 Digit extraction
+	num17 := 12345
+	last_digit := num17 % 10
+	print_int(last_digit) // 5
+	second_digit := (num17 / 10) % 10
+	print_int(second_digit) // 4
+
+	// ==================== 18. POINTER ARITHMETIC (5 tests) ====================
+	print_str('--- 18. Pointer Arithmetic ---')
+
+	// 18.1 Heap struct access
+	hp_arr1 := &Point{
+		x: 10
+		y: 20
+	}
+	print_int(hp_arr1.x) // 10
+	print_int(hp_arr1.y) // 20
+
+	// 18.2 Multiple heap structs
+	hp_arr2 := &Point{
+		x: 100
+		y: 200
+	}
+	hp_arr3 := &Point{
+		x: 300
+		y: 400
+	}
+	print_int(hp_arr2.x + hp_arr3.x) // 400
+	print_int(hp_arr2.y + hp_arr3.y) // 600
+
+	// 18.3 Heap struct with computed values
+	base18 := 5
+	hp_arr4 := &Point{
+		x: base18 * 10
+		y: base18 * 20
+	}
+	print_int(hp_arr4.x) // 50
+	print_int(hp_arr4.y) // 100
+
+	// 18.4 Multiple heap allocations in loop
+	mut sum18 := 0
+	mut i18 := 0
+	for i18 < 3 {
+		hp := &Point{
+			x: i18 * 10
+			y: i18 * 20
+		}
+		sum18 = sum18 + hp.x + hp.y
+		i18++
+	}
+	print_int(sum18) // 0+0 + 10+20 + 20+40 = 90
+
+	// 18.5 Heap node tree structure
+	node1 := &Node{
+		value: 100
+		left:  0
+		right: 0
+	}
+	node2 := &Node{
+		value: 200
+		left:  0
+		right: 0
+	}
+	print_int(node1.value + node2.value) // 300
+
+	// ==================== 19. NESTED STRUCT ACCESS (5 tests) ====================
+	print_str('--- 19. Nested Struct Access ---')
+
+	// 19.1 Basic nested access
+	rect := Rectangle{
+		width:  100
+		height: 200
+		origin: Point{
+			x: 10
+			y: 20
+		}
+	}
+	print_int(rect.width) // 100
+	print_int(rect.height) // 200
+
+	// 19.2 Nested struct field via intermediate
+	rect2 := Rectangle{
+		width:  50
+		height: 60
+		origin: Point{
+			x: 5
+			y: 6
+		}
+	}
+	print_int(rect2.width + rect2.height) // 110
+
+	// 19.3 Mutable nested struct modification
+	mut rect3 := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 1
+			y: 2
+		}
+	}
+	rect3.width = 100
+	rect3.height = 200
+	print_int(rect3.width) // 100
+	print_int(rect3.height) // 200
+
+	// 19.4 Multiple rectangles
+	rect4a := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	rect4b := Rectangle{
+		width:  30
+		height: 40
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	print_int(rect4a.width + rect4b.width) // 40
+	print_int(rect4a.height + rect4b.height) // 60
+
+	// 19.5 Rectangle area
+	rect5 := Rectangle{
+		width:  12
+		height: 10
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	area := rect5.width * rect5.height
+	print_int(area) // 120
+
+	// ==================== 20. NEGATIVE NUMBERS (5 tests) ====================
+	print_str('--- 20. Negative Numbers ---')
+
+	// 20.1 Unary minus
+	n1 := 0 - 42
+	print_int(n1) // -42
+
+	// 20.2 Negative addition
+	n2 := 0 - 10
+	n3 := n2 + 5
+	print_int(n3) // -5
+
+	// 20.3 Negative subtraction
+	n4 := 0 - 20
+	n5 := n4 - 10
+	print_int(n5) // -30
+
+	// 20.4 Negative multiplication
+	n6 := 0 - 7
+	n7 := n6 * 3
+	print_int(n7) // -21
+
+	// 20.5 Double negative (positive)
+	n8 := 0 - 50
+	n9 := 0 - n8
+	print_int(n9) // 50
+
+	print_str('=== ALL 20 TESTS PASSED ===')
 }

@@ -10,14 +10,15 @@ struct StructField {
 
 pub struct FlatGen {
 mut:
-	sb           strings.Builder
-	indent       int
-	a            &flat.FlatAst = unsafe { nil }
-	str_lits     []string
-	fn_ret_types map[string]string
-	var_types    map[string]string
-	structs      map[string][]StructField
-	global_types map[string]string
+	sb             strings.Builder
+	indent         int
+	a              &flat.FlatAst = unsafe { nil }
+	str_lits       []string
+	fn_ret_types   map[string]string
+	fn_param_types map[string][]string
+	var_types      map[string]string
+	structs        map[string][]StructField
+	global_types   map[string]string
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -48,6 +49,14 @@ fn (mut g FlatGen) collect() {
 		match node.kind {
 			.fn_decl {
 				g.fn_ret_types[node.value] = g.c_type(node.typ)
+				mut ptypes := []string{}
+				for i in 0 .. node.children_count {
+					child := g.a.child_node(&node, i)
+					if child.kind == .param {
+						ptypes << g.c_type(child.typ)
+					}
+				}
+				g.fn_param_types[node.value] = ptypes
 			}
 			.struct_decl {
 				mut fields := []StructField{}
@@ -178,6 +187,16 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 		}
 		.if_expr {
 			g.gen_if(node)
+		}
+		.assert_stmt {
+			g.write('if (!(')
+			g.gen_expr(g.a.child(&node, 0))
+			g.writeln(')) {')
+			g.indent++
+			g.writeln('fprintf(stderr, "assert failed\\n");')
+			g.writeln('exit(1);')
+			g.indent--
+			g.writeln('}')
 		}
 		.empty {}
 		else {}
@@ -356,8 +375,14 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_expr(g.a.child(&node, 1))
 		}
 		.prefix {
-			g.write(g.op_str(node.op))
-			g.gen_expr(g.a.child(&node, 0))
+			child_id := g.a.child(&node, 0)
+			child := g.a.nodes[int(child_id)]
+			if node.op == .amp && child.kind == .struct_init {
+				g.gen_heap_struct_init(child)
+			} else {
+				g.write(g.op_str(node.op))
+				g.gen_expr(child_id)
+			}
 		}
 		.postfix {
 			g.gen_expr(g.a.child(&node, 0))
@@ -369,8 +394,20 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write(')')
 		}
 		.selector {
-			g.gen_expr(g.a.child(&node, 0))
-			g.write('.')
+			base_id := g.a.child(&node, 0)
+			base := g.a.nodes[int(base_id)]
+			mut is_ptr := false
+			if base.kind == .ident {
+				if typ := g.var_types[base.value] {
+					is_ptr = typ.ends_with('*')
+				}
+			}
+			g.gen_expr(base_id)
+			if is_ptr {
+				g.write('->')
+			} else {
+				g.write('.')
+			}
 			g.write(node.value)
 		}
 		.index {
@@ -402,6 +439,20 @@ fn (mut g FlatGen) gen_struct_init(node flat.Node) {
 		g.gen_expr(g.a.child(field, 0))
 	}
 	g.write('}')
+}
+
+fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
+	name := c_name(node.value)
+	g.write('(${name}*)memdup(&(${name}){')
+	for i in 0 .. node.children_count {
+		field := g.a.child_node(&node, i)
+		if i > 0 {
+			g.write(', ')
+		}
+		g.write('.${c_name(field.value)} = ')
+		g.gen_expr(g.a.child(field, 0))
+	}
+	g.write('}, sizeof(${name}))')
 }
 
 fn (mut g FlatGen) gen_call(node flat.Node) {
@@ -436,9 +487,14 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				g.gen_expr(g.a.child(&node, 0))
 			}
 			g.write('(')
+			param_types := g.fn_param_types[fn_name]
 			for i in 1 .. node.children_count {
 				if i > 1 {
 					g.write(', ')
+				}
+				arg_idx := i - 1
+				if arg_idx < param_types.len && param_types[arg_idx].ends_with('*') {
+					g.write('&')
 				}
 				g.gen_expr(g.a.child(&node, i))
 			}
@@ -514,6 +570,9 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 			return lt
 		}
 		.prefix {
+			if node.op == .amp {
+				return g.infer_type(g.a.child(&node, 0)) + '*'
+			}
 			return g.infer_type(g.a.child(&node, 0))
 		}
 		.paren {
@@ -631,6 +690,12 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('\treturn (string){s, len};')
 	g.writeln('}')
 	g.writeln('')
+	g.writeln('void* memdup(const void* src, int sz) {')
+	g.writeln('\tvoid* p = malloc(sz);')
+	g.writeln('\tmemcpy(p, src, sz);')
+	g.writeln('\treturn p;')
+	g.writeln('}')
+	g.writeln('')
 }
 
 fn (mut g FlatGen) struct_decls() {
@@ -665,6 +730,9 @@ fn (mut g FlatGen) intern_string(s string) int {
 }
 
 fn (g &FlatGen) c_type(typ string) string {
+	if typ.starts_with('&') {
+		return g.c_type(typ[1..]) + '*'
+	}
 	return match typ {
 		'int' { 'int' }
 		'i8' { 'i8' }

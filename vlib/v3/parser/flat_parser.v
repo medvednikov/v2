@@ -2073,6 +2073,9 @@ fn (mut p FlatParser) call_args(fn_expr flat.NodeId) flat.NodeId {
 	p.check(.lpar)
 	mut ids := [fn_expr]
 	for p.tok != .rpar && p.tok != .eof {
+		if p.tok == .key_mut || p.tok == .key_shared {
+			p.next()
+		}
 		// vararg spread: ...expr
 		if p.tok == .ellipsis {
 			p.next()
