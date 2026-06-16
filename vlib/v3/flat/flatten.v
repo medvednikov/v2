@@ -77,7 +77,19 @@ fn flatten_stmt(mut a FlatAst, stmt ast.Stmt) NodeId {
 		ast.BlockStmt {
 			return flatten_block(mut a, stmt.stmts)
 		}
+		ast.StructDecl {
+			return flatten_struct_decl(mut a, stmt)
+		}
+		ast.GlobalDecl {
+			return flatten_global_decl(mut a, stmt)
+		}
+		ast.ConstDecl {
+			return empty_node
+		}
 		ast.ImportStmt, ast.ModuleStmt, []ast.Attribute {
+			return empty_node
+		}
+		ast.EnumDecl, ast.TypeDecl, ast.InterfaceDecl {
 			return empty_node
 		}
 		else {
@@ -87,6 +99,13 @@ fn flatten_stmt(mut a FlatAst, stmt ast.Stmt) NodeId {
 }
 
 fn flatten_fn_decl(mut a FlatAst, decl ast.FnDecl) NodeId {
+	if decl.language == .c {
+		return a.add_node(Node{
+			kind:  .c_fn_decl
+			value: decl.name
+			typ:   return_type_name(decl.typ)
+		})
+	}
 	mut ids := []NodeId{}
 
 	for param in decl.typ.params {
@@ -122,7 +141,14 @@ fn flatten_assign(mut a FlatAst, stmt ast.AssignStmt) NodeId {
 		ids << flatten_expr(mut a, lhs)
 		ids << flatten_expr(mut a, stmt.rhs[i])
 	}
-	kind := if stmt.op == .decl_assign { NodeKind.decl_assign } else { NodeKind.assign }
+	mut kind := if stmt.op == .decl_assign {
+		NodeKind.decl_assign
+	} else {
+		NodeKind.assign
+	}
+	if stmt.lhs.len > 0 && unwrap_modifier(stmt.lhs[0]) is ast.SelectorExpr {
+		kind = .selector_assign
+	}
 	start := add_children(mut a, ids)
 	return a.add_node(Node{
 		kind:           kind
@@ -179,6 +205,73 @@ fn flatten_block(mut a FlatAst, stmts []ast.Stmt) NodeId {
 	start := add_children(mut a, ids)
 	return a.add_node(Node{
 		kind:           .block
+		children_start: start
+		children_count: ids.len
+	})
+}
+
+fn flatten_struct_decl(mut a FlatAst, decl ast.StructDecl) NodeId {
+	mut ids := []NodeId{}
+	for field in decl.fields {
+		ids << a.add_node(Node{
+			kind:  .field_decl
+			value: field.name
+			typ:   type_name(field.typ)
+		})
+	}
+	start := add_children(mut a, ids)
+	return a.add_node(Node{
+		kind:           .struct_decl
+		value:          decl.name
+		children_start: start
+		children_count: ids.len
+	})
+}
+
+fn flatten_global_decl(mut a FlatAst, decl ast.GlobalDecl) NodeId {
+	mut ids := []NodeId{}
+	for field in decl.fields {
+		ids << a.add_node(Node{
+			kind:  .field_decl
+			value: field.name
+			typ:   type_name(field.typ)
+		})
+	}
+	start := add_children(mut a, ids)
+	return a.add_node(Node{
+		kind:           .global_decl
+		children_start: start
+		children_count: ids.len
+	})
+}
+
+fn flatten_match(mut a FlatAst, expr ast.MatchExpr) NodeId {
+	match_expr := flatten_expr(mut a, expr.expr)
+	mut ids := []NodeId{cap: expr.branches.len + 1}
+	ids << match_expr
+	for branch in expr.branches {
+		mut branch_ids := []NodeId{}
+		for cond in branch.cond {
+			branch_ids << flatten_expr(mut a, cond)
+		}
+		for stmt in branch.stmts {
+			id := flatten_stmt(mut a, stmt)
+			if int(id) >= 0 {
+				branch_ids << id
+			}
+		}
+		bstart := add_children(mut a, branch_ids)
+		is_else := branch.cond.len == 0 || (branch.cond.len == 1 && branch.cond[0] is ast.Keyword)
+		ids << a.add_node(Node{
+			kind:           .match_branch
+			value:          if is_else { 'else' } else { '' }
+			children_start: bstart
+			children_count: branch_ids.len
+		})
+	}
+	start := add_children(mut a, ids)
+	return a.add_node(Node{
+		kind:           .match_stmt
 		children_start: start
 		children_count: ids.len
 	})
@@ -302,6 +395,28 @@ fn flatten_expr(mut a FlatAst, expr ast.Expr) NodeId {
 				children_start: start
 				children_count: 2
 			})
+		}
+		ast.InitExpr {
+			mut ids := []NodeId{}
+			for field in expr.fields {
+				val := flatten_expr(mut a, field.value)
+				ids << a.add_node(Node{
+					kind:           .field_init
+					value:          field.name
+					children_start: add_children(mut a, [val])
+					children_count: 1
+				})
+			}
+			start := add_children(mut a, ids)
+			return a.add_node(Node{
+				kind:           .struct_init
+				value:          expr.typ.name()
+				children_start: start
+				children_count: ids.len
+			})
+		}
+		ast.MatchExpr {
+			return flatten_match(mut a, expr)
 		}
 		ast.IfExpr {
 			return flatten_if(mut a, expr)

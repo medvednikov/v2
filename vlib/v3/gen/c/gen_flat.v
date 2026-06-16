@@ -3,6 +3,11 @@ module c
 import strings
 import v3.flat
 
+struct StructField {
+	name string
+	typ  string
+}
+
 pub struct FlatGen {
 mut:
 	sb           strings.Builder
@@ -11,6 +16,8 @@ mut:
 	str_lits     []string
 	fn_ret_types map[string]string
 	var_types    map[string]string
+	structs      map[string][]StructField
+	global_types map[string]string
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -28,6 +35,8 @@ pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
 	fn_code := g.sb.str()
 	g.sb = orig_sb
 	g.preamble()
+	g.struct_decls()
+	g.global_decls()
 	g.forward_decls()
 	g.string_literals()
 	g.sb.write_string(fn_code)
@@ -36,8 +45,28 @@ pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
 
 fn (mut g FlatGen) collect() {
 	for node in g.a.nodes {
-		if node.kind == .fn_decl {
-			g.fn_ret_types[node.value] = g.c_type(node.typ)
+		match node.kind {
+			.fn_decl {
+				g.fn_ret_types[node.value] = g.c_type(node.typ)
+			}
+			.struct_decl {
+				mut fields := []StructField{}
+				for i in 0 .. node.children_count {
+					f := g.a.child_node(&node, i)
+					fields << StructField{
+						name: f.value
+						typ:  g.c_type(f.typ)
+					}
+				}
+				g.structs[node.value] = fields
+			}
+			.global_decl {
+				for i in 0 .. node.children_count {
+					f := g.a.child_node(&node, i)
+					g.global_types[f.value] = f.typ
+				}
+			}
+			else {}
 		}
 	}
 }
@@ -118,7 +147,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 		.decl_assign {
 			g.gen_decl_assign(node)
 		}
-		.assign {
+		.assign, .selector_assign {
 			g.gen_assign(node)
 		}
 		.return_stmt {
@@ -350,12 +379,29 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_expr(g.a.child(&node, 1))
 			g.write(']')
 		}
+		.struct_init {
+			g.gen_struct_init(node)
+		}
 		.if_expr {
 			g.gen_if(node)
 		}
 		.empty {}
 		else {}
 	}
+}
+
+fn (mut g FlatGen) gen_struct_init(node flat.Node) {
+	name := c_name(node.value)
+	g.write('(${name}){')
+	for i in 0 .. node.children_count {
+		field := g.a.child_node(&node, i)
+		if i > 0 {
+			g.write(', ')
+		}
+		g.write('.${c_name(field.value)} = ')
+		g.gen_expr(g.a.child(field, 0))
+	}
+	g.write('}')
 }
 
 fn (mut g FlatGen) gen_call(node flat.Node) {
@@ -379,7 +425,16 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			g.write(')')
 		}
 		else {
-			g.gen_expr(g.a.child(&node, 0))
+			if fn_node.kind == .selector {
+				base := g.a.child_node(fn_node, 0)
+				if base.kind == .ident && base.value == 'C' {
+					g.write(fn_node.value)
+				} else {
+					g.gen_expr(g.a.child(&node, 0))
+				}
+			} else {
+				g.gen_expr(g.a.child(&node, 0))
+			}
 			g.write('(')
 			for i in 1 .. node.children_count {
 				if i > 1 {
@@ -435,6 +490,9 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 			if typ := g.var_types[node.value] {
 				return typ
 			}
+			if typ := g.global_types[node.value] {
+				return typ
+			}
 			return 'int'
 		}
 		.call {
@@ -460,6 +518,20 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 		}
 		.paren {
 			return g.infer_type(g.a.child(&node, 0))
+		}
+		.struct_init {
+			return node.value
+		}
+		.selector {
+			base_type := g.infer_type(g.a.child(&node, 0))
+			if fields := g.structs[base_type] {
+				for f in fields {
+					if f.name == node.value {
+						return f.typ
+					}
+				}
+			}
+			return 'int'
 		}
 		else {
 			return 'int'
@@ -559,6 +631,26 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('\treturn (string){s, len};')
 	g.writeln('}')
 	g.writeln('')
+}
+
+fn (mut g FlatGen) struct_decls() {
+	for name, fields in g.structs {
+		g.writeln('typedef struct {')
+		for f in fields {
+			g.writeln('\t${f.typ} ${c_name(f.name)};')
+		}
+		g.writeln('} ${c_name(name)};')
+		g.writeln('')
+	}
+}
+
+fn (mut g FlatGen) global_decls() {
+	for name, typ in g.global_types {
+		g.writeln('${g.c_type(typ)} ${c_name(name)};')
+	}
+	if g.global_types.len > 0 {
+		g.writeln('')
+	}
 }
 
 fn (mut g FlatGen) intern_string(s string) int {

@@ -2,11 +2,10 @@ module main
 
 import os
 import v3.bench
-import v3.flat
 import v3.gen.c as cgen
 import v3.parser
 import v3.pref
-import v3.token
+import v3.transform
 
 fn main() {
 	args := os.args[1..]
@@ -44,20 +43,19 @@ fn main() {
 
 	mut b := bench.new()
 
-	// Parse
+	// Parse directly to flat AST
 	prefs := pref.new_preferences()
-	mut p := parser.Parser.new(prefs)
-	mut file_set := token.FileSet.new()
-	files := p.parse_files([input_file], mut file_set)
+	mut p := parser.FlatParser.new(prefs)
+	mut a := p.parse_file(input_file)
 	b.step('parse')
 
-	// Flatten AST
-	a := flat.flatten(files)
-	b.step('flatten')
+	// Transform (match lowering etc.)
+	transform.transform(mut a)
+	b.step('transform')
 
 	// Generate C
 	mut g := cgen.FlatGen.new()
-	c_code := g.gen(&a)
+	c_code := g.gen(a)
 	b.step('gen C')
 
 	// Write C file

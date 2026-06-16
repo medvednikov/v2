@@ -23,18 +23,27 @@ pub enum NodeKind {
 	selector
 	index
 	if_expr
+	struct_init
+	field_init
 	// statements
 	expr_stmt
 	assign
 	decl_assign
+	selector_assign
 	return_stmt
 	block
 	for_stmt
 	break_stmt
 	continue_stmt
+	match_stmt
+	match_branch
 	// declarations
 	fn_decl
+	struct_decl
+	field_decl
+	global_decl
 	param
+	c_fn_decl
 	// top-level
 	file
 }
