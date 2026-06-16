@@ -8,6 +8,7 @@ pub:
 	typ  string
 }
 
+@[heap]
 pub struct TypeChecker {
 pub mut:
 	a              &flat.FlatAst = unsafe { nil }
@@ -127,7 +128,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 			return node.value
 		}
 		.cast_expr {
-			return tc.c_type(node.value)
+			return node.value
 		}
 		.selector {
 			base_type := tc.resolve_type(tc.a.child(&node, 0))
@@ -168,6 +169,19 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 					return tc.resolve_type(tc.a.child(last, 0))
 				}
 				return tc.resolve_type(tc.a.child(then_block, then_block.children_count - 1))
+			}
+			if node.children_count > 2 {
+				else_node := tc.a.child_node(&node, 2)
+				if else_node.kind == .block && else_node.children_count > 0 {
+					last := tc.a.child_node(else_node, else_node.children_count - 1)
+					if last.kind == .expr_stmt {
+						return tc.resolve_type(tc.a.child(last, 0))
+					}
+					return tc.resolve_type(tc.a.child(else_node, else_node.children_count - 1))
+				}
+				if else_node.kind == .if_expr {
+					return tc.resolve_type(tc.a.child(&node, 2))
+				}
 			}
 			return 'int'
 		}

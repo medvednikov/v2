@@ -32,7 +32,9 @@ pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
 pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) string {
 	g.a = a
 	g.used_fns = used_fns.clone()
-	g.tc = types.TypeChecker.new(a)
+	g.tc.a = a
+	g.tc.file_scope = types.new_scope(unsafe { nil })
+	g.tc.cur_scope = g.tc.file_scope
 	g.collect()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
@@ -312,7 +314,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		rhs := g.a.nodes[int(rhs_id)]
 		if rhs.kind == .array_literal {
 			elem_type := if rhs.children_count > 0 {
-				g.tc.resolve_type(g.a.child(&rhs, 0))
+				g.tc.c_type(g.tc.resolve_type(g.a.child(&rhs, 0)))
 			} else {
 				'int'
 			}
@@ -331,7 +333,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 				g.tc.cur_scope.insert(lhs.value, '${elem_type}[${count}]')
 			}
 		} else {
-			typ := g.tc.resolve_type(rhs_id)
+			typ := g.tc.c_type(g.tc.resolve_type(rhs_id))
 			g.write('${typ} ')
 			g.gen_expr(lhs_id)
 			g.write(' = ')
@@ -445,12 +447,17 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			} else {
 				var_name
 			}
+			elem_type := if container_type.contains('[') {
+				g.tc.c_type(container_type.before('['))
+			} else {
+				'int'
+			}
 			g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${arr_len}; ${idx_var}++) {')
 			g.indent++
-			g.write('int ${elem_var} = ')
+			g.write('${elem_type} ${elem_var} = ')
 			g.gen_expr(g.a.child(&node, 2))
 			g.writeln('[${idx_var}];')
-			g.tc.cur_scope.insert(elem_var, 'int')
+			g.tc.cur_scope.insert(elem_var, elem_type)
 			if has_index {
 				g.tc.cur_scope.insert(var_name, 'int')
 			}
@@ -485,7 +492,7 @@ fn (mut g FlatGen) gen_node_inline(id flat.NodeId) {
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			lhs := g.a.nodes[int(lhs_id)]
-			typ := g.tc.resolve_type(rhs_id)
+			typ := g.tc.c_type(g.tc.resolve_type(rhs_id))
 			g.write('${typ} ')
 			g.gen_expr(lhs_id)
 			g.write(' = ')
@@ -1414,7 +1421,7 @@ fn (mut g FlatGen) global_decls() {
 
 fn (mut g FlatGen) const_decls() {
 	for name, val_id in g.const_vals {
-		typ := g.tc.resolve_type(val_id)
+		typ := g.tc.c_type(g.tc.resolve_type(val_id))
 		if typ == 'string' {
 			g.write('string ${c_name(name)} = ')
 		} else {
