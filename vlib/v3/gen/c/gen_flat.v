@@ -147,7 +147,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 		.decl_assign {
 			g.gen_decl_assign(node)
 		}
-		.assign, .selector_assign {
+		.assign, .selector_assign, .index_assign {
 			g.gen_assign(node)
 		}
 		.return_stmt {
@@ -713,6 +713,12 @@ fn (g &FlatGen) op_str(op flat.Op) string {
 		.minus_assign { '-=' }
 		.mul_assign { '*=' }
 		.div_assign { '/=' }
+		.mod_assign { '%=' }
+		.amp_assign { '&=' }
+		.pipe_assign { '|=' }
+		.xor_assign { '^=' }
+		.left_shift_assign { '<<=' }
+		.right_shift_assign { '>>=' }
 		.inc { '++' }
 		.dec { '--' }
 		.none { '' }

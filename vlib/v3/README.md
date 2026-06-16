@@ -16,14 +16,14 @@ The transformer lowers match statements to if/else chains and collects struct/gl
 
 | Component   | Lines |
 |-------------|-------|
-| flat parser  | 1,116 |
-| C gen       | 743   |
+| flat parser  | 2,822 |
+| C gen       | 749   |
+| flat AST    | 230   |
 | transformer | 205   |
-| flat AST    | 181   |
 | driver      | 79    |
-| **total**   | **2,324** |
+| **total**   | **4,085** |
 
-The old v2 parser alone was 3,991 lines. The entire v3 compiler is smaller than that.
+The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~30% fewer lines thanks to the flat AST representation.
 
 ## Performance
 

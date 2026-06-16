@@ -14,6 +14,7 @@ pub enum NodeKind {
 	bool_literal
 	char_literal
 	string_literal
+	string_interp
 	ident
 	infix
 	prefix
@@ -25,23 +26,65 @@ pub enum NodeKind {
 	if_expr
 	struct_init
 	field_init
+	array_literal
+	array_init
+	map_init
+	fn_literal
+	or_expr
+	cast_expr
+	as_expr
+	enum_val
+	assoc
+	range
+	nil_literal
+	none_expr
+	spawn_expr
+	lock_expr
+	lambda_expr
+	sizeof_expr
+	typeof_expr
+	dump_expr
+	offsetof_expr
+	is_expr
+	in_expr
 	// statements
 	expr_stmt
 	assign
 	decl_assign
 	selector_assign
+	index_assign
 	return_stmt
 	block
 	for_stmt
+	for_in_stmt
 	break_stmt
 	continue_stmt
 	match_stmt
 	match_branch
+	defer_stmt
+	assert_stmt
+	goto_stmt
+	label_stmt
+	select_stmt
+	select_branch
+	comptime_if
+	comptime_for
+	asm_stmt
 	// declarations
 	fn_decl
 	struct_decl
 	field_decl
 	global_decl
+	const_decl
+	const_field
+	enum_decl
+	enum_field
+	type_decl
+	interface_decl
+	interface_field
+	import_decl
+	module_decl
+	directive
 	param
 	c_fn_decl
 	// top-level
@@ -75,6 +118,12 @@ pub enum Op {
 	minus_assign
 	mul_assign
 	div_assign
+	mod_assign
+	amp_assign
+	pipe_assign
+	xor_assign
+	left_shift_assign
+	right_shift_assign
 	inc
 	dec
 }

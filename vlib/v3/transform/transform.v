@@ -181,7 +181,8 @@ fn (t &Transformer) count_conds(branch flat.Node) int {
 	mut count := 0
 	for i in 0 .. branch.children_count {
 		child := t.a.child_node(&branch, i)
-		if child.kind == .int_literal || child.kind == .ident || child.kind == .string_literal {
+		if child.kind == .int_literal || child.kind == .ident || child.kind == .string_literal
+			|| child.kind == .enum_val || child.kind == .bool_literal || child.kind == .char_literal {
 			count++
 		} else {
 			break
