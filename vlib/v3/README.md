@@ -2,7 +2,7 @@
 
 Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a type checker with lexical scoping, a transformer for AST simplification (match lowering), a markused pass for dead-code elimination, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
 
-Imports the actual `vlib/builtin/` V source files for struct/enum/type definitions (string, array, map, etc.), with C runtime functions provided via a built-in preamble. The type checker resolves V types through scope chains and converts them to C types at emission sites.
+Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation. The type checker resolves V types through scope chains and converts them to C types at emission sites.
 
 ## Architecture
 
@@ -16,7 +16,7 @@ source + vlib/builtin → scanner → flat parser → flat AST → transform →
 
 The parser directly emits a flat AST — no recursive AST intermediate, no flatten step. All nodes live in a single `[]Node` array with children as indices into a separate `[]NodeId` array. No pointer chasing, no recursive sum types during code generation.
 
-All `vlib/builtin/*.v` files are parsed first to collect struct, enum, type alias, and interface definitions. The type checker (`types/`) uses lexical scopes with parent chains to resolve V types (`resolve_type`) and convert them to C types (`c_type`) at each emission site. Function bodies from builtins are skipped during C code generation — only type information is used.
+All `vlib/builtin/` files (38 files: both `.v` and `.c.v`) are parsed first to collect struct, enum, type alias, interface, C function, and global definitions. `$if` compile-time conditionals (`$if !no_bounds_checking`, `$if gcboehm_opt ?`, `$if freestanding`, etc.) are resolved inline during parsing — the parser evaluates the condition, parses only the taken branch, and skips the other, so no `comptime_if` AST nodes reach the transformer or backends. The type checker (`types/`) uses lexical scopes with parent chains to resolve V types (`resolve_type`) and convert them to C types (`c_type`) at each emission site. `C.` structs and globals are recognized as extern C types and excluded from code generation. Function bodies from builtins are skipped during C code generation — only type and declaration information is used.
 
 The transformer lowers match statements to if/else chains and collects struct/global type info.
 
@@ -28,9 +28,9 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 
 | Component      | Lines |
 |----------------|-------|
-| flat parser    | 2,949 |
-| C gen (flat)   | 1,638 |
-| type checker   | 285   |
+| flat parser    | 3,034 |
+| C gen (flat)   | 1,650 |
+| type checker   | 290   |
 | scopes         | 32    |
 | C gen (AST)    | 656   |
 | SSA IR+build   | 1,510 |
@@ -46,27 +46,28 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | flatten        | 532   |
 | transformer    | 243   |
 | markused       | 107   |
-| driver         | 137   |
+| driver         | 146   |
 | builtins       | 89    |
+| pref           | 90    |
 | scanner        | 582   |
 | token          | 687   |
-| **total**      | **~14,800** |
+| **total**      | **~14,900** |
 
 The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~27% fewer lines thanks to the flat AST representation.
 
 ## Performance
 
-Compiling `hello world` (`println('hello world')`) with builtin import:
+Compiling `hello world` (`println('hello world')`) with full builtin import (38 files):
 
 | Step      | Time     | RSS      |
 |-----------|----------|----------|
-| parse     | 10.5 ms  | 6,592 KB |
-| transform | 0.6 ms   | 6,752 KB |
-| markused  | 1.4 ms   | 7,136 KB |
-| gen C     | 1.9 ms   | 7,760 KB |
-| write     | 0.2 ms   | 7,760 KB |
-| cc        | 47 ms    | 7,776 KB |
-| **total** | **~90 ms** | **7,776 KB** |
+| parse     | 5.1 ms   | 7,632 KB |
+| transform | 0.3 ms   | 7,888 KB |
+| markused  | 0.9 ms   | 8,528 KB |
+| gen C     | 1.4 ms   | 9,184 KB |
+| write     | 0.1 ms   | 9,184 KB |
+| cc        | 37 ms    | 9,200 KB |
+| **total** | **~60 ms** | **9,200 KB** |
 
 Compiling `test.v` (3,623 lines, 87 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression):
 
@@ -74,17 +75,17 @@ Compiling `test.v` (3,623 lines, 87 test sections: structs, globals, match, recu
 
 | Step      | Time     | RSS      |
 |-----------|----------|----------|
-| parse     | 4.17 ms  | 4,960 KB |
-| transform | 0.20 ms  | 5,008 KB |
-| markused  | 1.85 ms  | 5,728 KB |
-| gen C     | 2.43 ms  | 6,768 KB |
-| write     | 0.15 ms  | 6,784 KB |
-| cc        | 52 ms    | 6,800 KB |
-| **total** | **~69 ms** | **6,800 KB** |
+| parse     | 5.93 ms  | 10,592 KB |
+| transform | 0.46 ms  | 10,688 KB |
+| markused  | 7.54 ms  | 17,696 KB |
+| gen C     | 2.99 ms  | 19,616 KB |
+| write     | 0.27 ms  | 19,616 KB |
+| cc        | 49 ms    | 19,632 KB |
+| **total** | **~81 ms** | **19,632 KB** |
 
-All v3 steps (parse + transform + markused + gen + write) complete in ~15 ms for hello world (including builtin parsing), ~13 ms for test.v (3,623 lines) with C backend.
+All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~17 ms for test.v (3,623 lines) with C backend.
 
-Peak RSS: 7-15 MB.
+Peak RSS: 9-20 MB.
 
 ## Comparison with V1
 
@@ -93,10 +94,10 @@ Frontend-only (parse + check + gen C, no `cc`):
 | Compiler | hello world | test.v (3,623 lines) | Peak RSS (hello) | Peak RSS (test) |
 |----------|------------|----------------------|------------------|-----------------|
 | V1 (0.5.1) | 93 ms | 105 ms | 70 MB | 78 MB |
-| **v3** | **15 ms** | **13 ms** | **8 MB** | **15 MB** |
+| **v3** | **8 ms** | **17 ms** | **9 MB** | **20 MB** |
 
-v3 is **~6-8x faster** and uses **~5-9x less memory** than V1 for frontend compilation.
+v3 is **~6-12x faster** and uses **~4-8x less memory** than V1 for frontend compilation.
 
-v3 parses `vlib/builtin/*.v` files for type definitions (structs, enums, type aliases), but skips `.c.v` files and builtin function bodies — C runtime functions are provided via a compact preamble.
+v3 parses all `vlib/builtin/` files (38 files: `.v` and `.c.v`) for type definitions, C function declarations, and globals. `$if` compile-time conditionals are resolved inline in the parser. Builtin function bodies are skipped during C code generation — C runtime functions are provided via a compact preamble.
 
 Measured on macOS (Apple Silicon), warm runs. V1 built from `~/code/v5/v` (V 0.5.1).
