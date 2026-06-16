@@ -4,10 +4,13 @@ import os
 import v3.bench
 import v3.gen.arm64
 import v3.gen.c as cgen
+import v3.insel
 import v3.markused
+import v3.mir
 import v3.parser
 import v3.pref
 import v3.ssa
+import v3.ssa.optimize
 import v3.transform
 
 fn main() {
@@ -20,6 +23,7 @@ fn main() {
 	mut input_file := ''
 	mut output_file := ''
 	mut backend := 'c'
+	mut is_prod := false
 	mut i := 0
 	for i < args.len {
 		if args[i] == '-o' && i + 1 < args.len {
@@ -28,6 +32,9 @@ fn main() {
 		} else if args[i] == '-b' && i + 1 < args.len {
 			backend = args[i + 1]
 			i += 2
+		} else if args[i] == '-prod' {
+			is_prod = true
+			i++
 		} else {
 			input_file = args[i]
 			i++
@@ -77,8 +84,20 @@ fn main() {
 
 	if backend == 'arm64' {
 		// SSA + ARM64 native backend
-		m := ssa.build_with_used(a, used_fns)
+		mut m := ssa.build_with_used(a, used_fns)
 		b.step('ssa build')
+
+		if is_prod {
+			optimize.optimize(mut m)
+			b.step('optimize')
+
+			mir_mod := mir.lower_from_ssa(m)
+			b.step('mir')
+
+			mut mir_m := mir_mod
+			insel.select_(mut mir_m)
+			b.step('insel')
+		}
 
 		mut g := arm64.Gen.new(m)
 		g.gen()
@@ -98,7 +117,8 @@ fn main() {
 		}
 		b.step('write')
 
-		cc_cmd := 'cc -std=gnu11 -w -o ${bin_file} ${output_file} -lm'
+		opt_flag := if is_prod { '-O2 ' } else { '' }
+		cc_cmd := 'cc -std=gnu11 ${opt_flag}-w -o ${bin_file} ${output_file} -lm'
 		result := os.execute(cc_cmd)
 		if result.exit_code != 0 {
 			eprintln('C compilation failed:')

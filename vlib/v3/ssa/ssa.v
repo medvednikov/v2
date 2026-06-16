@@ -120,6 +120,7 @@ pub mut:
 	typ   TypeID
 	name  string
 	index int
+	uses  []ValueID
 }
 
 pub struct Instruction {
@@ -286,6 +287,28 @@ pub fn (m &Module) type_align(typ_id TypeID) int {
 		return 4
 	}
 	return 1
+}
+
+pub fn (mut m Module) replace_uses(old_id ValueID, new_id ValueID) {
+	if old_id <= 0 || old_id >= m.values.len {
+		return
+	}
+	for user_id in m.values[old_id].uses {
+		if user_id <= 0 || user_id >= m.values.len {
+			continue
+		}
+		val := m.values[user_id]
+		if val.kind != .instruction {
+			continue
+		}
+		mut instr := m.instrs[val.index]
+		for i in 0 .. instr.operands.len {
+			if instr.operands[i] == old_id {
+				instr.operands[i] = new_id
+			}
+		}
+		m.instrs[val.index] = instr
+	}
 }
 
 pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
