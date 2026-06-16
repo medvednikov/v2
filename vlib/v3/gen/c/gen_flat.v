@@ -8,6 +8,36 @@ struct StructField {
 	typ  string
 }
 
+@[heap]
+struct Scope {
+	parent &Scope = unsafe { nil }
+mut:
+	objects map[string]string
+}
+
+fn new_scope(parent &Scope) &Scope {
+	unsafe {
+		return &Scope{parent: parent}
+	}
+}
+
+fn (s &Scope) lookup(name string) ?string {
+	if name.len == 0 {
+		return none
+	}
+	if typ := s.objects[name] {
+		return typ
+	}
+	if s.parent != unsafe { nil } {
+		return s.parent.lookup(name)
+	}
+	return none
+}
+
+fn (mut s Scope) insert(name string, typ string) {
+	s.objects[name] = typ
+}
+
 pub struct FlatGen {
 mut:
 	sb              strings.Builder
@@ -17,7 +47,6 @@ mut:
 	str_lits        []string
 	fn_ret_types    map[string]string
 	fn_param_types  map[string][]string
-	var_types       map[string]string
 	structs         map[string][]StructField
 	global_types    map[string]string
 	enum_vals       map[string]int
@@ -28,12 +57,22 @@ mut:
 	sum_types       map[string][]string
 	interfaces      map[string][]string
 	const_vals      map[string]flat.NodeId
+	file_scope      &Scope = unsafe { nil }
+	cur_scope       &Scope = unsafe { nil }
 }
 
 pub fn FlatGen.new() FlatGen {
 	return FlatGen{
 		sb: strings.new_builder(4096)
 	}
+}
+
+fn (mut g FlatGen) push_scope() {
+	g.cur_scope = new_scope(g.cur_scope)
+}
+
+fn (mut g FlatGen) pop_scope() {
+	g.cur_scope = g.cur_scope.parent
 }
 
 pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
@@ -43,6 +82,8 @@ pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
 pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) string {
 	g.a = a
 	g.used_fns = used_fns.clone()
+	g.file_scope = new_scope(unsafe { nil })
+	g.cur_scope = g.file_scope
 	g.collect()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
@@ -88,6 +129,7 @@ fn (mut g FlatGen) collect() {
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
 					g.global_types[f.value] = f.typ
+					g.file_scope.insert(f.value, g.c_type(f.typ))
 				}
 			}
 			.enum_decl {
@@ -161,12 +203,12 @@ fn (mut g FlatGen) gen_fns() {
 }
 
 fn (mut g FlatGen) gen_fn(node flat.Node) {
-	g.var_types = map[string]string{}
+	g.push_scope()
 	g.defers = []flat.NodeId{}
 	params := g.fn_params_list(node)
 	for p in params {
 		if p.value.len > 0 {
-			g.var_types[p.value] = g.c_type(p.typ)
+			g.cur_scope.insert(p.value, g.c_type(p.typ))
 		}
 	}
 
@@ -193,6 +235,7 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 	g.indent--
 	g.writeln('}')
 	g.writeln('')
+	g.pop_scope()
 }
 
 fn (mut g FlatGen) gen_defers() {
@@ -270,11 +313,13 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 		}
 		.block {
 			g.writeln('{')
+			g.push_scope()
 			g.indent++
 			for i in 0 .. node.children_count {
 				g.gen_node(g.a.child(&node, i))
 			}
 			g.indent--
+			g.pop_scope()
 			g.writeln('}')
 		}
 		.if_expr {
@@ -318,7 +363,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		rhs := g.a.nodes[int(rhs_id)]
 		if rhs.kind == .array_literal {
 			elem_type := if rhs.children_count > 0 {
-				g.infer_type(g.a.child(&rhs, 0))
+				g.resolve_type(g.a.child(&rhs, 0))
 			} else {
 				'int'
 			}
@@ -334,17 +379,17 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			}
 			g.writeln('};')
 			if lhs.kind == .ident {
-				g.var_types[lhs.value] = '${elem_type}[${count}]'
+				g.cur_scope.insert(lhs.value, '${elem_type}[${count}]')
 			}
 		} else {
-			typ := g.infer_type(rhs_id)
+			typ := g.resolve_type(rhs_id)
 			g.write('${typ} ')
 			g.gen_expr(lhs_id)
 			g.write(' = ')
 			g.gen_expr(rhs_id)
 			g.writeln(';')
 			if lhs.kind == .ident {
-				g.var_types[lhs.value] = typ
+				g.cur_scope.insert(lhs.value, typ)
 			}
 		}
 		i += 2
@@ -370,6 +415,7 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 }
 
 fn (mut g FlatGen) gen_for(node flat.Node) {
+	g.push_scope()
 	init_node := g.a.child_node(&node, 0)
 	cond_id := g.a.child(&node, 1)
 	cond_node := g.a.nodes[int(cond_id)]
@@ -402,9 +448,11 @@ fn (mut g FlatGen) gen_for(node flat.Node) {
 	}
 	g.indent--
 	g.writeln('}')
+	g.pop_scope()
 }
 
 fn (mut g FlatGen) gen_for_in(node flat.Node) {
+	g.push_scope()
 	header_count := node.value.int()
 	val_id := g.a.child(&node, 1)
 	var_node := if int(val_id) >= 0 {
@@ -413,7 +461,7 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 		g.a.child_node(&node, 0)
 	}
 	var_name := c_name(var_node.value)
-	g.var_types[var_node.value] = 'int'
+	g.cur_scope.insert(var_node.value, 'int')
 	body_start := header_count
 
 	if header_count == 4 {
@@ -431,7 +479,7 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			g.gen_expr(g.a.child(container, 1))
 			g.writeln('; ${var_name}++) {')
 		} else {
-			container_type := g.infer_type(g.a.child(&node, 2))
+			container_type := g.resolve_type(g.a.child(&node, 2))
 			arr_len := if container_type.contains('[') {
 				container_type.after('[').before(']')
 			} else {
@@ -453,18 +501,20 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			g.write('int ${elem_var} = ')
 			g.gen_expr(g.a.child(&node, 2))
 			g.writeln('[${idx_var}];')
-			g.var_types[elem_var] = 'int'
+			g.cur_scope.insert(elem_var, 'int')
 			if has_index {
-				g.var_types[var_name] = 'int'
+				g.cur_scope.insert(var_name, 'int')
 			}
 			for i in body_start .. node.children_count {
 				g.gen_node(g.a.child(&node, i))
 			}
 			g.indent--
 			g.writeln('}')
+			g.pop_scope()
 			return
 		}
 	} else {
+		g.pop_scope()
 		return
 	}
 	g.indent++
@@ -473,6 +523,7 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 	}
 	g.indent--
 	g.writeln('}')
+	g.pop_scope()
 }
 
 fn (mut g FlatGen) gen_node_inline(id flat.NodeId) {
@@ -484,11 +535,15 @@ fn (mut g FlatGen) gen_node_inline(id flat.NodeId) {
 		.decl_assign {
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
-			typ := g.infer_type(rhs_id)
+			lhs := g.a.nodes[int(lhs_id)]
+			typ := g.resolve_type(rhs_id)
 			g.write('${typ} ')
 			g.gen_expr(lhs_id)
 			g.write(' = ')
 			g.gen_expr(rhs_id)
+			if lhs.kind == .ident {
+				g.cur_scope.insert(lhs.value, typ)
+			}
 		}
 		.assign {
 			g.gen_expr(g.a.child(&node, 0))
@@ -508,12 +563,14 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	} else {
 		g.writeln('{')
 	}
+	g.push_scope()
 	g.indent++
 	then_block := g.a.child_node(&node, 1)
 	for i in 0 .. then_block.children_count {
 		g.gen_node(g.a.child(then_block, i))
 	}
 	g.indent--
+	g.pop_scope()
 	if node.children_count > 2 {
 		else_node := g.a.child_node(&node, 2)
 		if else_node.kind == .if_expr {
@@ -521,11 +578,13 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 			g.gen_if(*else_node)
 		} else if else_node.kind == .block {
 			g.writeln('} else {')
+			g.push_scope()
 			g.indent++
 			for i in 0 .. else_node.children_count {
 				g.gen_node(g.a.child(else_node, i))
 			}
 			g.indent--
+			g.pop_scope()
 			g.writeln('}')
 		} else {
 			g.writeln('}')
@@ -537,7 +596,7 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 
 fn (mut g FlatGen) gen_match(node flat.Node) {
 	match_expr_id := g.a.child(&node, 0)
-	match_type := g.infer_type(match_expr_id)
+	match_type := g.resolve_type(match_expr_id)
 	is_sum := match_type in g.sum_types || match_type.trim_right('*') in g.sum_types
 	clean_type := match_type.trim_right('*')
 
@@ -582,11 +641,13 @@ fn (mut g FlatGen) gen_match(node flat.Node) {
 			}
 			g.writeln(') {')
 		}
+		g.push_scope()
 		g.indent++
 		for j in body_start .. branch.children_count {
 			g.gen_node(g.a.child(branch, j))
 		}
 		g.indent--
+		g.pop_scope()
 	}
 	g.writeln('}')
 }
@@ -739,7 +800,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					g.write('0')
 				}
 			} else if node.value == 'len' && base.kind == .ident {
-				base_type := g.var_types[base.value] or { '' }
+				base_type := g.cur_scope.lookup(base.value) or { '' }
 				if base_type.contains('[') {
 					arr_len := base_type.after('[').before(']')
 					g.write(arr_len)
@@ -753,7 +814,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			} else {
 				mut is_ptr := false
 				if base.kind == .ident {
-					if typ := g.var_types[base.value] {
+					if typ := g.cur_scope.lookup(base.value) {
 						is_ptr = typ.ends_with('*')
 					}
 				}
@@ -838,7 +899,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			g.write('(')
 			if node.children_count > 1 {
 				arg_id := g.a.child(&node, 1)
-				arg_type := g.infer_type(arg_id)
+				arg_type := g.resolve_type(arg_id)
 				if arg_type == 'string' {
 					g.gen_expr(arg_id)
 				} else {
@@ -861,7 +922,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					g.gen_flag_enum_call(node)
 					return
 				} else {
-					base_type := g.infer_type(g.a.child(fn_node, 0))
+					base_type := g.resolve_type(g.a.child(fn_node, 0))
 					clean_type := base_type.trim_left('&').trim_right('*')
 					method_name = '${clean_type}.${fn_node.value}'
 					if method_name in g.fn_param_types {
@@ -880,7 +941,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			param_types := g.fn_param_types[actual_fn]
 			mut arg_start := 1
 			if is_method {
-				base_type := g.infer_type(base_id)
+				base_type := g.resolve_type(base_id)
 				is_ptr_base := base_type.ends_with('*')
 				wants_ptr := param_types.len > 0 && param_types[0].ends_with('*')
 				if wants_ptr && !is_ptr_base {
@@ -914,7 +975,7 @@ fn (g &FlatGen) is_flag_enum_method(fn_node &flat.Node) bool {
 	if method !in ['has', 'all', 'set', 'clear'] {
 		return false
 	}
-	base_type := g.infer_type(g.a.child(fn_node, 0))
+	base_type := g.resolve_type(g.a.child(fn_node, 0))
 	clean := base_type.trim_left('&').trim_right('*')
 	return clean == 'int' || clean in g.flag_enums || clean in g.enum_names
 }
@@ -983,7 +1044,7 @@ fn (mut g FlatGen) gen_string_interp(node flat.Node) {
 			sid := g.intern_string(child.value)
 			g.write('_str_${sid}')
 		} else {
-			typ := g.infer_type(child_id)
+			typ := g.resolve_type(child_id)
 			if typ == 'string' {
 				g.gen_expr(child_id)
 			} else {
@@ -996,7 +1057,7 @@ fn (mut g FlatGen) gen_string_interp(node flat.Node) {
 	g.write('})')
 }
 
-fn (g &FlatGen) infer_type(id flat.NodeId) string {
+fn (g &FlatGen) resolve_type(id flat.NodeId) string {
 	if int(id) < 0 {
 		return 'int'
 	}
@@ -1017,11 +1078,17 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 		.string_literal, .string_interp {
 			return 'string'
 		}
+		.nil_literal {
+			return 'void*'
+		}
+		.none_expr {
+			return 'Optional'
+		}
+		.enum_val {
+			return 'int'
+		}
 		.ident {
-			if typ := g.var_types[node.value] {
-				return typ
-			}
-			if typ := g.global_types[node.value] {
+			if typ := g.cur_scope.lookup(node.value) {
 				return typ
 			}
 			return 'int'
@@ -1029,7 +1096,7 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 		.call {
 			fn_node := g.a.child_node(&node, 0)
 			if fn_node.kind == .selector {
-				base_type := g.infer_type(g.a.child(fn_node, 0))
+				base_type := g.resolve_type(g.a.child(fn_node, 0))
 				clean_type := base_type.trim_left('&').trim_right('*')
 				mname := '${clean_type}.${fn_node.value}'
 				if ret := g.fn_ret_types[mname] {
@@ -1042,30 +1109,46 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 			return 'int'
 		}
 		.infix {
-			lt := g.infer_type(g.a.child(&node, 0))
+			if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .logical_and, .logical_or] {
+				return 'bool'
+			}
+			lt := g.resolve_type(g.a.child(&node, 0))
 			if lt == 'string' {
 				return 'string'
 			}
-			rt := g.infer_type(g.a.child(&node, 1))
+			rt := g.resolve_type(g.a.child(&node, 1))
 			if rt == 'string' {
 				return 'string'
+			}
+			if lt == 'double' || rt == 'double' {
+				return 'double'
 			}
 			return lt
 		}
 		.prefix {
 			if node.op == .amp {
-				return g.infer_type(g.a.child(&node, 0)) + '*'
+				return g.resolve_type(g.a.child(&node, 0)) + '*'
 			}
-			return g.infer_type(g.a.child(&node, 0))
+			if node.op == .mul {
+				inner := g.resolve_type(g.a.child(&node, 0))
+				if inner.ends_with('*') {
+					return inner[..inner.len - 1]
+				}
+				return inner
+			}
+			return g.resolve_type(g.a.child(&node, 0))
 		}
 		.paren {
-			return g.infer_type(g.a.child(&node, 0))
+			return g.resolve_type(g.a.child(&node, 0))
 		}
 		.struct_init {
 			return node.value
 		}
+		.cast_expr {
+			return g.c_type(node.value)
+		}
 		.selector {
-			base_type := g.infer_type(g.a.child(&node, 0))
+			base_type := g.resolve_type(g.a.child(&node, 0))
 			clean_base := base_type.trim_right('*')
 			if node.value == 'len' {
 				if base_type.contains('[') || clean_base == 'string' {
@@ -1083,15 +1166,26 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 		}
 		.array_literal {
 			if node.children_count > 0 {
-				elem_type := g.infer_type(g.a.child(&node, 0))
+				elem_type := g.resolve_type(g.a.child(&node, 0))
 				return '${elem_type}[${node.children_count}]'
 			}
 			return 'int[0]'
 		}
 		.index {
-			base_type := g.infer_type(g.a.child(&node, 0))
+			base_type := g.resolve_type(g.a.child(&node, 0))
 			if base_type.contains('[') {
 				return base_type.before('[')
+			}
+			return 'int'
+		}
+		.if_expr {
+			then_block := g.a.child_node(&node, 1)
+			if then_block.children_count > 0 {
+				last := g.a.child_node(then_block, then_block.children_count - 1)
+				if last.kind == .expr_stmt {
+					return g.resolve_type(g.a.child(last, 0))
+				}
+				return g.resolve_type(g.a.child(then_block, then_block.children_count - 1))
 			}
 			return 'int'
 		}
@@ -1102,7 +1196,7 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 }
 
 fn (g &FlatGen) is_string_node(id flat.NodeId) bool {
-	return g.infer_type(id) == 'string'
+	return g.resolve_type(id) == 'string'
 }
 
 fn (mut g FlatGen) forward_decls() {
@@ -1509,7 +1603,7 @@ fn (mut g FlatGen) global_decls() {
 
 fn (mut g FlatGen) const_decls() {
 	for name, val_id in g.const_vals {
-		typ := g.infer_type(val_id)
+		typ := g.resolve_type(val_id)
 		if typ == 'string' {
 			g.write('string ${c_name(name)} = ')
 		} else {
