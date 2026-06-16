@@ -178,6 +178,9 @@ fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.N
 }
 
 fn (t &Transformer) count_conds(branch flat.Node) int {
+	if branch.value.len > 0 && branch.value != 'else' {
+		return branch.value.int()
+	}
 	mut count := 0
 	for i in 0 .. branch.children_count {
 		child := t.a.child_node(&branch, i)

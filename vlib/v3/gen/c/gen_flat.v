@@ -204,7 +204,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 }
 
 fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
-	i := 0
+	mut i := 0
 	for i < node.children_count {
 		lhs_id := g.a.child(&node, i)
 		rhs_id := g.a.child(&node, i + 1)
@@ -218,9 +218,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		if lhs.kind == .ident {
 			g.var_types[lhs.value] = typ
 		}
-		unsafe {
-			i += 2
-		}
+		i += 2
 	}
 }
 
@@ -346,12 +344,11 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write(node.value)
 		}
 		.string_literal {
-			if node.value == '_interp' {
-				g.gen_string_interp(node)
-			} else {
-				sid := g.intern_string(node.value)
-				g.write('_str_${sid}')
-			}
+			sid := g.intern_string(node.value)
+			g.write('_str_${sid}')
+		}
+		.string_interp {
+			g.gen_string_interp(node)
 		}
 		.ident {
 			g.write(c_name(node.value))
@@ -416,11 +413,19 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_expr(g.a.child(&node, 1))
 			g.write(']')
 		}
+		.cast_expr {
+			g.write('(${g.c_type(node.value)})(')
+			g.gen_expr(g.a.child(&node, 0))
+			g.write(')')
+		}
 		.struct_init {
 			g.gen_struct_init(node)
 		}
 		.if_expr {
 			g.gen_if(node)
+		}
+		.nil_literal {
+			g.write('NULL')
 		}
 		.empty {}
 		else {}
@@ -504,21 +509,34 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 }
 
 fn (mut g FlatGen) gen_string_interp(node flat.Node) {
-	for i in 0 .. node.children_count {
-		child_id := g.a.child(&node, i)
-		child := g.a.nodes[int(child_id)]
+	n := node.children_count
+	if n == 0 {
+		sid := g.intern_string('')
+		g.write('_str_${sid}')
+		return
+	}
+	g.write('string_plus_many(${n}, (string[${n}]){')
+	for i in 0 .. n {
 		if i > 0 {
 			g.write(', ')
 		}
+		child_id := g.a.child(&node, i)
+		child := g.a.nodes[int(child_id)]
 		if child.kind == .string_literal {
 			sid := g.intern_string(child.value)
 			g.write('_str_${sid}')
 		} else {
-			g.write('int_str(')
-			g.gen_expr(child_id)
-			g.write(')')
+			typ := g.infer_type(child_id)
+			if typ == 'string' {
+				g.gen_expr(child_id)
+			} else {
+				g.write('int_str(')
+				g.gen_expr(child_id)
+				g.write(')')
+			}
 		}
 	}
+	g.write('})')
 }
 
 fn (g &FlatGen) infer_type(id flat.NodeId) string {
@@ -539,7 +557,7 @@ fn (g &FlatGen) infer_type(id flat.NodeId) string {
 		.char_literal {
 			return 'u8'
 		}
-		.string_literal {
+		.string_literal, .string_interp {
 			return 'string'
 		}
 		.ident {
@@ -694,6 +712,19 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('\tvoid* p = malloc(sz);')
 	g.writeln('\tmemcpy(p, src, sz);')
 	g.writeln('\treturn p;')
+	g.writeln('}')
+	g.writeln('')
+	g.writeln('string string_plus_many(int count, string* parts) {')
+	g.writeln('\tint len = 0;')
+	g.writeln('\tfor (int i = 0; i < count; i++) len += parts[i].len;')
+	g.writeln('\tchar* s = malloc(len + 1);')
+	g.writeln('\tint off = 0;')
+	g.writeln('\tfor (int i = 0; i < count; i++) {')
+	g.writeln('\t\tmemcpy(s + off, parts[i].str, parts[i].len);')
+	g.writeln('\t\toff += parts[i].len;')
+	g.writeln('\t}')
+	g.writeln('\ts[len] = 0;')
+	g.writeln('\treturn (string){s, len};')
 	g.writeln('}')
 	g.writeln('')
 }

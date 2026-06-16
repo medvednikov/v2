@@ -210,7 +210,7 @@ fn (mut p FlatParser) fn_decl() flat.NodeId {
 		// operator overload: fn (r Type) + (other Type) RetType { }
 		if p.tok != .name && p.tok != .eof {
 			if p.tok.is_overloadable() {
-				op_name := p.lit
+				op_name := p.tok.str()
 				p.next()
 				return p.fn_operator_overload(receiver_name, receiver_type, op_name)
 			}
@@ -323,7 +323,7 @@ fn (mut p FlatParser) fn_decl_body(name string, receiver_name string, receiver_t
 	// params
 	p.check(.lpar)
 	mut param_ids := []flat.NodeId{}
-	if is_method {
+	if is_method && receiver_name.len > 0 {
 		param_ids << p.a.add_node(flat.Node{
 			kind:  .param
 			value: receiver_name
@@ -1477,15 +1477,18 @@ fn (mut p FlatParser) match_stmt() flat.NodeId {
 fn (mut p FlatParser) match_branch() flat.NodeId {
 	mut branch_ids := []flat.NodeId{}
 	mut is_else := false
+	mut n_conds := 0
 
 	if p.tok == .key_else {
 		is_else = true
 		p.next()
 	} else {
 		branch_ids << p.expr(.lowest)
+		n_conds = 1
 		for p.tok == .comma {
 			p.next()
 			branch_ids << p.expr(.lowest)
+			n_conds++
 		}
 	}
 
@@ -1501,7 +1504,7 @@ fn (mut p FlatParser) match_branch() flat.NodeId {
 	bstart := p.add_children(branch_ids)
 	return p.a.add_node(flat.Node{
 		kind:           .match_branch
-		value:          if is_else { 'else' } else { '' }
+		value:          if is_else { 'else' } else { '${n_conds}' }
 		children_start: bstart
 		children_count: branch_ids.len
 	})
@@ -1554,12 +1557,12 @@ fn (mut p FlatParser) assign_or_expr_stmt() flat.NodeId {
 			if p.tok == .semicolon {
 				p.next()
 			}
-			mut all_ids := []flat.NodeId{cap: lhs_ids.len + rhs_ids.len}
-			for id in lhs_ids {
-				all_ids << id
-			}
-			for id in rhs_ids {
-				all_ids << id
+			mut all_ids := []flat.NodeId{cap: lhs_ids.len * 2}
+			for i in 0 .. lhs_ids.len {
+				all_ids << lhs_ids[i]
+				if i < rhs_ids.len {
+					all_ids << rhs_ids[i]
+				}
 			}
 			istart := p.add_children(all_ids)
 			return p.a.add_node(flat.Node{
@@ -1775,6 +1778,9 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 		}
 		// range: expr .. expr
 		if p.tok == .dotdot {
+			if int(min_bp) > int(token.BindingPower.lowest) {
+				break
+			}
 			p.next()
 			rhs := p.expr(.lowest)
 			rstart := p.add_children([lhs, rhs])
@@ -1785,24 +1791,15 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 			})
 			continue
 		}
-		// `is` / `!is` type check
-		if p.tok == .key_is {
+		// `is` / `!is` / `not_is` type check
+		if p.tok == .key_is || p.tok == .not_is {
+			is_negated := p.tok == .not_is
 			p.next()
+			bp := token.Token.key_is.left_binding_power()
+			if int(bp) < int(min_bp) {
+				break
+			}
 			type_name := p.parse_type_name()
-			istart := p.add_children([lhs])
-			lhs = p.a.add_node(flat.Node{
-				kind:           .is_expr
-				value:          type_name
-				children_start: istart
-				children_count: 1
-			})
-			continue
-		}
-		if p.tok == .not && p.peek() == .key_is {
-			p.next() // skip !
-			p.next() // skip is
-			type_name := p.parse_type_name()
-			// !is → is with negation flag
 			istart := p.add_children([lhs])
 			is_node := p.a.add_node(flat.Node{
 				kind:           .is_expr
@@ -1810,7 +1807,34 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 				children_start: istart
 				children_count: 1
 			})
-			// wrap in prefix !
+			if is_negated {
+				nstart := p.add_children([is_node])
+				lhs = p.a.add_node(flat.Node{
+					kind:           .prefix
+					op:             .not
+					children_start: nstart
+					children_count: 1
+				})
+			} else {
+				lhs = is_node
+			}
+			continue
+		}
+		if p.tok == .not && p.peek() == .key_is {
+			bp := token.Token.key_is.left_binding_power()
+			if int(bp) < int(min_bp) {
+				break
+			}
+			p.next() // skip !
+			p.next() // skip is
+			type_name := p.parse_type_name()
+			istart := p.add_children([lhs])
+			is_node := p.a.add_node(flat.Node{
+				kind:           .is_expr
+				value:          type_name
+				children_start: istart
+				children_count: 1
+			})
 			nstart := p.add_children([is_node])
 			lhs = p.a.add_node(flat.Node{
 				kind:           .prefix
@@ -1820,22 +1844,42 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 			})
 			continue
 		}
-		// `in` / `!in`
-		if p.tok == .key_in {
+		// `in` / `!in` / `not_in`
+		if p.tok == .key_in || p.tok == .not_in {
+			is_negated := p.tok == .not_in
+			bp := token.Token.key_in.left_binding_power()
+			if int(bp) < int(min_bp) {
+				break
+			}
 			p.next()
-			rhs := p.expr(.lowest)
+			rhs := p.expr(token.Token.key_in.right_binding_power())
 			istart := p.add_children([lhs, rhs])
-			lhs = p.a.add_node(flat.Node{
+			in_node := p.a.add_node(flat.Node{
 				kind:           .in_expr
 				children_start: istart
 				children_count: 2
 			})
+			if is_negated {
+				nstart := p.add_children([in_node])
+				lhs = p.a.add_node(flat.Node{
+					kind:           .prefix
+					op:             .not
+					children_start: nstart
+					children_count: 1
+				})
+			} else {
+				lhs = in_node
+			}
 			continue
 		}
 		if p.tok == .not && p.peek() == .key_in {
+			bp := token.Token.key_in.left_binding_power()
+			if int(bp) < int(min_bp) {
+				break
+			}
 			p.next() // skip !
 			p.next() // skip in
-			rhs := p.expr(.lowest)
+			rhs := p.expr(token.Token.key_in.right_binding_power())
 			istart := p.add_children([lhs, rhs])
 			in_node := p.a.add_node(flat.Node{
 				kind:           .in_expr
@@ -1917,9 +1961,9 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 			if p.tok == .lcbr && name.len > 0 && name[0] >= `A` && name[0] <= `Z` {
 				return p.struct_init(name)
 			}
-			// type cast: TypeName(expr) — only for uppercase names
-			if p.tok == .lpar && name.len > 0 && name[0] >= `A` && name[0] <= `Z` {
-				// Could be cast or function call. Uppercase implies type cast.
+			// type cast: TypeName(expr) or builtin_type(expr)
+			if p.tok == .lpar && name.len > 0 && ((name[0] >= `A` && name[0] <= `Z`)
+				|| is_builtin_type(name)) {
 				p.next() // skip (
 				inner := p.expr(.lowest)
 				p.check(.rpar)
@@ -1930,12 +1974,6 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 					children_start: cstart
 					children_count: 1
 				})
-			}
-			// map type: map[K]V — when in expression context (for map init)
-			if name == 'map' && p.tok == .lsbr {
-				// skip the type and look for init
-				// Actually this would be a map type, not an expression
-				// Just return as ident; the type system handles it
 			}
 			return p.a.add_val(.ident, name)
 		}
@@ -2153,7 +2191,28 @@ fn (mut p FlatParser) call_args(fn_expr flat.NodeId) flat.NodeId {
 
 fn (mut p FlatParser) index_expr(lhs flat.NodeId) flat.NodeId {
 	p.check(.lsbr)
-	idx := p.expr(.lowest)
+	// range index: arr[..b]
+	if p.tok == .dotdot {
+		p.next()
+		mut end_id := flat.empty_node
+		if p.tok != .rsbr {
+			end_id = p.expr(.lowest)
+		}
+		p.check(.rsbr)
+		start_id := p.a.add(flat.NodeKind.empty)
+		mut ids := [lhs, start_id]
+		if int(end_id) >= 0 {
+			ids << end_id
+		}
+		istart := p.add_children(ids)
+		return p.a.add_node(flat.Node{
+			kind:           .index
+			value:          'range'
+			children_start: istart
+			children_count: ids.len
+		})
+	}
+	idx := p.expr(.logical_or)
 	// range index: arr[a..b]
 	if p.tok == .dotdot {
 		p.next()
@@ -2785,7 +2844,18 @@ fn strip_quotes(s string) string {
 	if s.len >= 2 && ((s[0] == `'` && s[s.len - 1] == `'`) || (s[0] == `"` && s[s.len - 1] == `"`)) {
 		return s[1..s.len - 1]
 	}
+	if s.len >= 1 && (s[0] == `'` || s[0] == `"`) {
+		return s[1..]
+	}
+	if s.len >= 1 && (s[s.len - 1] == `'` || s[s.len - 1] == `"`) {
+		return s[..s.len - 1]
+	}
 	return s
+}
+
+fn is_builtin_type(name string) bool {
+	return name in ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64',
+		'byte', 'bool', 'string', 'rune', 'voidptr', 'charptr', 'usize', 'isize']
 }
 
 fn token_to_op(tok token.Token) flat.Op {
