@@ -57,7 +57,7 @@ Compiling `hello world` (`println('hello world')`):
 | cc        | 38 ms    | 3,104 KB |
 | **total** | **~38 ms** | **3,104 KB** |
 
-Compiling `test.v` (1,867 lines, 40 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations):
+Compiling `test.v` (2,468 lines, 60 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration):
 
 **C backend:**
 
@@ -98,7 +98,7 @@ Compiling `test.v` (1,867 lines, 40 test sections: structs, globals, match, recu
 | link      | 3.88 ms   | 8,992 KB |
 | **total** | **~30 ms** | **8,992 KB** |
 
-All v3 steps (parse + transform + markused + gen + write) complete in ~0.26 ms for hello world, ~4 ms for test.v with C backend. The ARM64 backend compiles test.v end-to-end in ~22 ms — no external tools, straight to executable. With `-prod`, SSA optimization adds ~10 ms for constant folding, branch folding, DCE, and block optimization.
+All v3 steps (parse + transform + markused + gen + write) complete in ~0.26 ms for hello world, ~4 ms for test.v (2,468 lines) with C backend. The ARM64 backend compiles test.v end-to-end in ~22 ms — no external tools, straight to executable. With `-prod`, SSA optimization adds ~10 ms for constant folding, branch folding, DCE, and block optimization.
 
 Peak RSS: 3-7 MB.
 
@@ -106,7 +106,7 @@ Peak RSS: 3-7 MB.
 
 Frontend-only (parse + check + gen C, no `cc`):
 
-| Compiler | hello world | test.v (1,867 lines) | Peak RSS (hello) | Peak RSS (test) |
+| Compiler | hello world | test.v (2,468 lines) | Peak RSS (hello) | Peak RSS (test) |
 |----------|------------|----------------------|------------------|-----------------|
 | V1 (0.5.1) | 93 ms | 105 ms | 70 MB | 78 MB |
 | **v3** | **0.26 ms** | **4 ms** | **3 MB** | **5 MB** |

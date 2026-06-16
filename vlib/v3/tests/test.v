@@ -19,10 +19,13 @@ mut:
 }
 
 __global (
-	g_val   int
-	g_count int
-	g_flag  bool
-	g_point Point
+	g_val    int
+	g_count  int
+	g_flag   bool
+	g_point  Point
+	g_vec    Vec3
+	g_acc    int
+	g_toggle bool
 )
 
 // ===================== HELPER FUNCTIONS =====================
@@ -146,6 +149,35 @@ mut:
 	g int
 	b int
 	a int
+}
+
+struct Vec3 {
+mut:
+	x int
+	y int
+	z int
+}
+
+struct Matrix2x2 {
+mut:
+	a int
+	b int
+	c int
+	d int
+}
+
+struct LinkedNode {
+mut:
+	val  int
+	next int
+}
+
+struct Stats {
+mut:
+	min_v int
+	max_v int
+	sum   int
+	count int
 }
 
 fn make_point(px int, py int) Point {
@@ -298,6 +330,227 @@ fn translate_point(mut p Point, dx int, dy int) {
 fn reset_point(mut p Point) {
 	p.x = 0
 	p.y = 0
+}
+
+fn vec3_dot(a Vec3, b Vec3) int {
+	return a.x * b.x + a.y * b.y + a.z * b.z
+}
+
+fn vec3_cross_z(a Vec3, b Vec3) int {
+	return a.x * b.y - a.y * b.x
+}
+
+fn vec3_len_sq(v Vec3) int {
+	return v.x * v.x + v.y * v.y + v.z * v.z
+}
+
+fn vec3_add(a Vec3, b Vec3) Vec3 {
+	return Vec3{x: a.x + b.x, y: a.y + b.y, z: a.z + b.z}
+}
+
+fn vec3_scale(v Vec3, s int) Vec3 {
+	return Vec3{x: v.x * s, y: v.y * s, z: v.z * s}
+}
+
+fn mat_det(m Matrix2x2) int {
+	return m.a * m.d - m.b * m.c
+}
+
+fn mat_mul(m Matrix2x2, n Matrix2x2) Matrix2x2 {
+	return Matrix2x2{
+		a: m.a * n.a + m.b * n.c
+		b: m.a * n.b + m.b * n.d
+		c: m.c * n.a + m.d * n.c
+		d: m.c * n.b + m.d * n.d
+	}
+}
+
+fn mat_trace(m Matrix2x2) int {
+	return m.a + m.d
+}
+
+fn is_prime(n int) bool {
+	if n < 2 {
+		return false
+	}
+	mut i := 2
+	for i * i <= n {
+		if n % i == 0 {
+			return false
+		}
+		i++
+	}
+	return true
+}
+
+fn isqrt(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	mut x := n
+	mut y := (x + 1) / 2
+	for y < x {
+		x = y
+		y = (x + n / x) / 2
+	}
+	return x
+}
+
+fn reverse_int(n int) int {
+	mut v := n
+	mut neg := false
+	if v < 0 {
+		neg = true
+		v = 0 - v
+	}
+	mut result := 0
+	for v > 0 {
+		result = result * 10 + v % 10
+		v = v / 10
+	}
+	if neg {
+		return 0 - result
+	}
+	return result
+}
+
+fn count_digits(n int) int {
+	if n == 0 {
+		return 1
+	}
+	mut v := n
+	if v < 0 {
+		v = 0 - v
+	}
+	mut count := 0
+	for v > 0 {
+		count++
+		v = v / 10
+	}
+	return count
+}
+
+fn is_palindrome_num(n int) bool {
+	if n < 0 {
+		return false
+	}
+	return n == reverse_int(n)
+}
+
+fn update_stats(mut s Stats, val int) {
+	if s.count == 0 || val < s.min_v {
+		s.min_v = val
+	}
+	if s.count == 0 || val > s.max_v {
+		s.max_v = val
+	}
+	s.sum += val
+	s.count++
+}
+
+fn binary_search_step(target int, lo int, hi int, a0 int, a1 int, a2 int, a3 int, a4 int) int {
+	if lo > hi {
+		return 0 - 1
+	}
+	mid := (lo + hi) / 2
+	mut mid_val := 0
+	if mid == 0 { mid_val = a0 }
+	else if mid == 1 { mid_val = a1 }
+	else if mid == 2 { mid_val = a2 }
+	else if mid == 3 { mid_val = a3 }
+	else { mid_val = a4 }
+
+	if mid_val == target {
+		return mid
+	} else if mid_val < target {
+		return binary_search_step(target, mid + 1, hi, a0, a1, a2, a3, a4)
+	}
+	return binary_search_step(target, lo, mid - 1, a0, a1, a2, a3, a4)
+}
+
+fn ackermann(m int, n int) int {
+	if m == 0 {
+		return n + 1
+	}
+	if n == 0 {
+		return ackermann(m - 1, 1)
+	}
+	return ackermann(m - 1, ackermann(m, n - 1))
+}
+
+fn triangle_area_2x(x1 int, y1 int, x2 int, y2 int, x3 int, y3 int) int {
+	area := x1 * (y2 - y3) + x2 * (y3 - y1) + x3 * (y1 - y2)
+	if area < 0 {
+		return 0 - area
+	}
+	return area
+}
+
+fn rotate_point_90(p Point) Point {
+	return Point{x: 0 - p.y, y: p.x}
+}
+
+fn manhattan_dist(a Point, b Point) int {
+	mut dx := a.x - b.x
+	mut dy := a.y - b.y
+	if dx < 0 {
+		dx = 0 - dx
+	}
+	if dy < 0 {
+		dy = 0 - dy
+	}
+	return dx + dy
+}
+
+fn digital_root(n int) int {
+	mut v := n
+	if v < 0 {
+		v = 0 - v
+	}
+	for v >= 10 {
+		v = sum_digits(v)
+	}
+	return v
+}
+
+fn lerp(a int, b int, t_num int, t_den int) int {
+	return a + (b - a) * t_num / t_den
+}
+
+fn sign(n int) int {
+	if n > 0 {
+		return 1
+	} else if n < 0 {
+		return 0 - 1
+	}
+	return 0
+}
+
+fn popcount_loop(n int) int {
+	mut v := n
+	mut c := 0
+	for v != 0 {
+		v = v & (v - 1)
+		c++
+	}
+	return c
+}
+
+fn leading_zeros(n int) int {
+	if n == 0 {
+		return 32
+	}
+	mut v := n
+	mut count := 0
+	mut mask := 1 << 30
+	for mask > 0 {
+		if (v & mask) != 0 {
+			return count
+		}
+		count++
+		mask = mask >> 1
+	}
+	return count
 }
 
 // ===================== MAIN TEST FUNCTION =====================
@@ -1863,5 +2116,353 @@ fn main() {
 	}
 	print_int(hsum) // (0+0)+(3+7)+(6+14)+(9+21)+(12+28) = 0+10+20+30+40 = 100
 
-	print_str('=== ALL 40 TESTS PASSED ===')
+	// ==================== 41. VECTOR MATH (5 tests) ====================
+	print_str('--- 41. Vector Math ---')
+
+	va := Vec3{x: 1, y: 2, z: 3}
+	vb := Vec3{x: 4, y: 5, z: 6}
+	print_int(vec3_dot(va, vb)) // 1*4+2*5+3*6 = 32
+	print_int(vec3_len_sq(va)) // 1+4+9 = 14
+	vsum := vec3_add(va, vb)
+	print_int(vsum.x) // 5
+	print_int(vsum.y) // 7
+	print_int(vsum.z) // 9
+
+	// ==================== 42. VECTOR SCALE & CROSS (5 tests) ====================
+	print_str('--- 42. Vector Scale & Cross ---')
+
+	vs := vec3_scale(va, 3)
+	print_int(vs.x) // 3
+	print_int(vs.y) // 6
+	print_int(vs.z) // 9
+	print_int(vec3_cross_z(va, vb)) // 1*5 - 2*4 = -3
+	vc := vec3_add(vec3_scale(va, 2), vec3_scale(vb, 3))
+	print_int(vc.x) // 2+12 = 14
+
+	// ==================== 43. MATRIX OPERATIONS (5 tests) ====================
+	print_str('--- 43. Matrix Operations ---')
+
+	m1 := Matrix2x2{a: 1, b: 2, c: 3, d: 4}
+	m2 := Matrix2x2{a: 5, b: 6, c: 7, d: 8}
+	print_int(mat_det(m1)) // 1*4-2*3 = -2
+	print_int(mat_trace(m1)) // 1+4 = 5
+	m3 := mat_mul(m1, m2)
+	print_int(m3.a) // 1*5+2*7 = 19
+	print_int(m3.b) // 1*6+2*8 = 22
+	print_int(m3.d) // 3*6+4*8 = 50
+
+	// ==================== 44. PRIME CHECKING (5 tests) ====================
+	print_str('--- 44. Prime Checking ---')
+
+	mut prime_count := 0
+	for ii := 2; ii <= 30; ii++ {
+		if is_prime(ii) {
+			prime_count++
+		}
+	}
+	print_int(prime_count) // primes: 2,3,5,7,11,13,17,19,23,29 = 10
+
+	if is_prime(97) { print_int(1) } else { print_int(0) } // 1
+	if is_prime(100) { print_int(1) } else { print_int(0) } // 0
+	if is_prime(2) { print_int(1) } else { print_int(0) } // 1
+	if is_prime(1) { print_int(1) } else { print_int(0) } // 0
+
+	// ==================== 45. INTEGER SQUARE ROOT (5 tests) ====================
+	print_str('--- 45. Integer Square Root ---')
+
+	print_int(isqrt(0)) // 0
+	print_int(isqrt(1)) // 1
+	print_int(isqrt(4)) // 2
+	print_int(isqrt(100)) // 10
+	print_int(isqrt(99)) // 9
+
+	// ==================== 46. REVERSE & PALINDROME (5 tests) ====================
+	print_str('--- 46. Reverse & Palindrome ---')
+
+	print_int(reverse_int(12345)) // 54321
+	print_int(reverse_int(100)) // 1
+	print_int(count_digits(12345)) // 5
+	if is_palindrome_num(12321) { print_int(1) } else { print_int(0) } // 1
+	if is_palindrome_num(12345) { print_int(1) } else { print_int(0) } // 0
+
+	// ==================== 47. STATS TRACKING (5 tests) ====================
+	print_str('--- 47. Stats Tracking ---')
+
+	mut st_min := 0
+	mut st_max := 0
+	mut st_sum := 0
+	mut st_cnt := 0
+	// Inline stats tracking for values: 10, 3, 25, 7, 15
+	// val=10
+	st_min = 10
+	st_max = 10
+	st_sum = 10
+	st_cnt = 1
+	// val=3
+	if 3 < st_min { st_min = 3 }
+	if 3 > st_max { st_max = 3 }
+	st_sum += 3
+	st_cnt++
+	// val=25
+	if 25 < st_min { st_min = 25 }
+	if 25 > st_max { st_max = 25 }
+	st_sum += 25
+	st_cnt++
+	// val=7
+	if 7 < st_min { st_min = 7 }
+	if 7 > st_max { st_max = 7 }
+	st_sum += 7
+	st_cnt++
+	// val=15
+	if 15 < st_min { st_min = 15 }
+	if 15 > st_max { st_max = 15 }
+	st_sum += 15
+	st_cnt++
+	print_int(st_min) // 3
+	print_int(st_max) // 25
+	print_int(st_sum) // 60
+	print_int(st_cnt) // 5
+	print_int(st_sum / st_cnt) // 12
+
+	// ==================== 48. BINARY SEARCH (5 tests) ====================
+	print_str('--- 48. Binary Search ---')
+
+	print_int(binary_search_step(30, 0, 4, 10, 20, 30, 40, 50)) // 2
+	print_int(binary_search_step(10, 0, 4, 10, 20, 30, 40, 50)) // 0
+	print_int(binary_search_step(50, 0, 4, 10, 20, 30, 40, 50)) // 4
+	print_int(binary_search_step(35, 0, 4, 10, 20, 30, 40, 50)) // -1
+	print_int(binary_search_step(40, 0, 4, 10, 20, 30, 40, 50)) // 3
+
+	// ==================== 49. ACKERMANN FUNCTION (5 tests) ====================
+	print_str('--- 49. Ackermann Function ---')
+
+	print_int(ackermann(0, 0)) // 1
+	print_int(ackermann(1, 1)) // 3
+	print_int(ackermann(2, 2)) // 7
+	print_int(ackermann(3, 2)) // 29
+	print_int(ackermann(0, 5)) // 6
+
+	// ==================== 50. TRIANGLE & GEOMETRY (5 tests) ====================
+	print_str('--- 50. Triangle & Geometry ---')
+
+	print_int(triangle_area_2x(0, 0, 4, 0, 0, 3)) // 12 (area=6, 2x=12)
+	print_int(triangle_area_2x(0, 0, 10, 0, 0, 10)) // 100
+	rp := rotate_point_90(Point{x: 3, y: 4})
+	print_int(rp.x) // -4
+	print_int(rp.y) // 3
+	print_int(manhattan_dist(Point{x: 1, y: 2}, Point{x: 4, y: 6})) // 3+4 = 7
+
+	// ==================== 51. DIGITAL ROOT (5 tests) ====================
+	print_str('--- 51. Digital Root ---')
+
+	print_int(digital_root(0)) // 0
+	print_int(digital_root(5)) // 5
+	print_int(digital_root(39)) // 3+9=12, 1+2=3
+	print_int(digital_root(999)) // 9+9+9=27, 2+7=9
+	print_int(digital_root(12345)) // 1+2+3+4+5=15, 1+5=6
+
+	// ==================== 52. INTERPOLATION & SIGN (5 tests) ====================
+	print_str('--- 52. Interpolation & Sign ---')
+
+	print_int(lerp(0, 100, 1, 2)) // 50
+	print_int(lerp(10, 20, 3, 10)) // 13
+	print_int(sign(42)) // 1
+	print_int(sign(0 - 7)) // -1
+	print_int(sign(0)) // 0
+
+	// ==================== 53. BIT MANIPULATION (5 tests) ====================
+	print_str('--- 53. Bit Manipulation ---')
+
+	print_int(popcount_loop(0)) // 0
+	print_int(popcount_loop(7)) // 3 (111)
+	print_int(popcount_loop(255)) // 8
+	print_int(leading_zeros(1)) // 30 (bit 0 set, 30 zeros before it in 31-bit range)
+	print_int(leading_zeros(0)) // 32
+
+	// ==================== 54. CHAINED STRUCT OPERATIONS (5 tests) ====================
+	print_str('--- 54. Chained Struct Operations ---')
+
+	// Build point from multiple operations
+	p54a := make_point(3, 4)
+	p54b := make_point(5, 12)
+	p54c := add_points(p54a, p54b)
+	print_int(p54c.x) // 8
+	print_int(p54c.y) // 16
+	// Chain: add two results
+	p54d := add_points(add_points(p54a, p54b), make_point(2, 2))
+	print_int(p54d.x) // 10
+	print_int(p54d.y) // 18
+	// Manhattan distance through chained calls
+	print_int(manhattan_dist(p54a, p54b)) // |3-5|+|4-12| = 2+8 = 10
+
+	// ==================== 55. GLOBAL ACCUMULATION (5 tests) ====================
+	print_str('--- 55. Global Accumulation ---')
+
+	g_val = 0
+	g_count = 0
+	g_acc = 0
+	for ii := 1; ii <= 5; ii++ {
+		g_val += ii
+		g_count += ii * 2
+		g_acc += ii * 3
+	}
+	print_int(g_val) // 15
+	print_int(g_count) // 30
+	print_int(g_acc) // 45
+	print_int(g_val + g_count + g_acc) // 90
+	print_int(g_val * g_val + g_count * g_count + g_acc * g_acc) // 225+900+2025 = 3150
+
+	// ==================== 56. SIEVE OF ERATOSTHENES (simulated) (5 tests) ====================
+	print_str('--- 56. Sieve Simulation ---')
+
+	mut sum_primes := 0
+	mut last_prime := 0
+	mut first_prime := 0
+	for ii := 2; ii <= 50; ii++ {
+		if is_prime(ii) {
+			sum_primes += ii
+			last_prime = ii
+			if first_prime == 0 {
+				first_prime = ii
+			}
+		}
+	}
+	print_int(sum_primes) // 2+3+5+7+11+13+17+19+23+29+31+37+41+43+47 = 328
+	print_int(last_prime) // 47
+	print_int(first_prime) // 2
+	mut twin_count := 0
+	for ii := 2; ii <= 48; ii++ {
+		if is_prime(ii) && is_prime(ii + 2) {
+			twin_count++
+		}
+	}
+	print_int(twin_count) // (3,5),(5,7),(11,13),(17,19),(29,31),(41,43) = 6
+	assert sum_primes == 328
+
+	// ==================== 57. COMPLEX LOOP PATTERNS (5 tests) ====================
+	print_str('--- 57. Complex Loop Patterns ---')
+
+	// Triangular number via nested loop
+	mut tri57 := 0
+	for ii := 1; ii <= 10; ii++ {
+		for jj := 1; jj <= ii; jj++ {
+			tri57++
+		}
+	}
+	print_int(tri57) // 1+2+3+...+10 = 55
+
+	// Sum until threshold with early break
+	mut sum57 := 0
+	mut count57 := 0
+	for ii := 1; ii <= 100; ii++ {
+		sum57 += ii
+		count57++
+		if sum57 > 50 {
+			break
+		}
+	}
+	print_int(sum57) // 1+2+...+10 = 55 (55 > 50, break at i=10)
+	print_int(count57) // 10
+
+	// Double accumulation in single loop
+	mut a57 := 0
+	mut b57 := 1
+	for ii := 0; ii < 10; ii++ {
+		tmp57 := a57
+		a57 = b57
+		b57 = tmp57 + b57
+	}
+	print_int(a57) // fib(10) = 55
+	print_int(b57) // fib(11) = 89
+
+	// ==================== 58. HEAP STRUCT COMPUTATIONS (5 tests) ====================
+	print_str('--- 58. Heap Struct Computations ---')
+
+	hv58 := &Vec3{x: 10, y: 20, z: 30}
+	print_int(hv58.x * hv58.x + hv58.y * hv58.y + hv58.z * hv58.z) // 100+400+900 = 1400
+	hp58 := &Point{x: 7, y: 24}
+	print_int(hp58.x * hp58.x + hp58.y * hp58.y) // 49+576 = 625
+	hm58 := &Matrix2x2{a: 2, b: 0, c: 0, d: 2}
+	print_int(hm58.a * hm58.d - hm58.b * hm58.c) // 4
+	hr58 := &Rectangle{width: 8, height: 5, origin: Point{x: 0, y: 0}}
+	print_int(hr58.width * hr58.height) // 40
+	hc58 := &Color{r: 100, g: 150, b: 200, a: 255}
+	print_int((hc58.r + hc58.g + hc58.b) / 3) // (100+150+200)/3 = 150
+
+	// ==================== 59. MULTI-FUNCTION PIPELINE (5 tests) ====================
+	print_str('--- 59. Multi-Function Pipeline ---')
+
+	// Chain: abs → clamp → classify
+	print_int(classify(clamp(abs_val(0 - 75), 0, 100))) // abs(-75)=75, clamp(75,0,100)=75, classify(75)=2
+	print_int(classify(clamp(abs_val(0 - 200), 0, 100))) // abs=200, clamp=100, classify(100)=1 (not >100)
+
+	// Chain: operations → assertions
+	mut pipe_sum := 0
+	for ii := 1; ii <= 8; ii++ {
+		pipe_sum += clamp(ii * ii, 5, 50)
+	}
+	// 1→5, 4→5, 9→9, 16→16, 25→25, 36→36, 49→49, 64→50
+	print_int(pipe_sum) // 5+5+9+16+25+36+49+50 = 195
+
+	// Recursive + iterative agreement
+	print_int(fib(10)) // 55
+	// Also compute fib iteratively
+	mut fa59 := 0
+	mut fb59 := 1
+	for ii := 0; ii < 10; ii++ {
+		tmp59 := fa59
+		fa59 = fb59
+		fb59 = tmp59 + fb59
+	}
+	print_int(fa59) // 55 (should match fib(10))
+
+	// ==================== 60. STRESS INTEGRATION (5 tests) ====================
+	print_str('--- 60. Stress Integration ---')
+
+	// Combine everything: structs, globals, loops, functions, heap, match, assert
+	g_acc = 0
+	g_toggle = false
+	for ii := 0; ii < 20; ii++ {
+		if ii % 3 == 0 {
+			g_acc += ii * 2
+		} else if ii % 3 == 1 {
+			g_acc += ii
+		} else {
+			g_acc -= 1
+		}
+		g_toggle = !g_toggle
+	}
+	// ii%3==0: 0,3,6,9,12,15,18 → 0+6+12+18+24+30+36 = 126
+	// ii%3==1: 1,4,7,10,13,16,19 → 1+4+7+10+13+16+19 = 70
+	// ii%3==2: 2,5,8,11,14,17 → -1*6 = -6
+	// total: 126+70-6 = 190
+	print_int(g_acc) // 190
+	if g_toggle { print_int(1) } else { print_int(0) } // 20 iterations, toggle starts false, ends false → 0
+
+	// Nested struct mutation in loop with conditionals
+	mut pts60 := Point{x: 0, y: 0}
+	for ii := 1; ii <= 10; ii++ {
+		if ii % 2 == 0 {
+			translate_point(mut pts60, ii, 0)
+		} else {
+			translate_point(mut pts60, 0, ii)
+		}
+	}
+	// x: 2+4+6+8+10 = 30
+	// y: 1+3+5+7+9 = 25
+	print_int(pts60.x) // 30
+	print_int(pts60.y) // 25
+
+	// Final verification with multiple algorithms
+	assert fib(10) == 55
+	assert factorial(7) == 5040
+	assert gcd(48, 18) == 6
+	assert power(2, 10) == 1024
+	assert is_prime(97) == true
+	assert isqrt(144) == 12
+	assert reverse_int(1234) == 4321
+	assert digital_root(9999) == 9
+	print_str('All stress assertions passed')
+
+	print_str('=== ALL 60 TESTS PASSED ===')
 }
