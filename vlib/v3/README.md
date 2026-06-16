@@ -12,6 +12,19 @@ The parser directly emits a flat AST — no recursive AST intermediate, no flatt
 
 The transformer lowers match statements to if/else chains and collects struct/global type info.
 
+## Code size
+
+| Component   | Lines |
+|-------------|-------|
+| flat parser  | 1,116 |
+| C gen       | 743   |
+| transformer | 205   |
+| flat AST    | 181   |
+| driver      | 79    |
+| **total**   | **2,324** |
+
+The old v2 parser alone was 3,991 lines. The entire v3 compiler is smaller than that.
+
 ## Performance
 
 Compiling `hello world` (`println('hello world')`):
