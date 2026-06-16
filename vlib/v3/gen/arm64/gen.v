@@ -1,0 +1,808 @@
+module arm64
+
+import v3.ssa
+import encoding.binary
+
+pub struct Gen {
+mut:
+	m             &ssa.Module = unsafe { nil }
+	macho         &MachOObject = unsafe { nil }
+	stack_map     map[int]int
+	alloca_offset map[int]int
+	stack_size    int
+	block_offsets []int
+	pending_jmps  []PendingJmp
+	fn_offsets    map[string]int
+	string_cache  map[string]int
+}
+
+struct PendingJmp {
+	text_pos int
+	block_id int
+}
+
+pub fn Gen.new(m &ssa.Module) &Gen {
+	return &Gen{
+		m:     m
+		macho: MachOObject.new()
+	}
+}
+
+pub fn (mut g Gen) gen() {
+	g.gen_pre_pass()
+	for fi in 0 .. g.m.funcs.len {
+		g.gen_func(fi)
+	}
+	g.gen_post_pass()
+}
+
+pub fn (mut g Gen) write_and_link(output string) {
+	mut l := Linker.new(g.macho)
+	l.link(output, '_main')
+}
+
+fn (mut g Gen) gen_pre_pass() {
+	mut data_offset := u64(0)
+	for gi in 0 .. g.m.globals.len {
+		data_offset = (data_offset + 7) & ~u64(7)
+		g.macho.add_symbol('_' + g.m.globals[gi].name, data_offset, true, 3)
+		size := g.m.type_size(g.m.globals[gi].typ)
+		data_offset += u64(if size > 0 { size } else { 8 })
+	}
+}
+
+fn (mut g Gen) gen_post_pass() {
+	stub_offset := u64(g.macho.text_data.len)
+	g.macho.add_symbol('___unresolved_stub', stub_offset, false, 1)
+	g.emit32(0xD2800000) // mov x0, #0
+	g.emit32(0xD65F03C0) // ret
+
+	for gi in 0 .. g.m.globals.len {
+		for g.macho.data_data.len % 8 != 0 {
+			g.macho.data_data << 0
+		}
+		size := g.m.type_size(g.m.globals[gi].typ)
+		actual := if size > 0 { size } else { 8 }
+		for _ in 0 .. actual {
+			g.macho.data_data << 0
+		}
+	}
+
+	cstring_base := u64(g.macho.text_data.len)
+	data_base := (cstring_base + u64(g.macho.str_data.len) + 7) & ~u64(7)
+	for mut sym in g.macho.symbols {
+		if sym.sect == 2 {
+			sym.value += cstring_base
+		} else if sym.sect == 3 {
+			sym.value += data_base
+		}
+	}
+}
+
+fn (mut g Gen) gen_func(func_idx int) {
+	func := g.m.funcs[func_idx]
+	if func.is_c_extern {
+		return
+	}
+	if func.blocks.len == 0 {
+		fn_start := g.macho.text_data.len
+		sym_name := '_' + func.name
+		g.macho.add_symbol(sym_name, u64(fn_start), false, 1)
+		g.emit32(asm_ret())
+		g.fn_offsets[func.name] = fn_start
+		return
+	}
+
+	g.stack_map.clear()
+	g.alloca_offset.clear()
+	g.pending_jmps.clear()
+
+	n_blks := g.m.blocks.len
+	g.block_offsets = []int{len: n_blks, init: -1}
+
+	// Frame layout (all at negative offsets from fp):
+	// fp + 0: saved fp
+	// fp + 8: saved lr
+	// fp - 8: first local slot
+	// fp - 16: second local slot ...
+	mut slot_offset := 8
+
+	for _, pid in func.params {
+		param_val := g.m.values[pid]
+		param_size := g.m.type_size(param_val.typ)
+		alloc_size := if param_size > 8 { (param_size + 7) & ~7 } else { 8 }
+		g.stack_map[pid] = -slot_offset
+		slot_offset += alloc_size
+	}
+
+	for blk_id in func.blocks {
+		blk := g.m.blocks[blk_id]
+		for val_id in blk.instrs {
+			val := g.m.values[val_id]
+			if val.kind != .instruction {
+				continue
+			}
+			instr := g.m.instrs[val.index]
+			if instr.op == .alloca {
+				ptr_type := g.m.type_store.types[val.typ]
+				elem_size := g.m.type_size(ptr_type.elem_type)
+				alloc_size := if elem_size > 0 { (elem_size + 7) & ~7 } else { 8 }
+				slot_offset = (slot_offset + 15) & ~0xF
+				slot_offset += alloc_size
+				g.alloca_offset[val_id] = -slot_offset
+				slot_offset += 8
+			} else if instr.op != .store && instr.op != .ret && instr.op != .br
+				&& instr.op != .jmp {
+				g.stack_map[val_id] = -slot_offset
+				result_size := g.m.type_size(val.typ)
+				if result_size > 8 && val.typ > 0
+					&& val.typ < g.m.type_store.types.len
+					&& g.m.type_store.types[val.typ].kind == .struct_t {
+					slot_offset += (result_size + 7) & ~7
+				} else {
+					slot_offset += 8
+				}
+			}
+		}
+	}
+
+	// Allocate stack slots for string literals used by this function
+	for val in g.m.values {
+		if val.kind == .string_literal && val.id !in g.stack_map {
+			g.stack_map[val.id] = -slot_offset
+			slot_offset += 16
+		}
+	}
+
+	g.stack_size = (slot_offset + 15) & ~0xF
+
+	fn_start := g.macho.text_data.len
+	sym_name := '_' + func.name
+	g.macho.add_symbol(sym_name, u64(fn_start), false, 1)
+	g.fn_offsets[func.name] = fn_start
+
+	// Prologue: stp fp, lr, [sp, -16]! ; mov fp, sp ; sub sp, sp, #frame
+	g.emit32(asm_stp_fp_lr_pre())
+	g.emit32(asm_mov_fp_sp())
+	if g.stack_size > 0 {
+		g.emit_sub_sp(g.stack_size)
+	}
+
+	// Spill params from registers to stack
+	mut reg_idx := 0
+	for _, pid in func.params {
+		if reg_idx >= 8 {
+			break
+		}
+		param_val := g.m.values[pid]
+		param_size := g.m.type_size(param_val.typ)
+		n_words := if param_size > 8 { (param_size + 7) / 8 } else { 1 }
+		off := g.stack_map[pid]
+		for wi in 0 .. n_words {
+			if reg_idx < 8 {
+				g.emit_store_fp(reg_idx, off - wi * 8)
+				reg_idx++
+			}
+		}
+	}
+
+	// Generate blocks
+	for blk_id in func.blocks {
+		g.block_offsets[blk_id] = g.macho.text_data.len
+		g.resolve_pending_jmps(blk_id)
+		blk := g.m.blocks[blk_id]
+		for val_id in blk.instrs {
+			g.gen_instr(val_id)
+		}
+	}
+
+	g.resolve_all_pending()
+}
+
+fn (mut g Gen) gen_instr(val_id int) {
+	if val_id <= 0 || val_id >= g.m.values.len {
+		return
+	}
+	val := g.m.values[val_id]
+	if val.kind != .instruction {
+		return
+	}
+	instr := g.m.instrs[val.index]
+
+	match instr.op {
+		.alloca {
+			off := g.alloca_offset[val_id]
+			g.emit_lea_fp(8, off)
+			g.store_val(8, val_id)
+		}
+		.store {
+			if instr.operands.len < 2 {
+				return
+			}
+			src_id := instr.operands[0]
+			ptr_id := instr.operands[1]
+
+			src_val := g.m.values[src_id]
+			if src_val.kind == .string_literal {
+				g.materialize_string(src_id, 8)
+				ptr_reg := g.load_val(ptr_id, 9)
+				g.emit32(asm_str(Reg(8), Reg(ptr_reg)))
+				g.emit32(asm_str_imm(Reg(10), Reg(ptr_reg), 1))
+			} else {
+				src_size := g.m.type_size(src_val.typ)
+				if src_size > 8 && src_val.typ > 0
+					&& src_val.typ < g.m.type_store.types.len
+					&& g.m.type_store.types[src_val.typ].kind == .struct_t {
+					if src_off := g.stack_map[src_id] {
+						ptr_reg := g.load_val(ptr_id, 9)
+						n_words := (src_size + 7) / 8
+						for wi in 0 .. n_words {
+							g.emit_load_fp(8, src_off - wi * 8)
+							g.emit32(asm_str_imm(Reg(8), Reg(ptr_reg), u32(wi)))
+						}
+					} else {
+						src_reg := g.load_val(src_id, 8)
+						ptr_reg := g.load_val(ptr_id, 9)
+						g.emit32(asm_str(Reg(src_reg), Reg(ptr_reg)))
+					}
+				} else {
+					src_reg := g.load_val(src_id, 8)
+					ptr_reg := g.load_val(ptr_id, 9)
+					g.emit32(asm_str(Reg(src_reg), Reg(ptr_reg)))
+				}
+			}
+		}
+		.load {
+			if instr.operands.len < 1 {
+				return
+			}
+			ptr_id := instr.operands[0]
+			ptr_val := g.m.values[ptr_id]
+
+			if ptr_val.kind == .global {
+				g.emit_global_addr(8, ptr_val.name)
+				g.emit32(asm_ldr(Reg(8), Reg(8)))
+				g.store_val(8, val_id)
+			} else if ptr_val.kind == .string_literal {
+				g.materialize_string(ptr_id, 8)
+				g.store_val(8, val_id)
+				if off := g.stack_map[val_id] {
+					g.emit_store_fp(10, off - 8)
+				}
+			} else {
+				ptr_reg := g.load_val(ptr_id, 9)
+				result_size := g.m.type_size(val.typ)
+				if result_size > 8 && val.typ > 0 && val.typ < g.m.type_store.types.len {
+					typ := g.m.type_store.types[val.typ]
+					if typ.kind == .struct_t {
+						if off := g.stack_map[val_id] {
+							n_words := (result_size + 7) / 8
+							for wi in 0 .. n_words {
+								g.emit32(asm_ldr_imm(Reg(8), Reg(ptr_reg), u32(wi)))
+								g.emit_store_fp(8, off - wi * 8)
+							}
+						}
+						return
+					}
+				}
+				g.emit32(asm_ldr(Reg(8), Reg(ptr_reg)))
+				g.store_val(8, val_id)
+			}
+		}
+		.get_element_ptr {
+			if instr.operands.len < 2 {
+				return
+			}
+			base_reg := g.load_val(instr.operands[0], 8)
+			off_reg := g.load_val(instr.operands[1], 9)
+			g.emit32(asm_add_reg(Reg(8), Reg(base_reg), Reg(off_reg)))
+			g.store_val(8, val_id)
+		}
+		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr {
+			lhs_reg := g.load_val(instr.operands[0], 8)
+			rhs_reg := g.load_val(instr.operands[1], 9)
+			match instr.op {
+				.add { g.emit32(asm_add_reg(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.sub { g.emit32(asm_sub_reg(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.mul { g.emit32(asm_mul(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.sdiv { g.emit32(asm_sdiv(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.srem {
+					g.emit32(asm_sdiv(Reg(10), Reg(lhs_reg), Reg(rhs_reg)))
+					g.emit32(asm_msub(Reg(8), Reg(10), Reg(rhs_reg), Reg(lhs_reg)))
+				}
+				.and_ { g.emit32(asm_and(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.or_ { g.emit32(asm_orr(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.xor { g.emit32(asm_eor(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.shl { g.emit32(asm_lslv(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.ashr { g.emit32(asm_asrv(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				else {}
+			}
+			g.store_val(8, val_id)
+		}
+		.eq, .ne, .lt, .gt, .le, .ge {
+			lhs_reg := g.load_val(instr.operands[0], 8)
+			rhs_reg := g.load_val(instr.operands[1], 9)
+			g.emit32(asm_cmp_reg(Reg(lhs_reg), Reg(rhs_reg)))
+			match instr.op {
+				.eq { g.emit32(asm_cset_eq(Reg(8))) }
+				.ne { g.emit32(asm_cset_ne(Reg(8))) }
+				.lt { g.emit32(asm_cset_lt(Reg(8))) }
+				.gt { g.emit32(asm_cset_gt(Reg(8))) }
+				.le { g.emit32(asm_cset_le(Reg(8))) }
+				.ge { g.emit32(asm_cset_ge(Reg(8))) }
+				else {}
+			}
+			g.store_val(8, val_id)
+		}
+		.neg {
+			src_reg := g.load_val(instr.operands[0], 8)
+			g.emit32(asm_sub_reg(Reg(8), xzr, Reg(src_reg)))
+			g.store_val(8, val_id)
+		}
+		.bitcast {
+			if instr.operands.len > 0 {
+				src_reg := g.load_val(instr.operands[0], 8)
+				if src_reg != 8 {
+					g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
+				}
+				g.store_val(8, val_id)
+			}
+		}
+		.call {
+			g.gen_call(val_id, instr)
+		}
+		.ret {
+			if instr.operands.len > 0 && instr.operands[0] > 0 {
+				ret_id := instr.operands[0]
+				ret_val := g.m.values[ret_id]
+				if ret_val.kind == .string_literal {
+					g.materialize_string(ret_id, 0)
+					g.emit32(asm_mov_reg(Reg(1), Reg(10)))
+				} else {
+					ret_size := g.m.type_size(ret_val.typ)
+					if ret_size > 8 && ret_val.typ > 0
+						&& ret_val.typ < g.m.type_store.types.len
+						&& g.m.type_store.types[ret_val.typ].kind == .struct_t {
+						if off := g.stack_map[ret_id] {
+							n_words := (ret_size + 7) / 8
+							for wi in 0 .. n_words {
+								if wi < 8 {
+									g.emit_load_fp(wi, off - wi * 8)
+								}
+							}
+						}
+					} else {
+						src_reg := g.load_val(ret_id, 0)
+						if src_reg != 0 {
+							g.emit32(asm_mov_reg(Reg(0), Reg(src_reg)))
+						}
+					}
+				}
+			} else {
+				g.emit_mov_imm(0, 0)
+			}
+			// Epilogue
+			if g.stack_size > 0 {
+				g.emit_add_sp(g.stack_size)
+			}
+			g.emit32(asm_ldp_fp_lr_post())
+			g.emit32(asm_ret())
+		}
+		.br {
+			if instr.operands.len < 3 {
+				return
+			}
+			cond_reg := g.load_val(instr.operands[0], 8)
+			then_blk := int(instr.operands[1])
+			else_blk := int(instr.operands[2])
+
+			g.emit32(asm_cbnz(Reg(cond_reg), 2))
+			g.emit_branch_to_block(else_blk)
+			g.emit_branch_to_block(then_blk)
+		}
+		.jmp {
+			if instr.operands.len < 1 {
+				return
+			}
+			target_blk := int(instr.operands[0])
+			g.emit_branch_to_block(target_blk)
+		}
+		.struct_init {}
+	}
+}
+
+fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
+	if instr.operands.len < 1 {
+		return
+	}
+	fn_ref_id := instr.operands[0]
+	fn_ref := g.m.values[fn_ref_id]
+	fn_name := fn_ref.name
+
+	mut arg_reg := 0
+	for ai in 1 .. instr.operands.len {
+		arg_id := instr.operands[ai]
+		arg_val := g.m.values[arg_id]
+		if arg_reg >= 8 {
+			break
+		}
+
+		if arg_val.kind == .string_literal {
+			g.materialize_string(arg_id, arg_reg)
+			if arg_reg + 1 < 8 {
+				g.emit32(asm_mov_reg(Reg(arg_reg + 1), Reg(10)))
+			}
+			arg_reg += 2
+		} else {
+			arg_type_id := arg_val.typ
+			arg_size := g.m.type_size(arg_type_id)
+			if arg_size > 8 && arg_type_id > 0 && arg_type_id < g.m.type_store.types.len {
+				typ := g.m.type_store.types[arg_type_id]
+				if typ.kind == .struct_t {
+					n_words := (arg_size + 7) / 8
+					if off := g.stack_map[arg_id] {
+						for wi in 0 .. n_words {
+							if arg_reg + wi < 8 {
+								g.emit_load_fp(arg_reg + wi, off - wi * 8)
+							}
+						}
+					} else {
+						src_reg := g.load_val(arg_id, arg_reg)
+						if src_reg != arg_reg {
+							g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+						}
+					}
+					arg_reg += n_words
+					continue
+				}
+			}
+
+			if arg_val.kind == .instruction {
+				arg_instr := g.m.instrs[arg_val.index]
+				if arg_instr.op == .alloca {
+					if alloca_off := g.alloca_offset[arg_id] {
+						g.emit_lea_fp(arg_reg, alloca_off)
+						arg_reg += 1
+						continue
+					}
+				}
+			}
+
+			src_reg := g.load_val(arg_id, arg_reg)
+			if src_reg != arg_reg {
+				g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+			}
+			arg_reg += 1
+		}
+	}
+
+	if fn_name in g.fn_offsets {
+		target := g.fn_offsets[fn_name]
+		offset := (target - g.macho.text_data.len) / 4
+		g.emit32(asm_bl(i32(offset)))
+	} else {
+		sym_idx := g.macho.add_undefined('_' + fn_name)
+		g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_branch26, true)
+		g.emit32(asm_bl(0))
+	}
+
+	if instr.typ != ssa.TypeID(0) {
+		ret_size := g.m.type_size(instr.typ)
+		if ret_size > 8 && instr.typ > 0 && instr.typ < g.m.type_store.types.len {
+			typ := g.m.type_store.types[instr.typ]
+			if typ.kind == .struct_t {
+				if off := g.stack_map[val_id] {
+					n_words := (ret_size + 7) / 8
+					for wi in 0 .. n_words {
+						if wi < 8 {
+							g.emit_store_fp(wi, off - wi * 8)
+						}
+					}
+				}
+				return
+			}
+		}
+		g.store_val(0, val_id)
+	}
+}
+
+// ==================== Value loading/storing ====================
+
+fn (mut g Gen) load_val(val_id int, reg int) int {
+	if val_id <= 0 || val_id >= g.m.values.len {
+		g.emit_mov_imm(reg, 0)
+		return reg
+	}
+	val := g.m.values[val_id]
+	match val.kind {
+		.constant {
+			n := parse_int(val.name)
+			g.emit_mov_imm(reg, n)
+			return reg
+		}
+		.string_literal {
+			g.materialize_string(val_id, reg)
+			return reg
+		}
+		.global {
+			g.emit_global_addr(reg, val.name)
+			return reg
+		}
+		.instruction {
+			instr := g.m.instrs[val.index]
+			if instr.op == .alloca {
+				if off := g.alloca_offset[val_id] {
+					g.emit_lea_fp(reg, off)
+					return reg
+				}
+			}
+			if off := g.stack_map[val_id] {
+				g.emit_load_fp(reg, off)
+				return reg
+			}
+			g.emit_mov_imm(reg, 0)
+			return reg
+		}
+		.argument {
+			if off := g.stack_map[val_id] {
+				g.emit_load_fp(reg, off)
+				return reg
+			}
+			g.emit_mov_imm(reg, 0)
+			return reg
+		}
+		else {
+			g.emit_mov_imm(reg, 0)
+			return reg
+		}
+	}
+}
+
+fn (mut g Gen) store_val(reg int, val_id int) {
+	if off := g.stack_map[val_id] {
+		g.emit_store_fp(reg, off)
+	}
+}
+
+// ==================== String materialization ====================
+
+fn (mut g Gen) materialize_string(val_id int, reg int) {
+	val := g.m.values[val_id]
+	str_content := val.name
+	str_len := str_content.len
+
+	mut str_offset := 0
+	if cached := g.string_cache[str_content] {
+		str_offset = cached
+	} else {
+		str_offset = g.macho.str_data.len
+		g.string_cache[str_content] = str_offset
+		g.macho.str_data << str_content.bytes()
+		g.macho.str_data << 0
+	}
+
+	str_sym_name := 'L_str_${str_offset}'
+	str_sym_idx := g.macho.add_symbol(str_sym_name, u64(str_offset), false, 2)
+
+	// ADRP + ADD to load address
+	g.macho.add_reloc(g.macho.text_data.len, str_sym_idx, arm64_reloc_page21, true)
+	g.emit32(asm_adrp(Reg(reg)))
+	g.macho.add_reloc(g.macho.text_data.len, str_sym_idx, arm64_reloc_pageoff12, false)
+	g.emit32(asm_add_pageoff(Reg(reg)))
+
+	g.emit_mov_imm(10, i64(str_len))
+}
+
+// ==================== Global access ====================
+
+fn (mut g Gen) emit_global_addr(reg int, name string) {
+	sym_name := '_' + name
+	mut sym_idx := 0
+	if existing := g.macho.sym_by_name[sym_name] {
+		sym_idx = existing
+	} else {
+		sym_idx = g.macho.add_undefined(sym_name)
+	}
+	g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_page21, true)
+	g.emit32(asm_adrp(Reg(reg)))
+	g.macho.add_reloc(g.macho.text_data.len, sym_idx, arm64_reloc_pageoff12, false)
+	g.emit32(asm_add_pageoff(Reg(reg)))
+}
+
+// ==================== Branch handling ====================
+
+fn (mut g Gen) emit_branch_to_block(blk_id int) {
+	if blk_id >= 0 && blk_id < g.block_offsets.len && g.block_offsets[blk_id] >= 0 {
+		target := g.block_offsets[blk_id]
+		offset := (target - g.macho.text_data.len) / 4
+		g.emit32(asm_b(i32(offset)))
+	} else {
+		g.pending_jmps << PendingJmp{
+			text_pos: g.macho.text_data.len
+			block_id: blk_id
+		}
+		g.emit32(asm_b(0))
+	}
+}
+
+fn (mut g Gen) resolve_pending_jmps(blk_id int) {
+	target := g.macho.text_data.len
+	mut remaining := []PendingJmp{}
+	for pj in g.pending_jmps {
+		if pj.block_id == blk_id {
+			offset := (target - pj.text_pos) / 4
+			g.patch_branch(pj.text_pos, offset)
+		} else {
+			remaining << pj
+		}
+	}
+	g.pending_jmps = remaining
+}
+
+fn (mut g Gen) resolve_all_pending() {
+	for pj in g.pending_jmps {
+		if pj.block_id >= 0 && pj.block_id < g.block_offsets.len
+			&& g.block_offsets[pj.block_id] >= 0 {
+			offset := (g.block_offsets[pj.block_id] - pj.text_pos) / 4
+			g.patch_branch(pj.text_pos, offset)
+		}
+	}
+	g.pending_jmps.clear()
+}
+
+fn (mut g Gen) patch_branch(text_pos int, offset int) {
+	existing := binary.little_endian_u32(g.macho.text_data[text_pos..text_pos + 4])
+	opcode := existing & 0xFC000000
+	imm26 := u32(offset) & 0x03FFFFFF
+	mut bytes := [u8(0), 0, 0, 0]
+	binary.little_endian_put_u32(mut bytes, opcode | imm26)
+	g.macho.text_data[text_pos] = bytes[0]
+	g.macho.text_data[text_pos + 1] = bytes[1]
+	g.macho.text_data[text_pos + 2] = bytes[2]
+	g.macho.text_data[text_pos + 3] = bytes[3]
+}
+
+// ==================== Low-level emission helpers ====================
+
+fn (mut g Gen) emit32(instr u32) {
+	mut bytes := [u8(0), 0, 0, 0]
+	binary.little_endian_put_u32(mut bytes, instr)
+	g.macho.text_data << bytes[0]
+	g.macho.text_data << bytes[1]
+	g.macho.text_data << bytes[2]
+	g.macho.text_data << bytes[3]
+}
+
+fn (mut g Gen) emit_mov_imm(reg int, val i64) {
+	if val >= 0 && val < 65536 {
+		g.emit32(asm_movz(Reg(reg), u32(val)))
+	} else if val >= 0 && val < i64(0xFFFFFFFF) {
+		lo := u32(val) & 0xFFFF
+		hi := (u32(val) >> 16) & 0xFFFF
+		g.emit32(asm_movz(Reg(reg), lo))
+		if hi != 0 {
+			g.emit32(asm_movk(Reg(reg), hi, 1))
+		}
+	} else if val < 0 && val >= -65536 {
+		g.emit32(asm_movn(Reg(reg), u32(~val)))
+	} else {
+		uval := u64(val)
+		g.emit32(asm_movz(Reg(reg), u32(uval & 0xFFFF)))
+		if (uval >> 16) & 0xFFFF != 0 {
+			g.emit32(asm_movk(Reg(reg), u32((uval >> 16) & 0xFFFF), 1))
+		}
+		if (uval >> 32) & 0xFFFF != 0 {
+			g.emit32(asm_movk(Reg(reg), u32((uval >> 32) & 0xFFFF), 2))
+		}
+		if (uval >> 48) & 0xFFFF != 0 {
+			g.emit32(asm_movk(Reg(reg), u32((uval >> 48) & 0xFFFF), 3))
+		}
+	}
+}
+
+fn (mut g Gen) emit_store_fp(reg int, offset int) {
+	if offset >= -255 && offset < 0 {
+		g.emit32(asm_stur(Reg(reg), fp, i32(offset)))
+	} else if offset < -255 {
+		g.emit_mov_imm(11, i64(offset))
+		g.emit32(asm_add_reg(Reg(11), fp, Reg(11)))
+		g.emit32(asm_str(Reg(reg), Reg(11)))
+	} else {
+		g.emit32(asm_str_imm(Reg(reg), fp, u32(offset / 8)))
+	}
+}
+
+fn (mut g Gen) emit_load_fp(reg int, offset int) {
+	if offset >= -255 && offset < 0 {
+		g.emit32(asm_ldur(Reg(reg), fp, i32(offset)))
+	} else if offset < -255 {
+		g.emit_mov_imm(11, i64(offset))
+		g.emit32(asm_add_reg(Reg(11), fp, Reg(11)))
+		g.emit32(asm_ldr(Reg(reg), Reg(11)))
+	} else {
+		g.emit32(asm_ldr_imm(Reg(reg), fp, u32(offset / 8)))
+	}
+}
+
+fn (mut g Gen) emit_lea_fp(reg int, offset int) {
+	if offset >= 0 && offset < 4096 {
+		g.emit32(asm_add_imm(Reg(reg), fp, u32(offset)))
+	} else if offset < 0 && -offset < 4096 {
+		g.emit32(asm_sub_imm(Reg(reg), fp, u32(-offset)))
+	} else {
+		g.emit_mov_imm(reg, i64(offset))
+		g.emit32(asm_add_reg(Reg(reg), fp, Reg(reg)))
+	}
+}
+
+fn (mut g Gen) emit_sub_sp(size int) {
+	if size > 0 && size < 4096 {
+		g.emit32(asm_sub_imm(sp, sp, u32(size)))
+	} else if size >= 4096 {
+		g.emit_mov_imm(11, i64(size))
+		g.emit32(asm_sub_sp_reg(Reg(11)))
+	}
+}
+
+fn (mut g Gen) emit_add_sp(size int) {
+	if size > 0 && size < 4096 {
+		g.emit32(asm_add_imm(sp, sp, u32(size)))
+	} else if size >= 4096 {
+		g.emit_mov_imm(11, i64(size))
+		g.emit32(asm_add_sp_reg(Reg(11)))
+	}
+}
+
+fn parse_int(s string) i64 {
+	if s.len == 0 {
+		return 0
+	}
+	mut neg := false
+	mut start := 0
+	if s[0] == `-` {
+		neg = true
+		start = 1
+	}
+	if s.len > start + 2 && s[start] == `0` {
+		if s[start + 1] == `x` || s[start + 1] == `X` {
+			mut n := i64(0)
+			for i in start + 2 .. s.len {
+				c := s[i]
+				if c >= `0` && c <= `9` {
+					n = n * 16 + i64(c - `0`)
+				} else if c >= `a` && c <= `f` {
+					n = n * 16 + i64(c - `a` + 10)
+				} else if c >= `A` && c <= `F` {
+					n = n * 16 + i64(c - `A` + 10)
+				}
+			}
+			return if neg { -n } else { n }
+		} else if s[start + 1] == `b` || s[start + 1] == `B` {
+			mut n := i64(0)
+			for i in start + 2 .. s.len {
+				c := s[i]
+				if c == `0` || c == `1` {
+					n = n * 2 + i64(c - `0`)
+				}
+			}
+			return if neg { -n } else { n }
+		} else if s[start + 1] == `o` || s[start + 1] == `O` {
+			mut n := i64(0)
+			for i in start + 2 .. s.len {
+				c := s[i]
+				if c >= `0` && c <= `7` {
+					n = n * 8 + i64(c - `0`)
+				}
+			}
+			return if neg { -n } else { n }
+		}
+	}
+	mut n := i64(0)
+	for i in start .. s.len {
+		c := s[i]
+		if c >= `0` && c <= `9` {
+			n = n * 10 + i64(c - `0`)
+		}
+	}
+	return if neg { -n } else { n }
+}

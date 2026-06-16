@@ -28,9 +28,21 @@ pub fn FlatParser.new(prefs &pref.Preferences) FlatParser {
 }
 
 pub fn (mut p FlatParser) parse_file(path string) &flat.FlatAst {
+	p.parse_into(path)
+	return &p.a
+}
+
+pub fn (mut p FlatParser) parse_files(paths []string) &flat.FlatAst {
+	for path in paths {
+		p.parse_into(path)
+	}
+	return &p.a
+}
+
+fn (mut p FlatParser) parse_into(path string) {
 	src := os.read_file(path) or {
 		eprintln('error reading ${path}: ${err}')
-		return &p.a
+		return
 	}
 	mut file_set := token.FileSet.new()
 	file := file_set.add_file(path, -1, src.len)
@@ -39,6 +51,11 @@ pub fn (mut p FlatParser) parse_file(path string) &flat.FlatAst {
 
 	mut ids := []flat.NodeId{}
 	for p.tok != .eof {
+		if p.tok == .key_module {
+			p.next()
+			p.next()
+			continue
+		}
 		id := p.top_level_stmt()
 		if int(id) >= 0 {
 			ids << id
@@ -50,7 +67,6 @@ pub fn (mut p FlatParser) parse_file(path string) &flat.FlatAst {
 		children_start: start
 		children_count: ids.len
 	})
-	return &p.a
 }
 
 fn (mut p FlatParser) next() {
