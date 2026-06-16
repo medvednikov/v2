@@ -59,17 +59,40 @@ fn main() {
 	prefs := pref.new_preferences()
 	mut p := parser.FlatParser.new(prefs)
 
-	builtin_path := os.join_path(os.dir(@FILE), 'builtins', 'builtin.v')
-
 	mut files := []string{}
 	if backend == 'arm64' {
+		builtin_path := os.join_path(os.dir(@FILE), 'builtins', 'builtin.v')
 		if os.exists(builtin_path) {
 			files << builtin_path
 		}
+	} else {
+		vlib_dir := os.join_path(os.dir(os.dir(@FILE)))
+		builtin_dir := os.join_path(vlib_dir, 'builtin')
+		if os.is_dir(builtin_dir) {
+			builtin_files := os.ls(builtin_dir) or { []string{} }
+			for f in builtin_files {
+				if !f.ends_with('.v') {
+					continue
+				}
+				if f.ends_with('_test.v') {
+					continue
+				}
+				if f.contains('_d_') || f.contains('_notd_') {
+					continue
+				}
+				if f.contains('_windows') || f.contains('_ios') || f.contains('_android') {
+					continue
+				}
+				if f.contains('_js') || f.contains('_wasm') || f.contains('_bare') {
+					continue
+				}
+				files << os.join_path(builtin_dir, f)
+			}
+		}
 	}
-	files << input_file
-
 	mut a := p.parse_files(files)
+	a.user_code_start = a.nodes.len
+	p.parse_into(input_file)
 	b.step('parse')
 
 	// Transform (match lowering etc.)

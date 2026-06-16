@@ -1,6 +1,7 @@
 module parser
 
 import os
+import strings
 import v3.flat
 import v3.pref
 import v3.scanner
@@ -39,7 +40,7 @@ pub fn (mut p FlatParser) parse_files(paths []string) &flat.FlatAst {
 	return &p.a
 }
 
-fn (mut p FlatParser) parse_into(path string) {
+pub fn (mut p FlatParser) parse_into(path string) {
 	src := os.read_file(path) or {
 		eprintln('error reading ${path}: ${err}')
 		return
@@ -181,8 +182,7 @@ fn (mut p FlatParser) top_level_stmt() flat.NodeId {
 			return p.top_level_stmt()
 		}
 		.dollar {
-			p.skip_comptime()
-			return flat.empty_node
+			return p.parse_comptime_if()
 		}
 		.hash {
 			return p.directive()
@@ -509,9 +509,12 @@ fn (mut p FlatParser) struct_decl() flat.NodeId {
 			p.next()
 			continue
 		}
-		// comptime $if in struct fields — skip
+		// comptime $if in struct fields
 		if p.tok == .dollar {
-			p.skip_comptime()
+			id := p.parse_comptime_if()
+			if int(id) >= 0 {
+				ids << id
+			}
 			continue
 		}
 		// attributes — skip
@@ -1010,67 +1013,150 @@ fn (mut p FlatParser) skip_attrs() {
 	}
 }
 
-fn (mut p FlatParser) skip_comptime() {
+fn (mut p FlatParser) parse_comptime_if() flat.NodeId {
 	p.next() // skip $
-	if p.tok == .key_if {
-		p.next()
-		for p.tok != .lcbr && p.tok != .eof {
+	if p.tok != .key_if {
+		// $for or other comptime — skip
+		if p.tok == .key_for {
 			p.next()
-		}
-		p.skip_block()
-		// handle $else chains
-		for p.tok == .semicolon && p.peek() == .dollar {
-			p.next() // skip ;
-			p.next() // skip $
-			if p.tok == .key_else {
+			for p.tok != .lcbr && p.tok != .eof {
 				p.next()
-				// $else $if
-				if p.tok == .semicolon && p.peek() == .dollar {
-					p.next()
-				}
-				if p.tok == .dollar {
-					p.next()
-					if p.tok == .key_if {
-						p.next()
-						for p.tok != .lcbr && p.tok != .eof {
-							p.next()
-						}
-					}
-				}
-				p.skip_block()
-			} else {
-				break
+			}
+			p.skip_block()
+		} else {
+			for p.tok != .semicolon && p.tok != .eof {
+				p.next()
+			}
+			if p.tok == .semicolon {
+				p.next()
 			}
 		}
-		if p.tok == .dollar {
-			p.next()
-			if p.tok == .key_else {
-				p.next()
-				if p.tok == .dollar {
-					p.next()
-					if p.tok == .key_if {
-						p.next()
-						for p.tok != .lcbr && p.tok != .eof {
-							p.next()
-						}
-					}
-				}
-				p.skip_block()
-			}
-		}
-	} else if p.tok == .key_for {
-		p.next()
-		for p.tok != .lcbr && p.tok != .eof {
-			p.next()
-		}
-		p.skip_block()
+		return flat.empty_node
+	}
+	p.next() // skip 'if'
+	cond := p.parse_comptime_cond()
+	taken := eval_comptime_cond(cond)
+	if taken {
+		// Parse then block, skip else
+		result := p.block_stmt()
+		p.skip_comptime_else()
+		return result
 	} else {
-		for p.tok != .semicolon && p.tok != .eof {
-			p.next()
+		// Skip then block, parse else (or return empty)
+		p.skip_block()
+		return p.parse_comptime_else()
+	}
+}
+
+fn (mut p FlatParser) parse_comptime_cond() string {
+	mut cond := strings.new_builder(64)
+	for p.tok != .lcbr && p.tok != .eof {
+		tok_str := if p.lit.len > 0 { p.lit } else { p.tok.str() }
+		if cond.len > 0 && tok_str != '?' {
+			cond.write_string(' ')
 		}
+		cond.write_string(tok_str)
+		p.next()
+	}
+	return cond.str()
+}
+
+fn (mut p FlatParser) skip_comptime_else() {
+	if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
 		if p.tok == .semicolon {
 			p.next()
 		}
+		p.next() // skip $
+		if p.tok == .key_else {
+			p.next()
+			if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
+				if p.tok == .semicolon {
+					p.next()
+				}
+				// $else $if — skip nested
+				p.next() // skip $
+				if p.tok == .key_if {
+					p.next()
+					for p.tok != .lcbr && p.tok != .eof {
+						p.next()
+					}
+				}
+				p.skip_block()
+				p.skip_comptime_else()
+			} else {
+				p.skip_block()
+			}
+		}
+	}
+}
+
+fn (mut p FlatParser) parse_comptime_else() flat.NodeId {
+	if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
+		if p.tok == .semicolon {
+			p.next()
+		}
+		p.next() // skip $
+		if p.tok == .key_else {
+			p.next()
+			// $else $if — recurse
+			if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
+				if p.tok == .semicolon {
+					p.next()
+				}
+				return p.parse_comptime_if()
+			}
+			return p.block_stmt()
+		}
+	}
+	return flat.empty_node
+}
+
+fn eval_comptime_cond(cond string) bool {
+	c := cond.trim_space()
+	if c.starts_with('!') {
+		return !eval_comptime_cond(c[1..])
+	}
+	if c.contains('&&') {
+		parts := c.split('&&')
+		for part in parts {
+			if !eval_comptime_cond(part) {
+				return false
+			}
+		}
+		return true
+	}
+	if c.contains('||') {
+		parts := c.split('||')
+		for part in parts {
+			if eval_comptime_cond(part) {
+				return true
+			}
+		}
+		return false
+	}
+	flag := c.trim_space().trim_right('? ')
+	return match flag {
+		'x64', 'amd64' { false }
+		'arm64', 'aarch64' { true }
+		'little_endian' { true }
+		'macos', 'darwin', 'mac' { true }
+		'posix' { true }
+		'unix' { true }
+		'bsd' { true }
+		'no_bounds_checking' { false }
+		'gcboehm_opt' { false }
+		'gcboehm' { false }
+		'new_int' { false }
+		'prealloc' { false }
+		'freestanding' { false }
+		'nofloat' { false }
+		'windows' { false }
+		'linux' { false }
+		'freebsd' { false }
+		'debug' { false }
+		'autofree' { false }
+		'custom_define' { false }
+		else { false }
 	}
 }
 
@@ -1170,8 +1256,7 @@ fn (mut p FlatParser) stmt() flat.NodeId {
 			return p.asm_stmt()
 		}
 		.dollar {
-			p.skip_comptime()
-			return flat.empty_node
+			return p.parse_comptime_if()
 		}
 		.lcbr {
 			return p.block_stmt()

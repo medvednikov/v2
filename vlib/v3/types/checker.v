@@ -21,6 +21,7 @@ pub mut:
 	flag_enums     map[string]bool
 	file_scope     &Scope = unsafe { nil }
 	cur_scope      &Scope = unsafe { nil }
+	has_builtins   bool
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -205,13 +206,16 @@ pub fn (tc &TypeChecker) c_type(typ string) string {
 		return 'Optional'
 	}
 	if typ.starts_with('[]') {
-		return 'Array'
+		return if tc.has_builtins { 'array' } else { 'Array' }
 	}
 	if typ.starts_with('map[') {
-		return 'HashMap'
+		return if tc.has_builtins { 'map' } else { 'HashMap' }
 	}
 	if typ.starts_with('[') && typ.contains(']') {
-		return 'Array'
+		return if tc.has_builtins { 'array' } else { 'Array' }
+	}
+	if typ.starts_with('fn(') {
+		return tc.c_fn_ptr_type(typ)
 	}
 	if typ in tc.type_aliases {
 		return tc.c_type(tc.type_aliases[typ])
@@ -235,15 +239,50 @@ pub fn (tc &TypeChecker) c_type(typ string) string {
 		'u16' { 'u16' }
 		'u32' { 'u32' }
 		'u64' { 'u64' }
+		'isize' { 'ptrdiff_t' }
+		'usize' { 'size_t' }
 		'f32' { 'float' }
 		'f64' { 'double' }
 		'bool' { 'bool' }
 		'string' { 'string' }
+		'char' { 'char' }
 		'void' { 'void' }
 		'voidptr' { 'void*' }
+		'charptr' { 'char*' }
+		'byteptr' { 'u8*' }
 		'' { 'void' }
 		else { c_name(typ) }
 	}
+}
+
+fn (tc &TypeChecker) c_fn_ptr_type(typ string) string {
+	// fn(param_types) ret_type → fn_ptr:c_ret|c_param1, c_param2
+	params_start := typ.index_u8(`(`) + 1
+	mut depth := 1
+	mut params_end := params_start
+	for params_end < typ.len {
+		if typ[params_end] == `(` {
+			depth++
+		} else if typ[params_end] == `)` {
+			depth--
+			if depth == 0 {
+				break
+			}
+		}
+		params_end++
+	}
+	params_str := typ[params_start..params_end]
+	ret_str := typ[params_end + 1..].trim_left(' ')
+	ret_c := if ret_str.len > 0 { tc.c_type(ret_str) } else { 'void' }
+	if params_str.len == 0 {
+		return 'fn_ptr:${ret_c}|void'
+	}
+	params := params_str.split(',')
+	mut c_params := []string{}
+	for p in params {
+		c_params << tc.c_type(p.trim_space())
+	}
+	return 'fn_ptr:${ret_c}|${c_params.join(', ')}'
 }
 
 fn c_name(name string) string {

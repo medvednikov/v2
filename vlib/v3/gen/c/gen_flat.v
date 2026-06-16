@@ -17,6 +17,7 @@ mut:
 	interfaces   map[string][]string
 	const_vals   map[string]flat.NodeId
 	tc           types.TypeChecker
+	has_builtins bool
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -35,6 +36,13 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) 
 	g.tc.a = a
 	g.tc.file_scope = types.new_scope(unsafe { nil })
 	g.tc.cur_scope = g.tc.file_scope
+	for node in a.nodes {
+		if node.kind == .struct_decl && node.value == 'string' {
+			g.has_builtins = true
+			g.tc.has_builtins = true
+			break
+		}
+	}
 	g.collect()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
@@ -42,11 +50,14 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) 
 	fn_code := g.sb.str()
 	g.sb = orig_sb
 	g.preamble()
+	g.enum_decls()
 	g.struct_decls()
+	g.runtime_fns()
 	g.global_decls()
-	g.const_decls()
 	g.forward_decls()
+	const_code := g.precompute_consts()
 	g.string_literals()
+	g.sb.write_string(const_code)
 	g.sb.write_string(fn_code)
 	return g.sb.str()
 }
@@ -66,6 +77,9 @@ fn (mut g FlatGen) collect() {
 				g.tc.fn_param_types[node.value] = ptypes
 			}
 			.struct_decl {
+				if node.value.starts_with('C.') {
+					continue
+				}
 				mut fields := []types.StructField{}
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
@@ -79,6 +93,9 @@ fn (mut g FlatGen) collect() {
 			.global_decl {
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
+					if f.value.starts_with('C.') {
+						continue
+					}
 					g.global_types[f.value] = f.typ
 					g.tc.file_scope.insert(f.value, g.tc.c_type(f.typ))
 				}
@@ -119,6 +136,17 @@ fn (mut g FlatGen) collect() {
 					g.tc.type_aliases[node.value] = node.typ
 				}
 			}
+			.c_fn_decl {
+				g.tc.fn_ret_types[node.value] = g.tc.c_type(node.typ)
+				mut ptypes := []string{}
+				for i in 0 .. node.children_count {
+					child := g.a.child_node(&node, i)
+					if child.kind == .param {
+						ptypes << g.tc.c_type(child.typ)
+					}
+				}
+				g.tc.fn_param_types[node.value] = ptypes
+			}
 			.interface_decl {
 				mut methods := []string{}
 				for i in 0 .. node.children_count {
@@ -143,8 +171,11 @@ fn (mut g FlatGen) collect() {
 }
 
 fn (mut g FlatGen) gen_fns() {
-	for node in g.a.nodes {
+	for i, node in g.a.nodes {
 		if node.kind == .fn_decl {
+			if g.has_builtins && i < g.a.user_code_start {
+				continue
+			}
 			if g.used_fns.len > 0 && node.value !in g.used_fns {
 				continue
 			}
@@ -868,12 +899,14 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 		}
 		else {
 			mut is_method := false
+			mut is_c_call := false
 			mut method_name := ''
 			mut base_id := flat.NodeId(0)
 			if fn_node.kind == .selector {
 				base := g.a.child_node(fn_node, 0)
 				if base.kind == .ident && base.value == 'C' {
 					g.write(fn_node.value)
+					is_c_call = true
 				} else if g.is_flag_enum_method(fn_node) {
 					g.gen_flag_enum_call(node)
 					return
@@ -913,7 +946,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					g.write(', ')
 				}
 				arg_idx := if is_method { i } else { i - 1 }
-				if arg_idx < param_types.len && param_types[arg_idx].ends_with('*') {
+				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx].ends_with('*') {
 					g.write('&')
 				}
 				g.gen_expr(g.a.child(&node, i))
@@ -1018,8 +1051,11 @@ fn (g &FlatGen) is_string_node(id flat.NodeId) bool {
 }
 
 fn (mut g FlatGen) forward_decls() {
-	for node in g.a.nodes {
+	for i, node in g.a.nodes {
 		if node.kind == .fn_decl && node.value != 'main' {
+			if g.has_builtins && i < g.a.user_code_start {
+				continue
+			}
 			if g.used_fns.len > 0 && node.value !in g.used_fns {
 				continue
 			}
@@ -1054,7 +1090,7 @@ fn (mut g FlatGen) write_fn_params(params []flat.Node) {
 
 fn (mut g FlatGen) string_literals() {
 	for i, s in g.str_lits {
-		g.writeln("string _str_${i} = {\"${c_escape(s)}\", ${s.len}};")
+		g.writeln("string _str_${i} = {\"${c_escape(s)}\", ${s.len}, 1};")
 	}
 	if g.str_lits.len > 0 {
 		g.writeln('')
@@ -1065,11 +1101,8 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('#include <stdio.h>')
 	g.writeln('#include <stdlib.h>')
 	g.writeln('#include <string.h>')
-	g.writeln('')
-	g.writeln('typedef struct {')
-	g.writeln('\tchar* str;')
-	g.writeln('\tint len;')
-	g.writeln('} string;')
+	g.writeln('#include <stddef.h>')
+	g.writeln('#include <unistd.h>')
 	g.writeln('')
 	g.writeln('typedef signed char i8;')
 	g.writeln('typedef short i16;')
@@ -1081,57 +1114,20 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('typedef unsigned int u32;')
 	g.writeln('typedef unsigned long long u64;')
 	g.writeln('typedef int bool;')
+	g.writeln('typedef void* voidptr;')
 	g.writeln('#define true 1')
 	g.writeln('#define false 0')
 	g.writeln('')
-	g.writeln('void println(string s) {')
-	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')
-	g.writeln('\tputchar(10);')
-	g.writeln('}')
-	g.writeln('')
-	g.writeln('void print(string s) {')
-	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')
-	g.writeln('}')
-	g.writeln('')
-	g.writeln('string int_str(int n) {')
-	g.writeln('\tchar* buf = malloc(20);')
-	g.writeln('\tint len = snprintf(buf, 20, "%d", n);')
-	g.writeln('\treturn (string){buf, len};')
-	g.writeln('}')
-	g.writeln('')
-	g.writeln('string string__plus(string a, string b) {')
-	g.writeln('\tint len = a.len + b.len;')
-	g.writeln('\tchar* s = malloc(len + 1);')
-	g.writeln('\tmemcpy(s, a.str, a.len);')
-	g.writeln('\tmemcpy(s + a.len, b.str, b.len);')
-	g.writeln('\ts[len] = 0;')
-	g.writeln('\treturn (string){s, len};')
-	g.writeln('}')
-	g.writeln('')
-	g.writeln('void* memdup(const void* src, int sz) {')
-	g.writeln('\tvoid* p = malloc(sz);')
-	g.writeln('\tmemcpy(p, src, sz);')
-	g.writeln('\treturn p;')
-	g.writeln('}')
-	g.writeln('')
-	g.writeln('bool string__eq(string a, string b) {')
-	g.writeln('\tif (a.len != b.len) return 0;')
-	g.writeln('\treturn memcmp(a.str, b.str, a.len) == 0;')
-	g.writeln('}')
-	g.writeln('')
-	g.writeln('string string_plus_many(int count, string* parts) {')
-	g.writeln('\tint len = 0;')
-	g.writeln('\tfor (int i = 0; i < count; i++) len += parts[i].len;')
-	g.writeln('\tchar* s = malloc(len + 1);')
-	g.writeln('\tint off = 0;')
-	g.writeln('\tfor (int i = 0; i < count; i++) {')
-	g.writeln('\t\tmemcpy(s + off, parts[i].str, parts[i].len);')
-	g.writeln('\t\toff += parts[i].len;')
-	g.writeln('\t}')
-	g.writeln('\ts[len] = 0;')
-	g.writeln('\treturn (string){s, len};')
-	g.writeln('}')
-	g.writeln('')
+	if !g.has_builtins {
+		g.writeln('typedef struct {')
+		g.writeln('\tchar* str;')
+		g.writeln('\tint len;')
+		g.writeln('} string;')
+		g.writeln('')
+	}
+	if g.has_builtins {
+		return
+	}
 	g.writeln('typedef struct { void* data; int len; int cap; int elem_size; } Array;')
 	g.writeln('')
 	g.writeln('Array array_new(int elem_size, int len, int cap) {')
@@ -1143,7 +1139,7 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('\tif (len > 0) memcpy(a.data, data, len * elem_size); return a;')
 	g.writeln('}')
 	g.writeln('void array_push(Array* a, void* elem) {')
-	g.writeln('\tif (a->len >= a->cap) { a->cap = a->cap < 4 ? 4 : a->cap * 2; a->data = realloc(a->data, a->cap * a->elem_size); }')
+	g.writeln('\tif (a->len >= a->cap) { a->cap = a->cap < 4 ? 4 : a->cap * 2; a->data = realloc(a->data, a->elem_size); }')
 	g.writeln('\tmemcpy((char*)a->data + a->len * a->elem_size, elem, a->elem_size); a->len++;')
 	g.writeln('}')
 	g.writeln('void* array_get(Array a, int idx) { return (char*)a.data + idx * a.elem_size; }')
@@ -1244,34 +1240,6 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('Optional optional_none() { return (Optional){.ok = false}; }')
 	g.writeln('Optional optional_error(string msg) { return (Optional){.ok = false, .msg = msg}; }')
 	g.writeln('')
-	g.writeln('string i64_str(i64 n) {')
-	g.writeln('\tchar* buf = malloc(24); int len = snprintf(buf, 24, "%lld", (long long)n);')
-	g.writeln('\treturn (string){buf, len};')
-	g.writeln('}')
-	g.writeln('string u8_str(u8 n) { return int_str((int)n); }')
-	g.writeln('string bool_str(bool b) { return b ? (string){"true", 4} : (string){"false", 5}; }')
-	g.writeln('string double_str(double d) {')
-	g.writeln('\tchar* buf = malloc(32); int len = snprintf(buf, 32, "%g", d);')
-	g.writeln('\treturn (string){buf, len};')
-	g.writeln('}')
-	g.writeln('bool string__contains(string s, string sub) {')
-	g.writeln('\tif (sub.len > s.len) return 0;')
-	g.writeln('\tfor (int i = 0; i <= s.len - sub.len; i++) if (memcmp(s.str + i, sub.str, sub.len) == 0) return 1;')
-	g.writeln('\treturn 0;')
-	g.writeln('}')
-	g.writeln('string string__replace(string s, string old_s, string new_s) {')
-	g.writeln('\tif (old_s.len == 0 || old_s.len > s.len) return s;')
-	g.writeln('\tint count = 0;')
-	g.writeln('\tfor (int i = 0; i <= s.len - old_s.len; i++) if (memcmp(s.str+i, old_s.str, old_s.len)==0) { count++; i += old_s.len-1; }')
-	g.writeln('\tif (count == 0) return s;')
-	g.writeln('\tint new_len = s.len + count * (new_s.len - old_s.len);')
-	g.writeln('\tchar* buf = malloc(new_len + 1); int pos = 0;')
-	g.writeln('\tfor (int i = 0; i < s.len; ) {')
-	g.writeln('\t\tif (i <= s.len - old_s.len && memcmp(s.str+i, old_s.str, old_s.len)==0) { memcpy(buf+pos, new_s.str, new_s.len); pos += new_s.len; i += old_s.len; }')
-	g.writeln('\t\telse { buf[pos++] = s.str[i++]; }')
-	g.writeln('\t} buf[new_len] = 0; return (string){buf, new_len};')
-	g.writeln('}')
-	g.writeln('')
 	g.writeln('string Array_int_str(Array a) {')
 	g.writeln('\tstring s = (string){"[", 1};')
 	g.writeln('\tfor (int i = 0; i < a.len; i++) {')
@@ -1296,6 +1264,97 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('')
 }
 
+fn (mut g FlatGen) runtime_fns() {
+	g.writeln('void println(string s) {')
+	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')
+	g.writeln('\tputchar(10);')
+	g.writeln('}')
+	g.writeln('void print(string s) {')
+	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')
+	g.writeln('}')
+	g.writeln('void eprintln(string s) {')
+	g.writeln('\tfwrite(s.str, 1, s.len, stderr);')
+	g.writeln('\tputchar(10);')
+	g.writeln('}')
+	g.writeln('string int_str(int n) {')
+	g.writeln('\tchar* buf = malloc(20);')
+	g.writeln('\tint len = snprintf(buf, 20, "%d", n);')
+	g.writeln('\treturn (string){buf, len, 0};')
+	g.writeln('}')
+	g.writeln('string string__plus(string a, string b) {')
+	g.writeln('\tint len = a.len + b.len;')
+	g.writeln('\tchar* s = malloc(len + 1);')
+	g.writeln('\tmemcpy(s, a.str, a.len);')
+	g.writeln('\tmemcpy(s + a.len, b.str, b.len);')
+	g.writeln('\ts[len] = 0;')
+	g.writeln('\treturn (string){s, len, 0};')
+	g.writeln('}')
+	g.writeln('void* memdup(const void* src, int sz) {')
+	g.writeln('\tvoid* p = malloc(sz);')
+	g.writeln('\tmemcpy(p, src, sz);')
+	g.writeln('\treturn p;')
+	g.writeln('}')
+	g.writeln('bool string__eq(string a, string b) {')
+	g.writeln('\tif (a.len != b.len) return 0;')
+	g.writeln('\treturn memcmp(a.str, b.str, a.len) == 0;')
+	g.writeln('}')
+	g.writeln('string string_plus_many(int count, string* parts) {')
+	g.writeln('\tint len = 0;')
+	g.writeln('\tfor (int i = 0; i < count; i++) len += parts[i].len;')
+	g.writeln('\tchar* s = malloc(len + 1);')
+	g.writeln('\tint off = 0;')
+	g.writeln('\tfor (int i = 0; i < count; i++) {')
+	g.writeln('\t\tmemcpy(s + off, parts[i].str, parts[i].len);')
+	g.writeln('\t\toff += parts[i].len;')
+	g.writeln('\t}')
+	g.writeln('\ts[len] = 0;')
+	g.writeln('\treturn (string){s, len, 0};')
+	g.writeln('}')
+	g.writeln('string i64_str(i64 n) {')
+	g.writeln('\tchar* buf = malloc(24); int len = snprintf(buf, 24, "%lld", (long long)n);')
+	g.writeln('\treturn (string){buf, len, 0};')
+	g.writeln('}')
+	g.writeln('string u8_str(u8 n) { return int_str((int)n); }')
+	g.writeln('string bool_str(bool b) { return b ? (string){"true", 4, 1} : (string){"false", 5, 1}; }')
+	g.writeln('string double_str(double d) {')
+	g.writeln('\tchar* buf = malloc(32); int len = snprintf(buf, 32, "%g", d);')
+	g.writeln('\treturn (string){buf, len, 0};')
+	g.writeln('}')
+	g.writeln('bool string__contains(string s, string sub) {')
+	g.writeln('\tif (sub.len > s.len) return 0;')
+	g.writeln('\tfor (int i = 0; i <= s.len - sub.len; i++) if (memcmp(s.str + i, sub.str, sub.len) == 0) return 1;')
+	g.writeln('\treturn 0;')
+	g.writeln('}')
+	g.writeln('string string__replace(string s, string old_s, string new_s) {')
+	g.writeln('\tif (old_s.len == 0 || old_s.len > s.len) return s;')
+	g.writeln('\tint count = 0;')
+	g.writeln('\tfor (int i = 0; i <= s.len - old_s.len; i++) if (memcmp(s.str+i, old_s.str, old_s.len)==0) { count++; i += old_s.len-1; }')
+	g.writeln('\tif (count == 0) return s;')
+	g.writeln('\tint new_len = s.len + count * (new_s.len - old_s.len);')
+	g.writeln('\tchar* buf = malloc(new_len + 1); int pos = 0;')
+	g.writeln('\tfor (int i = 0; i < s.len; ) {')
+	g.writeln('\t\tif (i <= s.len - old_s.len && memcmp(s.str+i, old_s.str, old_s.len)==0) { memcpy(buf+pos, new_s.str, new_s.len); pos += new_s.len; i += old_s.len; }')
+	g.writeln('\t\telse { buf[pos++] = s.str[i++]; }')
+	g.writeln('\t} buf[new_len] = 0; return (string){buf, new_len, 0};')
+	g.writeln('}')
+	g.writeln('')
+}
+
+fn (mut g FlatGen) enum_decls() {
+	for name, _ in g.tc.enum_names {
+		cn := c_name(name)
+		g.writeln('typedef enum {')
+		for ekey, eval in g.enum_vals {
+			if ekey.starts_with('${name}.') {
+				member := ekey[name.len + 1..]
+				g.writeln('\t${cn}__${member} = ${eval},')
+			}
+		}
+		g.writeln('} ${cn};')
+		g.writeln('')
+	}
+}
+
 fn (mut g FlatGen) struct_decls() {
 	for name, _ in g.tc.structs {
 		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
@@ -1304,41 +1363,65 @@ fn (mut g FlatGen) struct_decls() {
 		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
 		_ = variants
 	}
+	for name, _ in g.interfaces {
+		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
+	}
 	g.writeln('')
-	mut deferred_set := map[string]bool{}
-	for name, fields in g.tc.structs {
-		for f in fields {
-			raw := f.typ.trim_right('*')
-			if raw in g.tc.sum_types {
-				deferred_set[name] = true
-				break
-			}
-		}
-	}
-	for _ in 0 .. 5 {
-		for name, fields in g.tc.structs {
-			if name in deferred_set {
-				continue
-			}
-			for f in fields {
-				raw := f.typ.trim_right('*')
-				if raw in deferred_set {
-					deferred_set[name] = true
-					break
-				}
-			}
-		}
-	}
-	for name, fields in g.tc.structs {
-		if name in deferred_set {
-			continue
-		}
+	// Emit interface structs early (before structs that embed them)
+	for name, _ in g.interfaces {
 		g.writeln('struct ${c_name(name)} {')
-		for f in fields {
-			g.writeln('\t${f.typ} ${c_name(f.name)};')
-		}
+		g.writeln('\tint _typ;')
 		g.writeln('};')
 		g.writeln('')
+	}
+	// Build set of struct names that are defined
+	mut emitted := map[string]bool{}
+	for name, _ in g.interfaces {
+		emitted[c_name(name)] = true
+	}
+	// Topological sort: emit structs whose value-type deps are all satisfied
+	mut remaining := map[string]bool{}
+	for name, _ in g.tc.structs {
+		remaining[name] = true
+	}
+	for _ in 0 .. 20 {
+		if remaining.len == 0 {
+			break
+		}
+		mut progress := false
+		for name, _ in remaining {
+			cn := c_name(name)
+			if cn in emitted {
+				remaining.delete(name)
+				progress = true
+				continue
+			}
+			mut can_emit := true
+			if fields := g.tc.structs[name] {
+				for f in fields {
+					raw := f.typ.trim_right('*')
+					if f.typ.ends_with('*') {
+						continue
+					}
+					if raw in g.tc.structs && !(raw in emitted) && raw != cn {
+						can_emit = false
+						break
+					}
+				}
+			}
+			if can_emit {
+				g.emit_struct(name)
+				emitted[cn] = true
+				remaining.delete(name)
+				progress = true
+			}
+		}
+		if !progress {
+			break
+		}
+	}
+	for name, _ in remaining {
+		g.emit_struct(name)
 	}
 	for name, variants in g.tc.sum_types {
 		g.writeln('struct ${c_name(name)} {')
@@ -1357,15 +1440,30 @@ fn (mut g FlatGen) struct_decls() {
 		g.writeln('};')
 		g.writeln('')
 	}
-	for ds, _ in deferred_set {
-		if fields := g.tc.structs[ds] {
-			g.writeln('struct ${c_name(ds)} {')
-			for f in fields {
-				g.writeln('\t${f.typ} ${c_name(f.name)};')
-			}
-			g.writeln('};')
-			g.writeln('')
+}
+
+fn (mut g FlatGen) emit_struct(name string) {
+	if fields := g.tc.structs[name] {
+		g.writeln('struct ${c_name(name)} {')
+		if fields.len == 0 {
+			g.writeln('\tint _dummy;')
 		}
+		for f in fields {
+			g.write_struct_field(f)
+		}
+		g.writeln('};')
+		g.writeln('')
+	}
+}
+
+fn (mut g FlatGen) write_struct_field(f types.StructField) {
+	if f.typ.starts_with('fn_ptr:') {
+		parts := f.typ['fn_ptr:'.len..].split('|')
+		ret := parts[0]
+		params := if parts.len > 1 { parts[1] } else { 'void' }
+		g.writeln('\t${ret} (*${c_name(f.name)})(${params});')
+	} else {
+		g.writeln('\t${f.typ} ${c_name(f.name)};')
 	}
 }
 
@@ -1412,26 +1510,69 @@ fn (g &FlatGen) sum_type_index(sum_name string, variant string) int {
 
 fn (mut g FlatGen) global_decls() {
 	for name, typ in g.global_types {
-		g.writeln('${g.tc.c_type(typ)} ${c_name(name)};')
+		ct := g.tc.c_type(typ)
+		if ct == 'void' {
+			continue
+		}
+		g.writeln('${ct} ${c_name(name)};')
 	}
 	if g.global_types.len > 0 {
 		g.writeln('')
 	}
 }
 
-fn (mut g FlatGen) const_decls() {
+fn (mut g FlatGen) precompute_consts() string {
+	old_sb := g.sb
+	g.sb = strings.new_builder(1024)
 	for name, val_id in g.const_vals {
+		if int(val_id) < 0 || int(val_id) >= g.a.nodes.len {
+			continue
+		}
+		val_node := g.a.nodes[int(val_id)]
+		if val_node.kind == .empty {
+			continue
+		}
+		if !g.is_const_expr(val_id) {
+			continue
+		}
+		tmp_sb := g.sb
+		g.sb = strings.new_builder(256)
+		g.gen_expr(val_id)
+		expr_str := g.sb.str()
+		g.sb = tmp_sb
+		if expr_str.trim_space().len == 0 {
+			continue
+		}
 		typ := g.tc.c_type(g.tc.resolve_type(val_id))
 		if typ == 'string' {
-			g.write('string ${c_name(name)} = ')
+			g.writeln('string ${c_name(name)} = ${expr_str};')
 		} else {
-			g.write('const ${typ} ${c_name(name)} = ')
+			g.writeln('const ${typ} ${c_name(name)} = ${expr_str};')
 		}
-		g.gen_expr(val_id)
-		g.writeln(';')
 	}
 	if g.const_vals.len > 0 {
 		g.writeln('')
+	}
+	result := g.sb.str()
+	g.sb = old_sb
+	return result
+}
+
+fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
+	if int(id) < 0 || int(id) >= g.a.nodes.len {
+		return false
+	}
+	node := g.a.nodes[int(id)]
+	return match node.kind {
+		.int_literal, .float_literal, .bool_literal, .char_literal { true }
+		.prefix { g.is_const_expr(g.a.child(&node, 0)) }
+		.infix {
+			g.is_const_expr(g.a.child(&node, 0)) && g.is_const_expr(g.a.child(&node, 1))
+		}
+		.paren { g.is_const_expr(g.a.child(&node, 0)) }
+		.cast_expr { g.is_const_expr(g.a.child(&node, 0)) }
+		.ident { node.value in g.const_vals }
+		else { false }
 	}
 }
 

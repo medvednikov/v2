@@ -143,8 +143,9 @@ pub mut:
 @[heap]
 pub struct FlatAst {
 pub mut:
-	nodes    []Node
-	children []NodeId
+	nodes           []Node
+	children        []NodeId
+	user_code_start int
 }
 
 pub fn FlatAst.new() FlatAst {
