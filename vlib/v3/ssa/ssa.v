@@ -360,6 +360,24 @@ pub fn (mut m Module) replace_uses(old_id ValueID, new_id ValueID) {
 	}
 }
 
+pub fn (i &Instruction) value_operands() []ValueID {
+	return match i.op {
+		.br {
+			if i.operands.len > 0 {
+				[i.operands[0]]
+			} else {
+				[]ValueID{}
+			}
+		}
+		.jmp {
+			[]ValueID{}
+		}
+		else {
+			i.operands
+		}
+	}
+}
+
 pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 0

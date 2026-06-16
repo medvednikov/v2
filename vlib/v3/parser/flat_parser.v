@@ -1297,6 +1297,18 @@ fn (mut p FlatParser) for_stmt() flat.NodeId {
 		})
 	}
 
+	// Check for for-in: `for x in ...` or `for i, x in ...` or `for mut x in ...`
+	if p.tok == .name && (p.peek() == .key_in || p.peek() == .comma) {
+		first_expr := p.expr(.bit_or)
+		return p.for_in(first_expr)
+	}
+	if p.tok == .key_mut && p.peek() == .name {
+		first_expr := p.expr(.bit_or)
+		if p.tok == .key_in || p.tok == .comma {
+			return p.for_in(first_expr)
+		}
+	}
+
 	first_expr := p.expr(.lowest)
 
 	// for-in: `for x in expr` or `for i, x in expr`

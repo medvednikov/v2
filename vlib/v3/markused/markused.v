@@ -25,9 +25,20 @@ pub fn mark_used(a &flat.FlatAst) map[string]bool {
 		queue.delete(0)
 		if calls := call_graph[name] {
 			for callee in calls {
-				if callee !in used && callee in all_fns {
-					used[callee] = true
-					queue << callee
+				if callee in all_fns {
+					if callee !in used {
+						used[callee] = true
+						queue << callee
+					}
+				} else {
+					// Method call: callee may be just the method name,
+					// resolve by finding Type.method in all_fns
+					for fn_name, _ in all_fns {
+						if fn_name.ends_with('.${callee}') && fn_name !in used {
+							used[fn_name] = true
+							queue << fn_name
+						}
+					}
 				}
 			}
 		}
@@ -50,6 +61,9 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 						callee := a.nodes[int(callee_id)]
 						if callee.kind == .ident && callee.value.len > 0 {
 							calls << callee.value
+							if callee.value in ['println', 'print'] {
+								calls << 'int_str'
+							}
 						} else if callee.kind == .selector && callee.value.len > 0 {
 							calls << callee.value
 							if callee.children_count > 0 {

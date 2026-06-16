@@ -345,11 +345,19 @@ fn vec3_len_sq(v Vec3) int {
 }
 
 fn vec3_add(a Vec3, b Vec3) Vec3 {
-	return Vec3{x: a.x + b.x, y: a.y + b.y, z: a.z + b.z}
+	return Vec3{
+		x: a.x + b.x
+		y: a.y + b.y
+		z: a.z + b.z
+	}
 }
 
 fn vec3_scale(v Vec3, s int) Vec3 {
-	return Vec3{x: v.x * s, y: v.y * s, z: v.z * s}
+	return Vec3{
+		x: v.x * s
+		y: v.y * s
+		z: v.z * s
+	}
 }
 
 fn mat_det(m Matrix2x2) int {
@@ -454,11 +462,17 @@ fn binary_search_step(target int, lo int, hi int, a0 int, a1 int, a2 int, a3 int
 	}
 	mid := (lo + hi) / 2
 	mut mid_val := 0
-	if mid == 0 { mid_val = a0 }
-	else if mid == 1 { mid_val = a1 }
-	else if mid == 2 { mid_val = a2 }
-	else if mid == 3 { mid_val = a3 }
-	else { mid_val = a4 }
+	if mid == 0 {
+		mid_val = a0
+	} else if mid == 1 {
+		mid_val = a1
+	} else if mid == 2 {
+		mid_val = a2
+	} else if mid == 3 {
+		mid_val = a3
+	} else {
+		mid_val = a4
+	}
 
 	if mid_val == target {
 		return mid
@@ -487,7 +501,10 @@ fn triangle_area_2x(x1 int, y1 int, x2 int, y2 int, x3 int, y3 int) int {
 }
 
 fn rotate_point_90(p Point) Point {
-	return Point{x: 0 - p.y, y: p.x}
+	return Point{
+		x: 0 - p.y
+		y: p.x
+	}
 }
 
 fn manhattan_dist(a Point, b Point) int {
@@ -544,13 +561,102 @@ fn leading_zeros(n int) int {
 	mut count := 0
 	mut mask := 1 << 30
 	for mask > 0 {
-		if (v & mask) != 0 {
+		if v & mask != 0 {
 			return count
 		}
 		count++
 		mask = mask >> 1
 	}
 	return count
+}
+
+// ===================== METHODS =====================
+
+fn (p Point) sum() int {
+	return p.x + p.y
+}
+
+fn (p Point) product() int {
+	return p.x * p.y
+}
+
+fn (mut p Point) double() {
+	p.x = p.x * 2
+	p.y = p.y * 2
+}
+
+fn (r Rectangle) area() int {
+	return r.width * r.height
+}
+
+fn (r Rectangle) perimeter() int {
+	return 2 * (r.width + r.height)
+}
+
+fn (n Node) total() int {
+	return n.value + n.left + n.right
+}
+
+// ===================== IF-EXPRESSION HELPERS =====================
+
+fn int_abs(a int) int {
+	return if a < 0 { 0 - a } else { a }
+}
+
+fn int_max2(a int, b int) int {
+	return if a > b { a } else { b }
+}
+
+fn int_min2(a int, b int) int {
+	return if a < b { a } else { b }
+}
+
+fn sign_expr(x int) int {
+	return if x < 0 {
+		0 - 1
+	} else {
+		if x > 0 {
+			1
+		} else {
+			0
+		}
+	}
+}
+
+fn clamp_expr(x int, lo int, hi int) int {
+	return if x < lo {
+		lo
+	} else {
+		if x > hi {
+			hi
+		} else {
+			x
+		}
+	}
+}
+
+// ===================== DEFER HELPERS =====================
+
+fn defer_return_test() int {
+	defer {
+		g_acc += 100
+	}
+	return 42
+}
+
+fn defer_order_test() {
+	defer { g_acc += 1 }
+	defer { g_acc += 10 }
+	defer { g_acc += 100 }
+}
+
+// ===================== ENUMS =====================
+
+enum Direction {
+	up
+	down
+	left
+	right
 }
 
 // ===================== MAIN TEST FUNCTION =====================
@@ -1430,7 +1536,10 @@ fn main() {
 	print_int(rp2.y) // 24
 
 	// 22.3 add_points
-	rp3 := add_points(Point{x: 10, y: 20}, Point{x: 30, y: 40})
+	rp3 := add_points(Point{ x: 10, y: 20 }, Point{
+		x: 30
+		y: 40
+	})
 	print_int(rp3.x) // 40
 	print_int(rp3.y) // 60
 
@@ -1742,19 +1851,19 @@ fn main() {
 	print_str('--- 32. Quadrant & Struct Passing ---')
 
 	// 32.1 Quadrant 1
-	print_int(point_quadrant(Point{x: 5, y: 5})) // 1
+	print_int(point_quadrant(Point{ x: 5, y: 5 })) // 1
 
 	// 32.2 Quadrant 2
-	print_int(point_quadrant(Point{x: 0 - 5, y: 5})) // 2
+	print_int(point_quadrant(Point{ x: 0 - 5, y: 5 })) // 2
 
 	// 32.3 Quadrant 3
-	print_int(point_quadrant(Point{x: 0 - 5, y: 0 - 5})) // 3
+	print_int(point_quadrant(Point{ x: 0 - 5, y: 0 - 5 })) // 3
 
 	// 32.4 Quadrant 4
-	print_int(point_quadrant(Point{x: 5, y: 0 - 5})) // 4
+	print_int(point_quadrant(Point{ x: 5, y: 0 - 5 })) // 4
 
 	// 32.5 Origin
-	print_int(point_quadrant(Point{x: 0, y: 0})) // 0
+	print_int(point_quadrant(Point{ x: 0, y: 0 })) // 0
 
 	// ==================== 33. 4-FIELD STRUCT (5 tests) ====================
 	print_str('--- 33. 4-Field Struct ---')
@@ -1937,6 +2046,7 @@ fn main() {
 		3 { print_int(fib(7)) }
 		else { print_int(0) }
 	}
+
 	// 13
 
 	// 36.2 Match with computation in body
@@ -1947,6 +2057,7 @@ fn main() {
 		3 { print_int(30 * 30) }
 		else { print_int(0) }
 	}
+
 	// 400
 
 	// 36.3 Match on computed value
@@ -1958,6 +2069,7 @@ fn main() {
 		3 { print_int(400) }
 		else { print_int(500) }
 	}
+
 	// 400
 
 	// 36.4 Match in loop
@@ -1979,10 +2091,12 @@ fn main() {
 		5 { r36 += 100 }
 		else { r36 += 1 }
 	}
+
 	match x36d {
 		5 { r36 += 200 }
 		else { r36 += 2 }
 	}
+
 	print_int(r36) // 300
 
 	// ==================== 37. CHAINED FUNCTION CALLS (5 tests) ====================
@@ -2119,8 +2233,16 @@ fn main() {
 	// ==================== 41. VECTOR MATH (5 tests) ====================
 	print_str('--- 41. Vector Math ---')
 
-	va := Vec3{x: 1, y: 2, z: 3}
-	vb := Vec3{x: 4, y: 5, z: 6}
+	va := Vec3{
+		x: 1
+		y: 2
+		z: 3
+	}
+	vb := Vec3{
+		x: 4
+		y: 5
+		z: 6
+	}
 	print_int(vec3_dot(va, vb)) // 1*4+2*5+3*6 = 32
 	print_int(vec3_len_sq(va)) // 1+4+9 = 14
 	vsum := vec3_add(va, vb)
@@ -2142,8 +2264,18 @@ fn main() {
 	// ==================== 43. MATRIX OPERATIONS (5 tests) ====================
 	print_str('--- 43. Matrix Operations ---')
 
-	m1 := Matrix2x2{a: 1, b: 2, c: 3, d: 4}
-	m2 := Matrix2x2{a: 5, b: 6, c: 7, d: 8}
+	m1 := Matrix2x2{
+		a: 1
+		b: 2
+		c: 3
+		d: 4
+	}
+	m2 := Matrix2x2{
+		a: 5
+		b: 6
+		c: 7
+		d: 8
+	}
 	print_int(mat_det(m1)) // 1*4-2*3 = -2
 	print_int(mat_trace(m1)) // 1+4 = 5
 	m3 := mat_mul(m1, m2)
@@ -2162,10 +2294,26 @@ fn main() {
 	}
 	print_int(prime_count) // primes: 2,3,5,7,11,13,17,19,23,29 = 10
 
-	if is_prime(97) { print_int(1) } else { print_int(0) } // 1
-	if is_prime(100) { print_int(1) } else { print_int(0) } // 0
-	if is_prime(2) { print_int(1) } else { print_int(0) } // 1
-	if is_prime(1) { print_int(1) } else { print_int(0) } // 0
+	if is_prime(97) {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 1
+	if is_prime(100) {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 0
+	if is_prime(2) {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 1
+	if is_prime(1) {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 0
 
 	// ==================== 45. INTEGER SQUARE ROOT (5 tests) ====================
 	print_str('--- 45. Integer Square Root ---')
@@ -2182,8 +2330,16 @@ fn main() {
 	print_int(reverse_int(12345)) // 54321
 	print_int(reverse_int(100)) // 1
 	print_int(count_digits(12345)) // 5
-	if is_palindrome_num(12321) { print_int(1) } else { print_int(0) } // 1
-	if is_palindrome_num(12345) { print_int(1) } else { print_int(0) } // 0
+	if is_palindrome_num(12321) {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 1
+	if is_palindrome_num(12345) {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 0
 
 	// ==================== 47. STATS TRACKING (5 tests) ====================
 	print_str('--- 47. Stats Tracking ---')
@@ -2247,10 +2403,13 @@ fn main() {
 
 	print_int(triangle_area_2x(0, 0, 4, 0, 0, 3)) // 12 (area=6, 2x=12)
 	print_int(triangle_area_2x(0, 0, 10, 0, 0, 10)) // 100
-	rp := rotate_point_90(Point{x: 3, y: 4})
+	rp := rotate_point_90(Point{ x: 3, y: 4 })
 	print_int(rp.x) // -4
 	print_int(rp.y) // 3
-	print_int(manhattan_dist(Point{x: 1, y: 2}, Point{x: 4, y: 6})) // 3+4 = 7
+	print_int(manhattan_dist(Point{ x: 1, y: 2 }, Point{
+		x: 4
+		y: 6
+	})) // 3+4 = 7
 
 	// ==================== 51. DIGITAL ROOT (5 tests) ====================
 	print_str('--- 51. Digital Root ---')
@@ -2378,15 +2537,39 @@ fn main() {
 	// ==================== 58. HEAP STRUCT COMPUTATIONS (5 tests) ====================
 	print_str('--- 58. Heap Struct Computations ---')
 
-	hv58 := &Vec3{x: 10, y: 20, z: 30}
+	hv58 := &Vec3{
+		x: 10
+		y: 20
+		z: 30
+	}
 	print_int(hv58.x * hv58.x + hv58.y * hv58.y + hv58.z * hv58.z) // 100+400+900 = 1400
-	hp58 := &Point{x: 7, y: 24}
+	hp58 := &Point{
+		x: 7
+		y: 24
+	}
 	print_int(hp58.x * hp58.x + hp58.y * hp58.y) // 49+576 = 625
-	hm58 := &Matrix2x2{a: 2, b: 0, c: 0, d: 2}
+	hm58 := &Matrix2x2{
+		a: 2
+		b: 0
+		c: 0
+		d: 2
+	}
 	print_int(hm58.a * hm58.d - hm58.b * hm58.c) // 4
-	hr58 := &Rectangle{width: 8, height: 5, origin: Point{x: 0, y: 0}}
+	hr58 := &Rectangle{
+		width:  8
+		height: 5
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
 	print_int(hr58.width * hr58.height) // 40
-	hc58 := &Color{r: 100, g: 150, b: 200, a: 255}
+	hc58 := &Color{
+		r: 100
+		g: 150
+		b: 200
+		a: 255
+	}
 	print_int((hc58.r + hc58.g + hc58.b) / 3) // (100+150+200)/3 = 150
 
 	// ==================== 59. MULTI-FUNCTION PIPELINE (5 tests) ====================
@@ -2437,10 +2620,17 @@ fn main() {
 	// ii%3==2: 2,5,8,11,14,17 → -1*6 = -6
 	// total: 126+70-6 = 190
 	print_int(g_acc) // 190
-	if g_toggle { print_int(1) } else { print_int(0) } // 20 iterations, toggle starts false, ends false → 0
+	if g_toggle {
+		print_int(1)
+	} else {
+		print_int(0)
+	} // 20 iterations, toggle starts false, ends false → 0
 
 	// Nested struct mutation in loop with conditionals
-	mut pts60 := Point{x: 0, y: 0}
+	mut pts60 := Point{
+		x: 0
+		y: 0
+	}
 	for ii := 1; ii <= 10; ii++ {
 		if ii % 2 == 0 {
 			translate_point(mut pts60, ii, 0)
@@ -2465,4 +2655,258 @@ fn main() {
 	print_str('All stress assertions passed')
 
 	print_str('=== ALL 60 TESTS PASSED ===')
+
+	// ==================== 61. METHODS (8 tests) ====================
+	print_str('--- 61. Methods ---')
+
+	// 61.1 Basic method call
+	mp1 := Point{
+		x: 10
+		y: 20
+	}
+	print_int(mp1.sum()) // 30
+
+	// 61.2 Method with multiplication
+	mp2 := Point{
+		x: 5
+		y: 6
+	}
+	print_int(mp2.product()) // 30
+
+	// 61.3 Mutable receiver method
+	mut mp3 := Point{
+		x: 7
+		y: 8
+	}
+	mp3.double()
+	print_int(mp3.x) // 14
+	print_int(mp3.y) // 16
+
+	// 61.4 Rectangle methods
+	mr1 := Rectangle{
+		width:  10
+		height: 5
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	print_int(mr1.area()) // 50
+	print_int(mr1.perimeter()) // 30
+
+	// 61.5 Node method
+	mn1 := Node{
+		value: 100
+		left:  10
+		right: 20
+	}
+	print_int(mn1.total()) // 130
+
+	// 61.6 Method on heap-allocated struct
+	mhp := &Point{
+		x: 4
+		y: 5
+	}
+	print_int(mhp.sum()) // 9
+	print_int(mhp.product()) // 20
+
+	// ==================== 62. IF-EXPRESSIONS (7 tests) ====================
+	print_str('--- 62. If-Expressions ---')
+
+	// 62.1 Basic if-expression (abs)
+	print_int(int_abs(-5)) // 5
+	print_int(int_abs(7)) // 7
+	print_int(int_abs(0)) // 0
+
+	// 62.2 If-expression for max
+	print_int(int_max2(10, 20)) // 20
+	print_int(int_max2(30, 15)) // 30
+	print_int(int_max2(5, 5)) // 5
+
+	// 62.3 If-expression for min
+	print_int(int_min2(10, 20)) // 10
+	print_int(int_min2(30, 15)) // 15
+	print_int(int_min2(8, 8)) // 8
+
+	// 62.4 Nested if-expression (sign)
+	print_int(sign_expr(-100)) // -1
+	print_int(sign_expr(100)) // 1
+	print_int(sign_expr(0)) // 0
+
+	// 62.5 Nested if-expression (clamp)
+	print_int(clamp_expr(5, 0, 10)) // 5
+	print_int(clamp_expr(-5, 0, 10)) // 0
+	print_int(clamp_expr(15, 0, 10)) // 10
+
+	// 62.6 If-expression in local variable
+	val62 := 25
+	result62 := if val62 > 20 { val62 * 2 } else { val62 }
+	print_int(result62) // 50
+
+	// 62.7 If-expression with complex condition
+	a62 := 10
+	b62 := 20
+	c62 := if a62 < b62 && b62 < 30 { a62 + b62 } else { 0 }
+	print_int(c62) // 30
+
+	// ==================== 63. STRING INTERPOLATION (5 tests) ====================
+	print_str('--- 63. String Interpolation ---')
+
+	// 63.1 Basic integer interpolation
+	interp_x := 42
+	si1 := 'The answer is ${interp_x}'
+	print_str(si1) // The answer is 42
+
+	// 63.2 Multiple interpolations
+	interp_a := 10
+	interp_b := 20
+	si2 := '${interp_a} + ${interp_b} = ${interp_a + interp_b}'
+	print_str(si2) // 10 + 20 = 30
+
+	// 63.3 String at beginning and end
+	interp_val := 100
+	si3 := 'Value: ${interp_val}!'
+	print_str(si3) // Value: 100!
+
+	// 63.4 Just interpolation
+	interp_num := 999
+	si4 := '${interp_num}'
+	print_str(si4) // 999
+
+	// 63.5 Multiple consecutive values
+	iv1 := 1
+	iv2 := 2
+	iv3 := 3
+	si5 := '${iv1}-${iv2}-${iv3}'
+	print_str(si5) // 1-2-3
+
+	// 63.6 String concatenation with + operator
+	str_a := 'Hello'
+	str_b := ' World'
+	str_c := str_a + str_b
+	print_str(str_c) // Hello World
+
+	// 63.7 Chained string concatenation
+	str_chain := 'A' + 'B' + 'C'
+	print_str(str_chain) // ABC
+
+	// ==================== 64. FOR-IN RANGE (7 tests) ====================
+	print_str('--- 64. For-In Range ---')
+
+	// 64.1 Basic for-in range
+	mut forin_sum1 := 0
+	for i in 0 .. 5 {
+		forin_sum1 += i
+	}
+	print_int(forin_sum1) // 10
+
+	// 64.2 Non-zero start
+	mut forin_sum2 := 0
+	for i in 5 .. 10 {
+		forin_sum2 += i
+	}
+	print_int(forin_sum2) // 35
+
+	// 64.3 Range with variable bounds
+	forin_start := 2
+	forin_end := 6
+	mut forin_sum3 := 0
+	for i in forin_start .. forin_end {
+		forin_sum3 += i
+	}
+	print_int(forin_sum3) // 14
+
+	// 64.4 Nested for-in ranges
+	mut forin_count := 0
+	for i in 0 .. 3 {
+		for j in 0 .. 4 {
+			forin_count += i + j + 1
+		}
+	}
+	print_int(forin_count) // 42
+
+	// 64.5 For-in with computation
+	mut forin_product := 1
+	for i in 1 .. 6 {
+		forin_product *= i
+	}
+	print_int(forin_product) // 120
+
+	// 64.6 For-in with break
+	mut forin_sum4 := 0
+	for i in 0 .. 100 {
+		if i >= 5 {
+			break
+		}
+		forin_sum4 += i
+	}
+	print_int(forin_sum4) // 10
+
+	// 64.7 For-in with continue
+	mut forin_sum5 := 0
+	for i in 0 .. 10 {
+		if i % 2 == 0 {
+			continue
+		}
+		forin_sum5 += i
+	}
+	print_int(forin_sum5) // 25
+
+	// ==================== 65. ENUMS (5 tests) ====================
+	print_str('--- 65. Enums ---')
+
+	// 65.1 Basic enum values
+	d1 := Direction.up
+	print_int(int(d1)) // 0
+	d2 := Direction.right
+	print_int(int(d2)) // 3
+
+	// 65.2 Enum in match
+	match d1 {
+		.up { print_int(10) }
+		.down { print_int(20) }
+		.left { print_int(30) }
+		.right { print_int(40) }
+		else { print_int(0) }
+	}
+
+	// 65.3 Enum comparison
+	if d2 == Direction.right {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 65.4 Enum in if-else chain
+	d3 := Direction.left
+	if d3 == Direction.up {
+		print_int(100)
+	} else if d3 == Direction.down {
+		print_int(200)
+	} else if d3 == Direction.left {
+		print_int(300) // 300
+	} else {
+		print_int(400)
+	}
+
+	// ==================== 66. DEFER STATEMENTS (3 tests) ====================
+	print_str('--- 66. Defer Statements ---')
+
+	// 66.1 Defer executes before return
+	g_acc = 0
+	print_int(defer_return_test()) // 42
+	print_int(g_acc) // 100
+
+	// 66.2 Multiple defers in LIFO order
+	g_acc = 0
+	defer_order_test()
+	print_int(g_acc) // 111 (100 + 10 + 1)
+
+	// 66.3 Defer in main
+	g_acc = 0
+	defer {
+		g_acc += 50
+	}
+
+	print_str('=== ALL 66 TESTS PASSED ===')
 }

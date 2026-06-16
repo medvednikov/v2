@@ -97,6 +97,7 @@ fn (mut b Builder) register_functions() {
 	b.register_extern('string__plus', b.str_type, [b.str_type, b.str_type])
 	b.register_extern('string_plus_many', b.str_type,
 		[b.i64_type, b.m.type_store.get_ptr(b.str_type)])
+	b.register_extern('free', b.void_type, [ptr_i8])
 	b.register_extern('fprintf', b.void_type, [ptr_i8, ptr_i8])
 
 	for node in b.a.nodes {
@@ -670,12 +671,23 @@ fn (mut b Builder) build_call(node flat.Node) ValueID {
 			return b.m.get_or_add_const(b.i64_type, '0')
 		}
 		else {
+			mut is_method := false
+			mut base_id := flat.NodeId(0)
 			actual_name := if fn_node.kind == .selector {
 				base := b.a.child_node(fn_node, 0)
 				if base.kind == .ident && base.value == 'C' {
 					fn_node.value
 				} else {
-					fn_node.value
+					mut found_name := fn_node.value
+					for fname, _ in b.fn_ids {
+						if fname.ends_with('.${fn_node.value}') {
+							found_name = fname
+							is_method = true
+							base_id = b.a.child(fn_node, 0)
+							break
+						}
+					}
+					found_name
 				}
 			} else {
 				fn_name
@@ -697,9 +709,30 @@ fn (mut b Builder) build_call(node flat.Node) ValueID {
 			}
 
 			mut args := [fn_ref]
+			if is_method {
+				if param_types.len > 0 {
+					pt := b.m.type_store.types[param_types[0]]
+					if pt.kind == .ptr_t {
+						base_node := b.a.nodes[int(base_id)]
+						if base_node.kind == .ident {
+							if addr := b.vars[base_node.value] {
+								args << addr
+							} else {
+								args << b.build_expr(base_id)
+							}
+						} else {
+							args << b.build_expr(base_id)
+						}
+					} else {
+						args << b.build_expr(base_id)
+					}
+				} else {
+					args << b.build_expr(base_id)
+				}
+			}
 			for i in 1 .. node.children_count {
 				arg_id := b.a.child(&node, i)
-				param_idx := i - 1
+				param_idx := if is_method { i } else { i - 1 }
 				if param_idx < param_types.len {
 					pt := b.m.type_store.types[param_types[param_idx]]
 					if pt.kind == .ptr_t {

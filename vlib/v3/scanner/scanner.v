@@ -273,10 +273,8 @@ pub fn (mut s Scanner) scan() token.Token {
 					s.offset += 2
 					return .and_assign
 				}
-				if s.peek_byte(1) in [` `, `\t`] {
-					s.offset++
-					return .and
-				}
+				s.offset++
+				return .and
 			} else if c2 == `=` {
 				s.offset++
 				return .and_assign
