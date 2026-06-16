@@ -4,6 +4,7 @@ import os
 import v3.bench
 import v3.gen.arm64
 import v3.gen.c as cgen
+import v3.markused
 import v3.parser
 import v3.pref
 import v3.ssa
@@ -70,9 +71,13 @@ fn main() {
 	transform.transform(mut a)
 	b.step('transform')
 
+	// Mark used functions (dead-code elimination)
+	used_fns := markused.mark_used(a)
+	b.step('markused')
+
 	if backend == 'arm64' {
 		// SSA + ARM64 native backend
-		m := ssa.build(a)
+		m := ssa.build_with_used(a, used_fns)
 		b.step('ssa build')
 
 		mut g := arm64.Gen.new(m)
@@ -84,7 +89,7 @@ fn main() {
 	} else {
 		// C backend (default)
 		mut g := cgen.FlatGen.new()
-		c_code := g.gen(a)
+		c_code := g.gen_with_used(a, used_fns)
 		b.step('gen C')
 
 		os.write_file(output_file, c_code) or {

@@ -13,6 +13,7 @@ mut:
 	sb             strings.Builder
 	indent         int
 	a              &flat.FlatAst = unsafe { nil }
+	used_fns       map[string]bool
 	str_lits       []string
 	fn_ret_types   map[string]string
 	fn_param_types map[string][]string
@@ -28,7 +29,12 @@ pub fn FlatGen.new() FlatGen {
 }
 
 pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
+	return g.gen_with_used(a, map[string]bool{})
+}
+
+pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) string {
 	g.a = a
+	g.used_fns = used_fns.clone()
 	g.collect()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
@@ -83,6 +89,9 @@ fn (mut g FlatGen) collect() {
 fn (mut g FlatGen) gen_fns() {
 	for node in g.a.nodes {
 		if node.kind == .fn_decl {
+			if g.used_fns.len > 0 && node.value !in g.used_fns {
+				continue
+			}
 			g.gen_fn(node)
 		}
 	}
@@ -625,6 +634,9 @@ fn (g &FlatGen) is_string_node(id flat.NodeId) bool {
 fn (mut g FlatGen) forward_decls() {
 	for node in g.a.nodes {
 		if node.kind == .fn_decl && node.value != 'main' {
+			if g.used_fns.len > 0 && node.value !in g.used_fns {
+				continue
+			}
 			g.write(g.c_type(node.typ))
 			g.write(' ')
 			g.write(c_name(node.value))

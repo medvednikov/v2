@@ -6,6 +6,7 @@ pub struct Builder {
 mut:
 	m          &Module = unsafe { nil }
 	a          &flat.FlatAst = unsafe { nil }
+	used_fns   map[string]bool
 	cur_func   int
 	cur_block  BlockID
 	vars       map[string]ValueID
@@ -23,9 +24,14 @@ mut:
 }
 
 pub fn build(a_ &flat.FlatAst) &Module {
+	return build_with_used(a_, map[string]bool{})
+}
+
+pub fn build_with_used(a_ &flat.FlatAst, used_fns map[string]bool) &Module {
 	mut b := Builder{
 		m: Module.new()
 		a: unsafe { a_ }
+		used_fns: used_fns
 	}
 	b.void_type = TypeID(0)
 	b.i64_type = b.m.type_store.get_int(64)
@@ -94,6 +100,9 @@ fn (mut b Builder) register_functions() {
 
 	for node in b.a.nodes {
 		if node.kind == .fn_decl {
+			if b.used_fns.len > 0 && node.value !in b.used_fns {
+				continue
+			}
 			ret_type := b.resolve_type(node.typ)
 			mut param_types := []TypeID{}
 			for i in 0 .. node.children_count {
@@ -131,6 +140,9 @@ fn (mut b Builder) register_extern(name string, ret TypeID, params []TypeID) {
 fn (mut b Builder) build_functions() {
 	for node in b.a.nodes {
 		if node.kind == .fn_decl {
+			if b.used_fns.len > 0 && node.value !in b.used_fns {
+				continue
+			}
 			b.build_function(node)
 		}
 	}
