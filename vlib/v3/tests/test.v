@@ -3642,5 +3642,39 @@ fn main() {
 	}
 	print_str('or blocks: ok')
 
-	print_str('=== ALL 88 TESTS PASSED ===')
+	// ==================== 89. IF GUARD (OPTIONAL UNWRAP) ====================
+	print_str('--- 89. If Guard (Optional Unwrap) ---')
+
+	if val := try_get_value(true) {
+		print_int(val) // 42
+	} else {
+		print_int(0)
+	}
+	if val := try_get_value(false) {
+		print_int(0)
+	} else {
+		print_int(99) // 99
+	}
+	// nested if-guard
+	if a := try_get_value(true) {
+		if b := try_get_value(true) {
+			print_int(a + b) // 84
+		}
+	}
+	// if-guard without else
+	if val := try_get_value(true) {
+		print_int(val + 8) // 50
+	}
+	// if-guard with false, no else — should skip body
+	mut guard_ran := false
+	if val := try_get_value(false) {
+		guard_ran = true
+		print_int(val)
+	}
+	if !guard_ran {
+		print_int(1) // 1
+	}
+	print_str('if guard: ok')
+
+	print_str('=== ALL 89 TESTS PASSED ===')
 }

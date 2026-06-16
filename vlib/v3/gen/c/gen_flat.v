@@ -552,6 +552,10 @@ fn (mut g FlatGen) gen_node_inline(id flat.NodeId) {
 
 fn (mut g FlatGen) gen_if(node flat.Node) {
 	cond := g.a.child_node(&node, 0)
+	if cond.kind == .decl_assign {
+		g.gen_if_guard(node, *cond)
+		return
+	}
 	if cond.kind != .empty {
 		g.write('if (')
 		g.gen_expr(g.a.child(&node, 0))
@@ -567,6 +571,63 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	}
 	g.indent--
 	g.tc.pop_scope()
+	g.gen_if_else(node)
+}
+
+fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
+	lhs := g.a.child_node(&cond, 0)
+	rhs_id := g.a.child(&cond, 1)
+	rhs := g.a.child_node(&cond, 1)
+	var_name := c_name(lhs.value)
+	tmp := g.tmp_name()
+	if rhs.kind == .index {
+		base_id := g.a.child(rhs, 0)
+		base_type := g.tc.resolve_type(base_id)
+		if base_type.starts_with('map[') {
+			key_type := base_type[4..base_type.index_u8(`]`)]
+			val_type := base_type[base_type.index_u8(`]`) + 1..]
+			c_val_type := g.tc.c_type(val_type)
+			get_fn := if key_type == 'string' { 'hashmap_get_string' } else { 'hashmap_get_int' }
+			g.write('void* ${tmp} = ${get_fn}(&')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(rhs, 1))
+			g.writeln(');')
+			g.writeln('if (${tmp} != NULL) {')
+			g.tc.push_scope()
+			g.indent++
+			g.writeln('${c_val_type} ${var_name} = *(${c_val_type}*)${tmp};')
+			g.tc.cur_scope.insert(lhs.value, val_type)
+		} else {
+			g.write('Optional ${tmp} = ')
+			g.gen_expr(rhs_id)
+			g.writeln(';')
+			g.writeln('if (${tmp}.ok) {')
+			g.tc.push_scope()
+			g.indent++
+			g.writeln('int ${var_name} = ${tmp}.value;')
+			g.tc.cur_scope.insert(lhs.value, 'int')
+		}
+	} else {
+		g.write('Optional ${tmp} = ')
+		g.gen_expr(rhs_id)
+		g.writeln(';')
+		g.writeln('if (${tmp}.ok) {')
+		g.tc.push_scope()
+		g.indent++
+		g.writeln('int ${var_name} = ${tmp}.value;')
+		g.tc.cur_scope.insert(lhs.value, 'int')
+	}
+	then_block := g.a.child_node(&node, 1)
+	for i in 0 .. then_block.children_count {
+		g.gen_node(g.a.child(then_block, i))
+	}
+	g.indent--
+	g.tc.pop_scope()
+	g.gen_if_else(node)
+}
+
+fn (mut g FlatGen) gen_if_else(node flat.Node) {
 	if node.children_count > 2 {
 		else_node := g.a.child_node(&node, 2)
 		if else_node.kind == .if_expr {

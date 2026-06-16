@@ -69,7 +69,7 @@ Compiling `hello world` (`println('hello world')`) with full builtin import (38 
 | cc        | 37 ms    | 9,200 KB |
 | **total** | **~60 ms** | **9,200 KB** |
 
-Compiling `test.v` (3,645 lines, 88 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic):
+Compiling `test.v` (3,680 lines, 89 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap):
 
 **C backend:**
 
@@ -83,7 +83,7 @@ Compiling `test.v` (3,645 lines, 88 test sections: structs, globals, match, recu
 | cc        | 49 ms    | 19,632 KB |
 | **total** | **~81 ms** | **19,632 KB** |
 
-All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~17 ms for test.v (3,623 lines) with C backend.
+All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~17 ms for test.v (3,680 lines) with C backend.
 
 Peak RSS: 9-20 MB.
 
@@ -91,7 +91,7 @@ Peak RSS: 9-20 MB.
 
 Frontend-only (parse + check + gen C, no `cc`):
 
-| Compiler | hello world | test.v (3,623 lines) | Peak RSS (hello) | Peak RSS (test) |
+| Compiler | hello world | test.v (3,680 lines) | Peak RSS (hello) | Peak RSS (test) |
 |----------|------------|----------------------|------------------|-----------------|
 | V1 (0.5.1) | 93 ms | 105 ms | 70 MB | 78 MB |
 | **v3** | **8 ms** | **17 ms** | **9 MB** | **20 MB** |
