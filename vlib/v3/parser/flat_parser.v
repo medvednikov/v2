@@ -50,6 +50,7 @@ fn (mut p FlatParser) parse_into(path string) {
 	p.next()
 
 	mut ids := []flat.NodeId{}
+	mut iter_count := 0
 	for p.tok != .eof {
 		if p.tok == .key_module {
 			p.next()
@@ -1502,6 +1503,20 @@ fn (mut p FlatParser) match_stmt() flat.NodeId {
 	})
 }
 
+fn (mut p FlatParser) match_branch_cond() flat.NodeId {
+	if p.tok == .name && p.lit.len > 0 && p.lit[0] >= `A` && p.lit[0] <= `Z` && p.peek() == .lcbr {
+		name := p.lit
+		p.next()
+		return p.a.add_val(.ident, name)
+	}
+	if p.tok == .name && is_builtin_type(p.lit) && p.peek() == .lcbr {
+		name := p.lit
+		p.next()
+		return p.a.add_val(.ident, name)
+	}
+	return p.expr(.lowest)
+}
+
 fn (mut p FlatParser) match_branch() flat.NodeId {
 	mut branch_ids := []flat.NodeId{}
 	mut is_else := false
@@ -1511,11 +1526,11 @@ fn (mut p FlatParser) match_branch() flat.NodeId {
 		is_else = true
 		p.next()
 	} else {
-		branch_ids << p.expr(.lowest)
+		branch_ids << p.match_branch_cond()
 		n_conds = 1
 		for p.tok == .comma {
 			p.next()
-			branch_ids << p.expr(.lowest)
+			branch_ids << p.match_branch_cond()
 			n_conds++
 		}
 	}
@@ -1691,6 +1706,13 @@ fn (mut p FlatParser) assign_or_expr_inline() flat.NodeId {
 
 fn (mut p FlatParser) defer_stmt() flat.NodeId {
 	p.next() // skip 'defer'
+	if p.tok == .lpar {
+		p.next()
+		if p.tok == .key_fn {
+			p.next()
+		}
+		p.check(.rpar)
+	}
 	body := p.block_stmt()
 	dstart := p.add_children([body])
 	return p.a.add_node(flat.Node{
