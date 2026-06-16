@@ -710,6 +710,13 @@ enum Direction {
 
 // ===================== MAIN TEST FUNCTION =====================
 
+fn try_get_value(ok bool) Optional {
+	if ok {
+		return optional_ok(42)
+	}
+	return optional_none()
+}
+
 fn main() {
 	print_str('=== v3 Test Suite ===')
 
@@ -3288,6 +3295,7 @@ fn main() {
 			print_int(0)
 		}
 	}
+
 	mut cf4 := 0
 	mut cf4_i := 0
 	for cf4_i < 20 && cf4 < 50 {
@@ -3619,5 +3627,20 @@ fn main() {
 
 	test_return_if_expr()
 
-	print_str('=== ALL 87 TESTS PASSED ===')
+	// ==================== 88. OR BLOCKS AND OPTIONAL ====================
+	print_str('--- 88. Or Blocks and Optional ---')
+
+	val1 := try_get_value(true) or { 0 }
+	print_int(val1) // 42
+	val2 := try_get_value(false) or { 99 }
+	print_int(val2) // 99
+	val3 := try_get_value(true) or { panic('should not happen') }
+	print_int(val3) // 42
+	try_get_value(true) or { panic('should not reach') }
+	try_get_value(false) or {
+		print_int(7) // 7
+	}
+	print_str('or blocks: ok')
+
+	print_str('=== ALL 88 TESTS PASSED ===')
 }
