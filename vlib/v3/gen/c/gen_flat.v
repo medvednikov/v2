@@ -273,8 +273,11 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 		.decl_assign {
 			g.gen_decl_assign(node)
 		}
-		.assign, .selector_assign, .index_assign {
+		.assign, .selector_assign {
 			g.gen_assign(node)
+		}
+		.index_assign {
+			g.gen_index_assign(node)
 		}
 		.return_stmt {
 			g.gen_defers()
@@ -372,6 +375,35 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			}
 		} else if rhs.kind == .or_expr {
 			g.gen_decl_or_expr(lhs, rhs)
+		} else if rhs.kind == .map_init {
+			v_type := g.tc.resolve_type(rhs_id)
+			c_typ := g.tc.c_type(v_type)
+			g.write('${c_typ} ')
+			g.gen_expr(lhs_id)
+			g.write(' = ')
+			g.gen_expr(rhs_id)
+			g.writeln(';')
+			if lhs.kind == .ident {
+				g.tc.cur_scope.insert(lhs.value, v_type)
+			}
+			if rhs.children_count > 0 {
+				map_type := rhs.value
+				key_type := map_type[4..map_type.index_u8(`]`)]
+				get_fn := if key_type == 'string' {
+					'hashmap_set_string'
+				} else {
+					'hashmap_set_int'
+				}
+				for j := 0; j < rhs.children_count; j += 2 {
+					g.write('${get_fn}(&')
+					g.gen_expr(lhs_id)
+					g.write(', ')
+					g.gen_expr(g.a.child(&rhs, j))
+					g.write(', &(${g.tc.c_type(map_type[map_type.index_u8(`]`) + 1..])}[]){')
+					g.gen_expr(g.a.child(&rhs, j + 1))
+					g.writeln('});')
+				}
+			}
 		} else {
 			typ := g.tc.c_type(g.tc.resolve_type(rhs_id))
 			g.write('${typ} ')
@@ -403,6 +435,34 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 		}
 		i += 2
 	}
+}
+
+fn (mut g FlatGen) gen_index_assign(node flat.Node) {
+	lhs_id := g.a.child(&node, 0)
+	lhs := g.a.nodes[int(lhs_id)]
+	if lhs.kind == .index {
+		base_id := g.a.child(&lhs, 0)
+		base_type := g.tc.resolve_type(base_id)
+		if base_type.starts_with('map[') {
+			key_type := base_type[4..base_type.index_u8(`]`)]
+			val_type := base_type[base_type.index_u8(`]`) + 1..]
+			c_val := g.tc.c_type(val_type)
+			set_fn := if key_type == 'string' {
+				'hashmap_set_string'
+			} else {
+				'hashmap_set_int'
+			}
+			g.write('${set_fn}(&')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&lhs, 1))
+			g.write(', &(${c_val}[]){')
+			g.gen_expr(g.a.child(&node, 1))
+			g.writeln('});')
+			return
+		}
+	}
+	g.gen_assign(node)
 }
 
 fn (mut g FlatGen) gen_for(node flat.Node) {
@@ -858,7 +918,10 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				}
 			} else if node.value == 'len' && base.kind == .ident {
 				base_type := g.tc.cur_scope.lookup(base.value) or { '' }
-				if base_type.contains('[') {
+				if base_type.starts_with('map[') {
+					g.gen_expr(base_id)
+					g.write('.len')
+				} else if base_type.contains('[') {
 					arr_len := base_type.after('[').before(']')
 					g.write(arr_len)
 				} else if base_type == 'string' {
@@ -885,10 +948,27 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.index {
-			g.gen_expr(g.a.child(&node, 0))
-			g.write('[')
-			g.gen_expr(g.a.child(&node, 1))
-			g.write(']')
+			base_id := g.a.child(&node, 0)
+			base_type := g.tc.resolve_type(base_id)
+			if base_type.starts_with('map[') {
+				key_type := base_type[4..base_type.index_u8(`]`)]
+				val_type := base_type[base_type.index_u8(`]`) + 1..]
+				c_val := g.tc.c_type(val_type)
+				get_fn := if key_type == 'string' { 'hashmap_get_string' } else { 'hashmap_get_int' }
+				g.write('*(${c_val}*)${get_fn}(&')
+				g.gen_expr(base_id)
+				g.write(', ')
+				g.gen_expr(g.a.child(&node, 1))
+				g.write(')')
+			} else {
+				g.gen_expr(base_id)
+				g.write('[')
+				g.gen_expr(g.a.child(&node, 1))
+				g.write(']')
+			}
+		}
+		.map_init {
+			g.gen_map_init(node)
 		}
 		.cast_expr {
 			g.write('(${g.tc.c_type(node.value)})(')
@@ -1055,6 +1135,15 @@ fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
 		g.gen_expr(g.a.child(field, 0))
 	}
 	g.write('}, sizeof(${name}))')
+}
+
+fn (mut g FlatGen) gen_map_init(node flat.Node) {
+	map_type := node.value
+	key_type := map_type[4..map_type.index_u8(`]`)]
+	val_type := map_type[map_type.index_u8(`]`) + 1..]
+	c_key := g.tc.c_type(key_type)
+	c_val := g.tc.c_type(val_type)
+	g.write('hashmap_new(sizeof(${c_key}), sizeof(${c_val}))')
 }
 
 fn (mut g FlatGen) gen_call(node flat.Node) {
@@ -1451,6 +1540,65 @@ fn (mut g FlatGen) preamble() {
 
 fn (mut g FlatGen) runtime_fns() {
 	g.writeln('typedef struct { bool ok; int value; string msg; } Optional;')
+	g.writeln('')
+	g.writeln('static bool string__eq(string a, string b);')
+	g.writeln('typedef struct { unsigned int hash; bool used; } MapSlot;')
+	g.writeln('typedef struct { MapSlot* slots; char* keys; char* vals; int cap; int len; int key_size; int val_size; } HashMap;')
+	g.writeln('')
+	g.writeln('static unsigned int _map_hash_bytes(const void* key, int key_size) {')
+	g.writeln('\tunsigned int h = 2166136261u; const unsigned char* p = (const unsigned char*)key;')
+	g.writeln('\tfor (int i = 0; i < key_size; i++) { h ^= p[i]; h *= 16777619u; } return h ? h : 1;')
+	g.writeln('}')
+	g.writeln('static unsigned int _map_hash_string(string key) {')
+	g.writeln('\treturn _map_hash_bytes(key.str, key.len);')
+	g.writeln('}')
+	g.writeln('HashMap hashmap_new(int key_size, int val_size) {')
+	g.writeln('\tHashMap m = {0}; m.cap = 16; m.key_size = key_size; m.val_size = val_size;')
+	g.writeln('\tm.slots = (MapSlot*)calloc(m.cap, sizeof(MapSlot));')
+	g.writeln('\tm.keys = (char*)calloc(m.cap, key_size); m.vals = (char*)calloc(m.cap, val_size); return m;')
+	g.writeln('}')
+	g.writeln('static void _hashmap_set_internal(HashMap* m, const void* key, unsigned int hash, const void* val);')
+	g.writeln('static void _hashmap_grow(HashMap* m) {')
+	g.writeln('\tint old_cap = m->cap; MapSlot* old_slots = m->slots; char* old_keys = m->keys; char* old_vals = m->vals;')
+	g.writeln('\tm->cap *= 2; m->len = 0;')
+	g.writeln('\tm->slots = (MapSlot*)calloc(m->cap, sizeof(MapSlot));')
+	g.writeln('\tm->keys = (char*)calloc(m->cap, m->key_size); m->vals = (char*)calloc(m->cap, m->val_size);')
+	g.writeln('\tfor (int i = 0; i < old_cap; i++) if (old_slots[i].used)')
+	g.writeln('\t\t_hashmap_set_internal(m, old_keys + i * m->key_size, old_slots[i].hash, old_vals + i * m->val_size);')
+	g.writeln('\tfree(old_slots); free(old_keys); free(old_vals);')
+	g.writeln('}')
+	g.writeln('static void _hashmap_set_internal(HashMap* m, const void* key, unsigned int hash, const void* val) {')
+	g.writeln('\tif (m->len * 2 >= m->cap) _hashmap_grow(m);')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && memcmp(m->keys + idx * m->key_size, key, m->key_size) == 0) {')
+	g.writeln('\t\t\tmemcpy(m->vals + idx * m->val_size, val, m->val_size); return; }')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1);')
+	g.writeln('\t}')
+	g.writeln('\tm->slots[idx].used = 1; m->slots[idx].hash = hash;')
+	g.writeln('\tmemcpy(m->keys + idx * m->key_size, key, m->key_size);')
+	g.writeln('\tmemcpy(m->vals + idx * m->val_size, val, m->val_size); m->len++;')
+	g.writeln('}')
+	g.writeln('void hashmap_set_int(HashMap* m, int key, const void* val) {')
+	g.writeln('\t_hashmap_set_internal(m, &key, _map_hash_bytes(&key, sizeof(int)), val);')
+	g.writeln('}')
+	g.writeln('void hashmap_set_string(HashMap* m, string key, const void* val) {')
+	g.writeln('\t_hashmap_set_internal(m, &key, _map_hash_string(key), val);')
+	g.writeln('}')
+	g.writeln('void* hashmap_get_int(HashMap* m, int key) {')
+	g.writeln('\tunsigned int hash = _map_hash_bytes(&key, sizeof(int));')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && *(int*)(m->keys + idx * m->key_size) == key) return m->vals + idx * m->val_size;')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); } return NULL;')
+	g.writeln('}')
+	g.writeln('void* hashmap_get_string(HashMap* m, string key) {')
+	g.writeln('\tunsigned int hash = _map_hash_string(key);')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && string__eq(*(string*)(m->keys + idx * m->key_size), key)) return m->vals + idx * m->val_size;')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); } return NULL;')
+	g.writeln('}')
 	g.writeln('')
 	g.writeln('void println(string s) {')
 	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')

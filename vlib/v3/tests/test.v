@@ -3676,5 +3676,42 @@ fn main() {
 	}
 	print_str('if guard: ok')
 
-	print_str('=== ALL 89 TESTS PASSED ===')
+	// ==================== 90. MAPS ====================
+	print_str('--- 90. Maps ---')
+
+	mut m := map[string]int{}
+	m['one'] = 1
+	m['two'] = 2
+	m['three'] = 3
+	print_int(m['one']) // 1
+	print_int(m['two']) // 2
+	print_int(m['three']) // 3
+	print_int(m.len) // 3
+	// if-guard with map lookup
+	if val := m['two'] {
+		print_int(val) // 2
+	} else {
+		print_int(0)
+	}
+	if val := m['missing'] {
+		print_int(val)
+	} else {
+		print_int(99) // 99
+	}
+	// map with int keys
+	mut mi := map[int]int{}
+	mi[10] = 100
+	mi[20] = 200
+	print_int(mi[10]) // 100
+	print_int(mi[20]) // 200
+	// map init with values
+	ml := map[string]int{
+		'x': 10
+		'y': 20
+	}
+	print_int(ml['x']) // 10
+	print_int(ml['y']) // 20
+	print_str('maps: ok')
+
+	print_str('=== ALL 90 TESTS PASSED ===')
 }

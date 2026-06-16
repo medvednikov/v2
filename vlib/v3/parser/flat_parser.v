@@ -2092,6 +2092,43 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 		.name {
 			name := p.lit
 			p.next()
+			// map init: map[K]V{} or map[K]V{k1: v1, ...}
+			if name == 'map' && p.tok == .lsbr {
+				p.next() // skip [
+				key_type := p.parse_type_name()
+				p.check(.rsbr)
+				val_type := p.parse_type_name()
+				map_type := 'map[${key_type}]${val_type}'
+				if p.tok == .lcbr {
+					p.next() // skip {
+					mut ids := []flat.NodeId{}
+					for p.tok != .rcbr && p.tok != .eof {
+						if p.tok == .semicolon {
+							p.next()
+							continue
+						}
+						k := p.expr(.lowest)
+						p.check(.colon)
+						v := p.expr(.lowest)
+						ids << k
+						ids << v
+						if p.tok == .comma || p.tok == .semicolon {
+							p.next()
+						}
+					}
+					p.check(.rcbr)
+					if ids.len > 0 {
+						istart := p.add_children(ids)
+						return p.a.add_node(flat.Node{
+							kind:           .map_init
+							value:          map_type
+							children_start: istart
+							children_count: ids.len
+						})
+					}
+				}
+				return p.a.add_val(.map_init, map_type)
+			}
 			// struct init: Name{...}
 			if p.tok == .lcbr && name.len > 0 && name[0] >= `A` && name[0] <= `Z` {
 				return p.struct_init(name)
