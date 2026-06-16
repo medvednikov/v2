@@ -80,11 +80,45 @@ fn (mut t Transformer) lower_match_stmts() {
 
 fn (mut t Transformer) lower_one_match(node flat.Node) flat.NodeId {
 	match_expr_id := t.a.child(&node, 0)
+	match_expr := t.a.nodes[int(match_expr_id)]
+
+	needs_temp := match_expr.kind !in [.ident, .int_literal, .bool_literal, .string_literal,
+		.char_literal]
+
+	mut actual_expr_id := match_expr_id
+	mut prefix_id := flat.empty_node
+
+	if needs_temp {
+		tmp_name := '__match_tmp_${int(match_expr_id)}'
+		tmp_ident := t.a.add_val(.ident, tmp_name)
+		decl_start := t.a.children.len
+		t.a.children << tmp_ident
+		t.a.children << match_expr_id
+		prefix_id = t.a.add_node(flat.Node{
+			kind:           .decl_assign
+			children_start: decl_start
+			children_count: 2
+		})
+		actual_expr_id = t.a.add_val(.ident, tmp_name)
+	}
+
 	mut branches := []flat.NodeId{}
 	for i in 1 .. node.children_count {
 		branches << t.a.child(&node, i)
 	}
-	return t.build_match_chain(match_expr_id, branches, 0)
+	if_id := t.build_match_chain(actual_expr_id, branches, 0)
+
+	if needs_temp {
+		block_start := t.a.children.len
+		t.a.children << prefix_id
+		t.a.children << if_id
+		return t.a.add_node(flat.Node{
+			kind:           .block
+			children_start: block_start
+			children_count: 2
+		})
+	}
+	return if_id
 }
 
 fn (mut t Transformer) build_match_chain(match_expr_id flat.NodeId, branches []flat.NodeId, idx int) flat.NodeId {

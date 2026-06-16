@@ -5,7 +5,7 @@ import encoding.binary
 
 pub struct Gen {
 mut:
-	m             &ssa.Module = unsafe { nil }
+	m             &ssa.Module  = unsafe { nil }
 	macho         &MachOObject = unsafe { nil }
 	stack_map     map[int]int
 	alloca_offset map[int]int
@@ -125,7 +125,11 @@ fn (mut g Gen) gen_func(func_idx int) {
 					count_val := g.m.values[instr.operands[0]]
 					if count_val.kind == .constant {
 						n := parse_int(count_val.name)
-						if n > 1 { int(n) } else { 1 }
+						if n > 1 {
+							int(n)
+						} else {
+							1
+						}
 					} else {
 						1
 					}
@@ -137,12 +141,10 @@ fn (mut g Gen) gen_func(func_idx int) {
 				slot_offset += alloc_size
 				g.alloca_offset[val_id] = -slot_offset
 				slot_offset += 8
-			} else if instr.op != .store && instr.op != .ret && instr.op != .br
-				&& instr.op != .jmp {
+			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp {
 				g.stack_map[val_id] = -slot_offset
 				result_size := g.m.type_size(val.typ)
-				if result_size > 8 && val.typ > 0
-					&& val.typ < g.m.type_store.types.len
+				if result_size > 8 && val.typ > 0 && val.typ < g.m.type_store.types.len
 					&& g.m.type_store.types[val.typ].kind == .struct_t {
 					slot_offset += (result_size + 7) & ~7
 				} else {
@@ -236,8 +238,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.emit32(asm_str_imm(Reg(10), Reg(ptr_reg), 1))
 			} else {
 				src_size := g.m.type_size(src_val.typ)
-				if src_size > 8 && src_val.typ > 0
-					&& src_val.typ < g.m.type_store.types.len
+				if src_size > 8 && src_val.typ > 0 && src_val.typ < g.m.type_store.types.len
 					&& g.m.type_store.types[src_val.typ].kind == .struct_t {
 					if src_off := g.stack_map[src_id] {
 						ptr_reg := g.load_val(ptr_id, 9)
@@ -254,7 +255,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				} else {
 					src_reg := g.load_val(src_id, 8)
 					ptr_reg := g.load_val(ptr_id, 9)
-					g.emit32(asm_str(Reg(src_reg), Reg(ptr_reg)))
+					g.emit_store_typed(src_reg, ptr_reg, src_val.typ)
 				}
 			}
 		}
@@ -291,7 +292,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 						return
 					}
 				}
-				g.emit32(asm_ldr(Reg(8), Reg(ptr_reg)))
+				g.emit_load_typed(8, ptr_reg, val.typ)
 				g.store_val(8, val_id)
 			}
 		}
@@ -308,21 +309,40 @@ fn (mut g Gen) gen_instr(val_id int) {
 			lhs_reg := g.load_val(instr.operands[0], 8)
 			rhs_reg := g.load_val(instr.operands[1], 9)
 			match instr.op {
-				.add { g.emit32(asm_add_reg(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.sub { g.emit32(asm_sub_reg(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.mul { g.emit32(asm_mul(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.sdiv { g.emit32(asm_sdiv(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.add {
+					g.emit32(asm_add_reg(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.sub {
+					g.emit32(asm_sub_reg(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.mul {
+					g.emit32(asm_mul(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.sdiv {
+					g.emit32(asm_sdiv(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
 				.srem {
 					g.emit32(asm_sdiv(Reg(10), Reg(lhs_reg), Reg(rhs_reg)))
 					g.emit32(asm_msub(Reg(8), Reg(10), Reg(rhs_reg), Reg(lhs_reg)))
 				}
-				.and_ { g.emit32(asm_and(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.or_ { g.emit32(asm_orr(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.xor { g.emit32(asm_eor(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.shl { g.emit32(asm_lslv(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
-				.ashr { g.emit32(asm_asrv(Reg(8), Reg(lhs_reg), Reg(rhs_reg))) }
+				.and_ {
+					g.emit32(asm_and(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.or_ {
+					g.emit32(asm_orr(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.xor {
+					g.emit32(asm_eor(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.shl {
+					g.emit32(asm_lslv(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.ashr {
+					g.emit32(asm_asrv(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
 				else {}
 			}
+
 			g.store_val(8, val_id)
 		}
 		.eq, .ne, .lt, .gt, .le, .ge {
@@ -338,6 +358,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				.ge { g.emit32(asm_cset_ge(Reg(8))) }
 				else {}
 			}
+
 			g.store_val(8, val_id)
 		}
 		.neg {
@@ -366,8 +387,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					g.emit32(asm_mov_reg(Reg(1), Reg(10)))
 				} else {
 					ret_size := g.m.type_size(ret_val.typ)
-					if ret_size > 8 && ret_val.typ > 0
-						&& ret_val.typ < g.m.type_store.types.len
+					if ret_size > 8 && ret_val.typ > 0 && ret_val.typ < g.m.type_store.types.len
 						&& g.m.type_store.types[ret_val.typ].kind == .struct_t {
 						if off := g.stack_map[ret_id] {
 							n_words := (ret_size + 7) / 8
@@ -430,8 +450,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		arg_id := instr.operands[ai]
 		arg_val := g.m.values[arg_id]
 		if arg_reg >= 8 {
-			eprintln('gen_call: too many arguments for ${fn_name}, stack args not yet implemented')
-			break
+			panic('arm64: too many arguments for `${fn_name}`, stack arguments not implemented')
 		}
 
 		if arg_val.kind == .string_literal {
@@ -739,6 +758,26 @@ fn (mut g Gen) emit_lea_fp(reg int, offset int) {
 	} else {
 		g.emit_mov_imm(reg, i64(offset))
 		g.emit32(asm_add_reg(Reg(reg), fp, Reg(reg)))
+	}
+}
+
+fn (mut g Gen) emit_store_typed(src_reg int, ptr_reg int, typ ssa.TypeID) {
+	size := g.m.type_size(typ)
+	match size {
+		1 { g.emit32(asm_str_b(Reg(src_reg), Reg(ptr_reg))) }
+		2 { g.emit32(asm_str_h(Reg(src_reg), Reg(ptr_reg))) }
+		4 { g.emit32(asm_str_w(Reg(src_reg), Reg(ptr_reg))) }
+		else { g.emit32(asm_str(Reg(src_reg), Reg(ptr_reg))) }
+	}
+}
+
+fn (mut g Gen) emit_load_typed(dst_reg int, ptr_reg int, typ ssa.TypeID) {
+	size := g.m.type_size(typ)
+	match size {
+		1 { g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg))) }
+		2 { g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg))) }
+		4 { g.emit32(asm_ldr_w(Reg(dst_reg), Reg(ptr_reg))) }
+		else { g.emit32(asm_ldr(Reg(dst_reg), Reg(ptr_reg))) }
 	}
 }
 

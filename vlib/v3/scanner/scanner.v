@@ -28,6 +28,15 @@ pub mut:
 	str_quote           u8
 }
 
+@[direct_array_access; inline]
+fn (s &Scanner) peek_byte(n int) u8 {
+	idx := s.offset + n
+	if idx < 0 || idx >= s.src.len {
+		return 0
+	}
+	return s.src[idx]
+}
+
 pub fn new_scanner(prefs &pref.Preferences, mode Mode) &Scanner {
 	unsafe {
 		return &Scanner{
@@ -106,7 +115,7 @@ pub fn (mut s Scanner) scan() token.Token {
 		s.lit = ''
 		return .semicolon
 	} else if c == `/` {
-		c2 := s.src[s.offset + 1]
+		c2 := s.peek_byte(1)
 		if c2 in [`/`, `*`] {
 			if preserve_insert_semi {
 				s.insert_semi = true
@@ -132,7 +141,7 @@ pub fn (mut s Scanner) scan() token.Token {
 		return .number
 	} else if (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`) || c in [`_`, `@`] {
 		s.offset++
-		if c == `@` && s.src[s.offset] == `[` {
+		if c == `@` && s.peek_byte(0) == `[` {
 			s.offset++
 			return .attribute
 		}
@@ -155,7 +164,7 @@ pub fn (mut s Scanner) scan() token.Token {
 		if !s.in_str_inter {
 			s.str_quote = c
 		}
-		s.string_literal(s.in_str_inter || s.src[s.offset - 2] == `r`, c)
+		s.string_literal(s.in_str_inter || (s.offset >= 2 && s.src[s.offset - 2] == `r`), c)
 		s.lit = s.src[s.pos..s.offset]
 		s.insert_semi = true
 		return .string
@@ -166,14 +175,14 @@ pub fn (mut s Scanner) scan() token.Token {
 	s.offset++
 	match c {
 		`.` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 >= `0` && c2 <= `9` {
 				s.number()
 				s.lit = s.src[s.pos..s.offset]
 				return .number
 			} else if c2 == `.` {
 				s.offset++
-				if s.src[s.offset] == `.` {
+				if s.peek_byte(0) == `.` {
 					s.offset++
 					return .ellipsis
 				}
@@ -182,20 +191,20 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .dot
 		}
 		`:` {
-			if s.src[s.offset] == `=` {
+			if s.peek_byte(0) == `=` {
 				s.offset++
 				return .decl_assign
 			}
 			return .colon
 		}
 		`!` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `=` {
 				s.offset++
 				return .ne
 			} else if c2 == `i` {
-				c3 := s.src[s.offset + 1]
-				c4_is_space := s.src[s.offset + 2] in [` `, `\t`]
+				c3 := s.peek_byte(1)
+				c4_is_space := s.peek_byte(2) in [` `, `\t`]
 				if c3 == `n` && c4_is_space {
 					s.offset += 2
 					return .not_in
@@ -208,14 +217,14 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .not
 		}
 		`=` {
-			if s.src[s.offset] == `=` {
+			if s.peek_byte(0) == `=` {
 				s.offset++
 				return .eq
 			}
 			return .assign
 		}
 		`+` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `+` {
 				s.offset++
 				return .inc
@@ -226,7 +235,7 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .plus
 		}
 		`-` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `-` {
 				s.offset++
 				return .dec
@@ -237,34 +246,34 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .minus
 		}
 		`%` {
-			if s.src[s.offset] == `=` {
+			if s.peek_byte(0) == `=` {
 				s.offset++
 				return .mod_assign
 			}
 			return .mod
 		}
 		`*` {
-			if s.src[s.offset] == `=` {
+			if s.peek_byte(0) == `=` {
 				s.offset++
 				return .mul_assign
 			}
 			return .mul
 		}
 		`^` {
-			if s.src[s.offset] == `=` {
+			if s.peek_byte(0) == `=` {
 				s.offset++
 				return .xor_assign
 			}
 			return .xor
 		}
 		`&` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `&` {
-				if s.offset + 1 < s.src.len && s.src[s.offset + 1] == `=` {
+				if s.peek_byte(1) == `=` {
 					s.offset += 2
 					return .and_assign
 				}
-				if s.offset + 1 <= s.src.len && s.src[s.offset + 1] in [` `, `\t`] {
+				if s.peek_byte(1) in [` `, `\t`] {
 					s.offset++
 					return .and
 				}
@@ -275,9 +284,9 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .amp
 		}
 		`|` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `|` {
-				if s.offset + 1 < s.src.len && s.src[s.offset + 1] == `=` {
+				if s.peek_byte(1) == `=` {
 					s.offset += 2
 					return .or_assign
 				}
@@ -290,10 +299,10 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .pipe
 		}
 		`<` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `<` {
 				s.offset++
-				if s.src[s.offset] == `=` {
+				if s.peek_byte(0) == `=` {
 					s.offset++
 					return .left_shift_assign
 				}
@@ -308,13 +317,13 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .lt
 		}
 		`>` {
-			c2 := s.src[s.offset]
+			c2 := s.peek_byte(0)
 			if c2 == `>` {
 				s.offset++
-				c3 := s.src[s.offset]
+				c3 := s.peek_byte(0)
 				if c3 == `>` {
 					s.offset++
-					if s.src[s.offset] == `=` {
+					if s.peek_byte(0) == `=` {
 						s.offset++
 						return .right_shift_unsigned_assign
 					}
@@ -421,6 +430,9 @@ fn (mut s Scanner) line() {
 @[direct_array_access]
 fn (mut s Scanner) comment() {
 	s.offset++
+	if s.offset >= s.src.len {
+		return
+	}
 	c := s.src[s.offset]
 	if c == `/` {
 		s.line()
@@ -429,7 +441,7 @@ fn (mut s Scanner) comment() {
 		mut ml_comment_depth := 1
 		for s.offset < s.src.len {
 			c2 := s.src[s.offset]
-			c3 := s.src[s.offset + 1]
+			c3 := s.peek_byte(1)
 			if c2 == `\n` {
 				s.offset++
 				s.file.add_line(s.offset)
@@ -478,7 +490,7 @@ fn (mut s Scanner) string_literal(scan_as_raw bool, c_quote u8) {
 			s.offset++
 			s.file.add_line(s.offset)
 			continue
-		} else if c == `$` && s.src[s.offset + 1] == `{` {
+		} else if c == `$` && s.peek_byte(1) == `{` {
 			s.in_str_inter = true
 			if s.skip_interpolation {
 				s.str_inter_cbr_depth++
@@ -506,12 +518,12 @@ fn (mut s Scanner) string_literal(scan_as_raw bool, c_quote u8) {
 
 @[direct_array_access]
 fn (mut s Scanner) number() {
-	if s.src[s.offset] == `0` {
+	if s.offset < s.src.len && s.src[s.offset] == `0` {
 		s.offset++
-		c := s.src[s.offset]
+		c := s.peek_byte(0)
 		if c in [`b`, `B`] {
 			s.offset++
-			for {
+			for s.offset < s.src.len {
 				c2 := s.src[s.offset]
 				if c2 in [`0`, `1`] || c2 == `_` {
 					s.offset++
@@ -519,9 +531,10 @@ fn (mut s Scanner) number() {
 				}
 				return
 			}
+			return
 		} else if c in [`x`, `X`] {
 			s.offset++
-			for {
+			for s.offset < s.src.len {
 				c2 := s.src[s.offset]
 				if (c2 >= `0` && c2 <= `9`) || (c2 >= `a` && c2 <= `f`)
 					|| (c2 >= `A` && c2 <= `F`) || c2 == `_` {
@@ -530,9 +543,10 @@ fn (mut s Scanner) number() {
 				}
 				return
 			}
+			return
 		} else if c in [`o`, `O`] {
 			s.offset++
-			for {
+			for s.offset < s.src.len {
 				c2 := s.src[s.offset]
 				if (c2 >= `0` && c2 <= `7`) || c2 == `_` {
 					s.offset++
@@ -540,6 +554,7 @@ fn (mut s Scanner) number() {
 				}
 				return
 			}
+			return
 		}
 	}
 	mut has_decimal := false
@@ -549,11 +564,13 @@ fn (mut s Scanner) number() {
 		if (c >= `0` && c <= `9`) || c == `_` {
 			s.offset++
 			continue
-		} else if !has_decimal && c == `.` && s.src[s.offset + 1] != `.`
-			&& s.src[s.offset + 1] >= `0` && s.src[s.offset + 1] <= `9` {
-			has_decimal = true
-			s.offset++
-			continue
+		} else if !has_decimal && c == `.` {
+			next := s.peek_byte(1)
+			if next != `.` && next >= `0` && next <= `9` {
+				has_decimal = true
+				s.offset++
+				continue
+			}
 		} else if !has_exponent && c in [`e`, `E`] {
 			has_exponent = true
 			s.offset++

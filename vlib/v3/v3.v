@@ -4,9 +4,7 @@ import os
 import v3.bench
 import v3.gen.arm64
 import v3.gen.c as cgen
-import v3.insel
 import v3.markused
-import v3.mir
 import v3.parser
 import v3.pref
 import v3.ssa
@@ -90,13 +88,6 @@ fn main() {
 		if is_prod {
 			optimize.optimize(mut m)
 			b.step('optimize')
-
-			mir_mod := mir.lower_from_ssa(m)
-			b.step('mir')
-
-			mut mir_m := mir_mod
-			insel.select_(mut mir_m)
-			b.step('insel')
 		}
 
 		mut g := arm64.Gen.new(m)

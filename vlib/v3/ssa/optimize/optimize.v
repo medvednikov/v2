@@ -11,12 +11,17 @@ pub fn optimize(mut m ssa.Module) {
 
 	branch_fold(mut m)
 	rebuild_use_lists(mut m)
+	build_cfg(mut m)
 
 	dead_code_elimination(mut m)
 	rebuild_use_lists(mut m)
+	build_cfg(mut m)
 
 	remove_unreachable_blocks(mut m)
+
 	merge_blocks(mut m)
+	rebuild_use_lists(mut m)
+	build_cfg(mut m)
 }
 
 fn rebuild_use_lists(mut m ssa.Module) {
@@ -38,7 +43,22 @@ fn rebuild_use_lists(mut m ssa.Module) {
 				if instr_idx < 0 || instr_idx >= m.instrs.len {
 					continue
 				}
-				for op_id in m.instrs[instr_idx].operands {
+				instr := m.instrs[instr_idx]
+				value_operands := match instr.op {
+					.br {
+						// br cond, then_blk, else_blk — only operand 0 is a value
+						if instr.operands.len > 0 { [instr.operands[0]] } else { []ssa.ValueID{} }
+					}
+					.jmp {
+						// jmp target_blk — no value operands
+						[]ssa.ValueID{}
+					}
+					else {
+						instr.operands
+					}
+				}
+
+				for op_id in value_operands {
 					if op_id >= 0 && op_id < m.values.len && val_id !in m.values[op_id].uses {
 						mut op_val := m.values[op_id]
 						op_val.uses << val_id

@@ -50,6 +50,17 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 						callee := a.nodes[int(callee_id)]
 						if callee.kind == .ident && callee.value.len > 0 {
 							calls << callee.value
+						} else if callee.kind == .selector && callee.value.len > 0 {
+							calls << callee.value
+							if callee.children_count > 0 {
+								base_id := a.child(&callee, 0)
+								if int(base_id) >= 0 {
+									base := a.nodes[int(base_id)]
+									if base.kind == .ident && base.value.len > 0 {
+										calls << base.value + '.' + callee.value
+									}
+								}
+							}
 						}
 					}
 				}
@@ -76,6 +87,7 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 			}
 			else {}
 		}
+
 		collect_calls(a, child, mut calls)
 	}
 }

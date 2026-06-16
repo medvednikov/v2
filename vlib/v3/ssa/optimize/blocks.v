@@ -71,7 +71,18 @@ fn merge_blocks(mut m ssa.Module) {
 				// Merge: remove jmp from A, append B's instrs
 				mut blk := m.blocks[blk_id]
 				blk.instrs.delete_last()
-				blk.instrs << m.blocks[target_id].instrs
+				for moved_val in m.blocks[target_id].instrs {
+					blk.instrs << moved_val
+					if moved_val > 0 && moved_val < m.values.len
+						&& m.values[moved_val].kind == .instruction {
+						instr_idx := m.values[moved_val].index
+						if instr_idx >= 0 && instr_idx < m.instrs.len {
+							mut instr := m.instrs[instr_idx]
+							instr.block = blk_id
+							m.instrs[instr_idx] = instr
+						}
+					}
+				}
 				m.blocks[blk_id] = blk
 
 				merged[target_id] = true
