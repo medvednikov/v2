@@ -24,22 +24,27 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 
 | Component      | Lines |
 |----------------|-------|
-| flat parser    | 2,915 |
-| C gen          | 1,518 |
-| SSA IR+build   | 1,355 |
-| SSA optimize   | 455   |
-| MIR            | 133   |
+| flat parser    | 2,927 |
+| C gen (flat)   | 1,175 |
+| C gen (AST)    | 656   |
+| SSA IR+build   | 1,510 |
+| SSA optimize   | 474   |
+| MIR            | 188   |
 | insel          | 7     |
-| ARM64 gen      | 815   |
+| ARM64 gen      | 873   |
 | ARM64 asm      | 634   |
 | Mach-O         | 285   |
 | ARM64 linker   | 1,478 |
-| flat AST       | 866   |
-| transformer    | 209   |
-| markused       | 81    |
-| driver         | 132   |
-| builtins       | 17    |
-| **total**      | **10,900** |
+| flat AST       | 230   |
+| AST            | 866   |
+| flatten        | 532   |
+| transformer    | 243   |
+| markused       | 107   |
+| driver         | 123   |
+| builtins       | 89    |
+| scanner        | 582   |
+| token          | 687   |
+| **total**      | **~13,900** |
 
 The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~27% fewer lines thanks to the flat AST representation.
 
@@ -57,48 +62,21 @@ Compiling `hello world` (`println('hello world')`):
 | cc        | 38 ms    | 3,104 KB |
 | **total** | **~38 ms** | **3,104 KB** |
 
-Compiling `test.v` (2,468 lines, 60 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration):
+Compiling `test.v` (3,623 lines, 87 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression):
 
 **C backend:**
 
 | Step      | Time     | RSS      |
 |-----------|----------|----------|
-| parse     | 2.25 ms  | 4,144 KB |
-| transform | 0.13 ms  | 4,192 KB |
-| markused  | 0.32 ms  | 4,304 KB |
-| gen C     | 1.15 ms  | 4,784 KB |
-| write     | 0.15 ms  | 4,800 KB |
-| cc        | 44 ms    | 4,864 KB |
-| **total** | **~48 ms** | **4,864 KB** |
+| parse     | 4.17 ms  | 4,960 KB |
+| transform | 0.20 ms  | 5,008 KB |
+| markused  | 1.85 ms  | 5,728 KB |
+| gen C     | 2.43 ms  | 6,768 KB |
+| write     | 0.15 ms  | 6,784 KB |
+| cc        | 52 ms    | 6,800 KB |
+| **total** | **~69 ms** | **6,800 KB** |
 
-**ARM64 backend (no cc — straight to native binary):**
-
-| Step      | Time     | RSS      |
-|-----------|----------|----------|
-| parse     | 2.13 ms  | 4,096 KB |
-| transform | 0.15 ms  | 4,160 KB |
-| markused  | 0.43 ms  | 4,336 KB |
-| SSA build | 4.95 ms  | 6,080 KB |
-| ARM64 gen | 7.08 ms  | 6,672 KB |
-| link      | 6.94 ms  | 6,736 KB |
-| **total** | **~22 ms** | **6,736 KB** |
-
-**ARM64 backend with `-prod` (SSA optimization + MIR + insel):**
-
-| Step      | Time      | RSS      |
-|-----------|-----------|----------|
-| parse     | 2.18 ms   | 4,112 KB |
-| transform | 0.14 ms   | 4,176 KB |
-| markused  | 0.44 ms   | 4,304 KB |
-| SSA build | 5.76 ms   | 6,016 KB |
-| optimize  | 8.93 ms   | 6,624 KB |
-| MIR       | 0.89 ms   | 7,760 KB |
-| insel     | 0.00 ms   | 7,776 KB |
-| ARM64 gen | 7.43 ms   | 8,496 KB |
-| link      | 3.88 ms   | 8,992 KB |
-| **total** | **~30 ms** | **8,992 KB** |
-
-All v3 steps (parse + transform + markused + gen + write) complete in ~0.26 ms for hello world, ~4 ms for test.v (2,468 lines) with C backend. The ARM64 backend compiles test.v end-to-end in ~22 ms — no external tools, straight to executable. With `-prod`, SSA optimization adds ~10 ms for constant folding, branch folding, DCE, and block optimization.
+All v3 steps (parse + transform + markused + gen + write) complete in ~0.26 ms for hello world, ~9 ms for test.v (3,623 lines) with C backend.
 
 Peak RSS: 3-7 MB.
 
@@ -106,17 +84,15 @@ Peak RSS: 3-7 MB.
 
 Frontend-only (parse + check + gen C, no `cc`):
 
-| Compiler | hello world | test.v (2,468 lines) | Peak RSS (hello) | Peak RSS (test) |
+| Compiler | hello world | test.v (3,623 lines) | Peak RSS (hello) | Peak RSS (test) |
 |----------|------------|----------------------|------------------|-----------------|
 | V1 (0.5.1) | 93 ms | 105 ms | 70 MB | 78 MB |
-| **v3** | **0.26 ms** | **4 ms** | **3 MB** | **5 MB** |
+| **v3** | **0.26 ms** | **9 ms** | **3 MB** | **7 MB** |
 
-v3 is **~350x faster** and uses **~15x less memory** than V1 for frontend compilation.
+v3 is **~350x faster** and uses **~10x less memory** than V1 for frontend compilation.
 
 V1 parses 143 files (~33K lines) of builtins for every compilation. v3 parses only the input file and generates standalone C with a minimal preamble — no builtin parsing overhead.
 
 Generated C output for hello world: V1 emits 4,147 lines, v3 emits 73 lines.
-
-The ARM64 backend goes further — compiling test.v to a native binary in ~22 ms total, with no dependency on any external C compiler or linker. With `-prod`, the full optimization pipeline (SSA optimize + MIR + insel) runs in ~30 ms.
 
 Measured on macOS (Apple Silicon), warm runs. V1 built from `~/code/v5/v` (V 0.5.1).

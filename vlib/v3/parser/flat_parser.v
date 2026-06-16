@@ -1441,7 +1441,7 @@ fn (mut p FlatParser) for_in(first_expr flat.NodeId) flat.NodeId {
 		if p.tok == .key_mut {
 			p.next()
 		}
-		val_id = p.expr(.lowest)
+		val_id = p.a.add_val(.ident, p.expect_name())
 	}
 
 	p.check(.key_in)

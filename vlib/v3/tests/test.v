@@ -652,6 +652,55 @@ fn defer_order_test() {
 
 // ===================== ENUMS =====================
 
+fn nested_return(x int) int {
+	if x < 10 {
+		return 100
+	} else {
+		if x < 20 {
+			return 200
+		} else {
+			return 300
+		}
+	}
+}
+
+fn operator_to_name(op string) string {
+	return match op {
+		'+' { '__plus' }
+		'-' { '__minus' }
+		'*' { '__mul' }
+		'/' { '__div' }
+		else { op }
+	}
+}
+
+fn get_type_name(is_signed bool, size int) string {
+	return if is_signed {
+		match size {
+			8 { 'i8' }
+			16 { 'i16' }
+			32 { 'int' }
+			64 { 'i64' }
+			else { 'int' }
+		}
+	} else {
+		match size {
+			8 { 'u8' }
+			16 { 'u16' }
+			32 { 'u32' }
+			else { 'u64' }
+		}
+	}
+}
+
+fn test_return_if_expr() {
+	assert get_type_name(true, 32) == 'int'
+	assert get_type_name(false, 64) == 'u64'
+	assert get_type_name(true, 8) == 'i8'
+	assert get_type_name(false, 16) == 'u16'
+	print_str('return if expr: ok')
+}
+
 enum Direction {
 	up
 	down
@@ -2908,5 +2957,667 @@ fn main() {
 		g_acc += 50
 	}
 
-	print_str('=== ALL 66 TESTS PASSED ===')
+	// ==================== 67. UNARY OPERATIONS ====================
+	print_str('--- 67. Unary Operations ---')
+
+	un1 := !false
+	if un1 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	un2 := !true
+	if un2 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	un3 := !!true
+	if un3 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	un4 := !(5 > 10)
+	if un4 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	un5 := false
+	un6 := !un5
+	if un6 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 68. COMPLEX BOOLEAN ====================
+	print_str('--- 68. Complex Boolean ---')
+
+	if true && true && true {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	if false || false || true {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	if (true && false) || (true && true) {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	cb_a := 10
+	cb_b := 20
+	cb_c := 30
+	if cb_a < cb_b && cb_b < cb_c {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	if cb_a < 15 && cb_b > 15 && cb_c == 30 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 69. COMPARISON AS EXPRESSION ====================
+	print_str('--- 69. Comparison as Expression ---')
+
+	cmp1 := 10 > 5
+	if cmp1 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	cmp2 := 3 < 5
+	cmp3 := 7 > 2
+	if cmp2 && cmp3 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	cmp4 := 42 == 42
+	if cmp4 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	cmp5 := 10 != 20
+	if cmp5 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	cmp6 := (5 + 5) == (2 * 5)
+	if cmp6 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 70. DEEPLY NESTED IF ====================
+	print_str('--- 70. Deeply Nested If ---')
+
+	dn1 := 5
+	if dn1 > 0 {
+		if dn1 > 3 {
+			if dn1 > 4 {
+				print_int(1)
+			} else {
+				print_int(0)
+			}
+		} else {
+			print_int(0)
+		}
+	} else {
+		print_int(0)
+	}
+	dn2 := 2
+	if dn2 == 1 {
+		print_int(10)
+	} else {
+		if dn2 == 2 {
+			print_int(20)
+		} else {
+			if dn2 == 3 {
+				print_int(30)
+			} else {
+				print_int(0)
+			}
+		}
+	}
+	dn3 := 3
+	if dn3 > 0 {
+		match dn3 {
+			1 { print_int(100) }
+			2 { print_int(200) }
+			3 { print_int(300) }
+			else { print_int(0) }
+		}
+	} else {
+		print_int(0)
+	}
+	mut dn4_sum := 0
+	mut dn4_i := 0
+	for dn4_i < 3 {
+		mut dn4_j := 0
+		for dn4_j < 3 {
+			if dn4_i == dn4_j {
+				dn4_sum += 1
+			}
+			dn4_j++
+		}
+		dn4_i++
+	}
+	print_int(dn4_sum) // 3
+	mut dn5_result := 0
+	mut dn5_k := 0
+	for dn5_k < 100 {
+		if dn5_k > 5 {
+			if dn5_k > 7 {
+				dn5_result = dn5_k
+				break
+			}
+		}
+		dn5_k++
+	}
+	print_int(dn5_result) // 8
+
+	// ==================== 71. LARGE CONSTANTS ====================
+	print_str('--- 71. Large Constants ---')
+
+	big1 := 100000
+	print_int(big1)
+	big2 := 1000 * 1000
+	print_int(big2)
+	big3 := 50000 + 50000
+	print_int(big3)
+	big4 := 200000 - 100000
+	print_int(big4)
+	big5 := 1000000 / 100
+	print_int(big5)
+
+	// ==================== 72. MIXED OPERATIONS ====================
+	print_str('--- 72. Mixed Operations ---')
+
+	mix1 := (10 + 5) * 2
+	if mix1 == 30 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	mix2a := 10 > 5
+	mix2b := 20 < 30
+	if mix2a && mix2b {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	mix3 := 2 + 3 * 4 - 6 / 2
+	print_int(mix3) // 11
+	mix4 := (5 | 3) + (4 & 6)
+	print_int(mix4) // 11
+	mix5 := ((10 + 5) * 2 - 10) / 5
+	print_int(mix5) // 4
+
+	// ==================== 73. EDGE CASES ====================
+	print_str('--- 73. Edge Cases ---')
+
+	edge1 := 0 + 0
+	print_int(edge1)
+	edge2 := 100 * 0
+	print_int(edge2)
+	edge3 := 0 / 7
+	print_int(edge3)
+	edge4 := 42 + 0
+	print_int(edge4)
+	edge5 := 42 * 1
+	print_int(edge5)
+	edge6 := 42 / 1
+	print_int(edge6)
+	edge7 := 7 / 7
+	print_int(edge7)
+	edge8 := 100 / 10
+	print_int(edge8)
+	edge9 := 10 % 10
+	print_int(edge9)
+	edge10 := 5 % 7
+	print_int(edge10)
+	if 0 == 0 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+	if 0 < 1 {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 74. COMPLEX RECURSION ====================
+	print_str('--- 74. Complex Recursion ---')
+
+	print_int(sum_recursive(100)) // 5050
+	print_int(gcd(252, 105)) // 21
+	print_int(fib(15)) // 610
+	print_int(power(3, 5)) // 243
+	print_int(factorial(7)) // 5040
+
+	// ==================== 75. STRUCT OPERATIONS ====================
+	print_str('--- 75. Struct Operations ---')
+
+	mut sp1 := Point{
+		x: 0
+		y: 0
+	}
+	scale_point(mut sp1, 10)
+	print_int(sp1.x) // 0
+	print_int(sp1.y) // 0
+	mut sp2 := Point{
+		x: 1
+		y: 1
+	}
+	scale_point(mut sp2, 5)
+	translate_point(mut sp2, 10, 20)
+	print_int(sp2.x) // 15
+	print_int(sp2.y) // 25
+	sp3 := Point{
+		x: 100
+		y: 200
+	}
+	sp3_sum := sp3.x + sp3.y
+	sp3_diff := sp3.y - sp3.x
+	print_int(sp3_sum) // 300
+	print_int(sp3_diff) // 100
+	mut sp4 := Point{
+		x: 10
+		y: 20
+	}
+	swap_point(mut sp4)
+	scale_point(mut sp4, 2)
+	print_int(sp4.x) // 40
+	print_int(sp4.y) // 20
+	sp5 := Point{
+		x: 5
+		y: 10
+	}
+	if sp5.x < sp5.y {
+		print_int(1)
+	} else {
+		print_int(0)
+	}
+
+	// ==================== 76. CONTROL FLOW EDGE CASES ====================
+	print_str('--- 76. Control Flow Edge Cases ---')
+
+	mut cf1 := 0
+	if true {
+		cf1 = 1
+	}
+	print_int(cf1) // 1
+	mut cf2 := 0
+	if true {
+		cf2 += 1
+	}
+	if true {
+		cf2 += 2
+	}
+	if true {
+		cf2 += 4
+	}
+	print_int(cf2) // 7
+	cf3 := 2
+	match cf3 {
+		1 {
+			match cf3 {
+				1 { print_int(11) }
+				else { print_int(10) }
+			}
+		}
+		2 {
+			match cf3 {
+				2 { print_int(22) }
+				else { print_int(20) }
+			}
+		}
+		else {
+			print_int(0)
+		}
+	}
+	mut cf4 := 0
+	mut cf4_i := 0
+	for cf4_i < 20 && cf4 < 50 {
+		cf4 += cf4_i
+		cf4_i++
+	}
+	print_int(cf4) // 55
+	print_int(nested_return(5)) // 100
+	print_int(nested_return(15)) // 200
+	print_int(nested_return(25)) // 300
+	mut cf5 := 0
+	mut cf5_i := 0
+	for cf5_i < 3 || cf5 < 10 {
+		cf5 += 5
+		cf5_i++
+	}
+	print_int(cf5) // 15
+
+	// ==================== 77. ARRAY INITIALIZATION ====================
+	print_str('--- 77. Array Initialization ---')
+
+	arr1 := [10, 20, 30]
+	print_int(arr1[0]) // 10
+	print_int(arr1[1]) // 20
+	print_int(arr1[2]) // 30
+	arr2 := [5, 10, 15]
+	arr2_sum := arr2[0] + arr2[1] + arr2[2]
+	print_int(arr2_sum) // 30
+	base_val := 7
+	arr3 := [base_val, base_val * 2, base_val * 3]
+	print_int(arr3[0]) // 7
+	print_int(arr3[1]) // 14
+	print_int(arr3[2]) // 21
+	arr4 := [100, 200, 300]
+	result4 := arr4[0] * 2 + arr4[1]
+	print_int(result4) // 400
+	arr5 := [3, 4, 5]
+	print_int(add(arr5[0], arr5[1])) // 7
+	print_int(mul(arr5[1], arr5[2])) // 20
+
+	// ==================== 78. FOR-IN ARRAY ====================
+	print_str('--- 78. For-In Array ---')
+
+	arr_iter1 := [10, 20, 30]
+	mut sum_iter1 := 0
+	for elem in arr_iter1 {
+		sum_iter1 += elem
+	}
+	print_int(sum_iter1) // 60
+	arr_iter2 := [5, 10, 15]
+	mut weighted_sum2 := 0
+	for i, elem in arr_iter2 {
+		weighted_sum2 += (i + 1) * elem
+	}
+	print_int(weighted_sum2) // 70
+	arr_iter3 := [1, 2, 3, 4, 5]
+	mut sum_iter3 := 0
+	for elem in arr_iter3 {
+		if elem > 3 {
+			break
+		}
+		sum_iter3 += elem
+	}
+	print_int(sum_iter3) // 6
+	arr_iter4 := [1, 2, 3, 4, 5]
+	mut sum_iter4 := 0
+	for elem in arr_iter4 {
+		if elem % 2 == 0 {
+			continue
+		}
+		sum_iter4 += elem
+	}
+	print_int(sum_iter4) // 9
+	arr_outer := [1, 2, 3]
+	arr_inner := [10, 20]
+	mut nested_sum := 0
+	for outer in arr_outer {
+		for inner in arr_inner {
+			nested_sum += outer * inner
+		}
+	}
+	print_int(nested_sum) // 180
+
+	// ==================== 79. FIXED SIZE ARRAYS ====================
+	print_str('--- 79. Fixed Size Arrays ---')
+
+	fixed_arr1 := [5, 10, 15]
+	print_int(fixed_arr1[0]) // 5
+	print_int(fixed_arr1[1]) // 10
+	print_int(fixed_arr1[2]) // 15
+	fa_idx := 1
+	print_int(fixed_arr1[fa_idx]) // 10
+	mut fixed_sum := 0
+	for elem in fixed_arr1 {
+		fixed_sum += elem
+	}
+	print_int(fixed_sum) // 30
+	fixed_arr2 := [1, 2, 3, 4, 5]
+	mut fixed_product := 1
+	for elem in fixed_arr2 {
+		fixed_product *= elem
+	}
+	print_int(fixed_product) // 120
+	fixed_outer := [100, 200, 300]
+	fixed_inner := [1, 2, 3]
+	print_int(fixed_outer[0] + fixed_inner[2]) // 103
+	fixed_literal := [1, 2, 3, 4, 5]!
+	print_int(fixed_literal[0]) // 1
+	print_int(fixed_literal[4]) // 5
+	print_int(fixed_literal.len) // 5
+	mut fixed_literal_sum := 0
+	for elem in fixed_literal {
+		fixed_literal_sum += elem
+	}
+	print_int(fixed_literal_sum) // 15
+
+	// ==================== 80. STRING STRUCT FIELDS ====================
+	print_str('--- 80. String Struct Fields ---')
+
+	s80_1 := 'Hello'
+	print_str(s80_1) // Hello
+	s80_2 := 'World'
+	print_int(s80_2.len) // 5
+	a80 := 'AB'
+	b80 := 'CDE'
+	print_int(a80.len + b80.len) // 5
+	print_str('Passed directly')
+
+	// ==================== 81. STRUCT FIELD OPERATIONS ====================
+	print_str('--- 81. Struct Field Operations ---')
+
+	mut sf1 := Point{
+		x: 10
+		y: 20
+	}
+	sf1.x = sf1.x + 5
+	sf1.y = sf1.y - 3
+	print_int(sf1.x) // 15
+	print_int(sf1.y) // 17
+	mut sf2 := Point{
+		x: 6
+		y: 100
+	}
+	sf2.x = sf2.x * 7
+	sf2.y = sf2.y / 4
+	print_int(sf2.x) // 42
+	print_int(sf2.y) // 25
+	mut sf3 := Point{
+		x: 50
+		y: 30
+	}
+	sf3.x += 25
+	sf3.y -= 10
+	print_int(sf3.x) // 75
+	print_int(sf3.y) // 20
+	mut sf4 := Point{
+		x: 8
+		y: 64
+	}
+	sf4.x *= 5
+	sf4.y /= 8
+	print_int(sf4.x) // 40
+	print_int(sf4.y) // 8
+	mut sf5 := Point{
+		x: 3
+		y: 4
+	}
+	sf5.x = sf5.x + sf5.y
+	sf5.y = sf5.x * sf5.y
+	print_int(sf5.x) // 7
+	print_int(sf5.y) // 28
+	mut sf6 := Point{
+		x: 2
+		y: 3
+	}
+	sf6.x = sf6.x * 2
+	sf6.x = sf6.x + 1
+	sf6.x = sf6.x * 3
+	sf6.y = sf6.y + sf6.x
+	print_int(sf6.x) // 15
+	print_int(sf6.y) // 18
+	mut sf7 := Point{
+		x: 17
+		y: 23
+	}
+	sf7.x = sf7.x % 5
+	sf7.y = sf7.y % 7
+	print_int(sf7.x) // 2
+	print_int(sf7.y) // 2
+	mut sf8 := Point{
+		x: 0b1100
+		y: 0b1010
+	}
+	sf8.x = sf8.x & sf8.y
+	sf8.y = sf8.x | 0b0101
+	print_int(sf8.x) // 8
+	print_int(sf8.y) // 13
+	mut sf9 := Point{
+		x: 5
+		y: 10
+	}
+	sf9.x = add(sf9.x, sf9.y)
+	sf9.y = mul(sf9.x, 2)
+	print_int(sf9.x) // 15
+	print_int(sf9.y) // 30
+	mut rect_mod := Rectangle{
+		width:  10
+		height: 20
+		origin: Point{
+			x: 0
+			y: 0
+		}
+	}
+	rect_mod.width = rect_mod.width * 2
+	rect_mod.height += 5
+	rect_mod.origin.x = 100
+	rect_mod.origin.y = rect_mod.origin.x / 2
+	print_int(rect_mod.width) // 20
+	print_int(rect_mod.height) // 25
+	print_int(rect_mod.origin.x) // 100
+	print_int(rect_mod.origin.y) // 50
+
+	// ==================== 82. PRINTLN ====================
+	print_str('--- 82. Println ---')
+
+	println('hello world')
+
+	// ==================== 83. ALGEBRAIC OPTIMIZATIONS ====================
+	print_str('--- 83. Algebraic Optimizations ---')
+
+	opt_val := 42
+	print_int(opt_val - opt_val) // 0
+	opt_xor := 123
+	print_int(opt_xor ^ opt_xor) // 0
+	opt_and := 99
+	print_int(opt_and & opt_and) // 99
+	opt_or := 77
+	print_int(opt_or | opt_or) // 77
+	opt_mul2 := 25
+	print_int(opt_mul2 * 2) // 50
+	opt_a2 := 10
+	opt_b2 := opt_a2 - opt_a2
+	opt_c2 := opt_a2 | opt_a2
+	print_int(opt_b2) // 0
+	print_int(opt_c2) // 10
+	opt_mul2_comm := 13
+	print_int(2 * opt_mul2_comm) // 26
+	opt_expr := 7
+	print_int((opt_expr ^ opt_expr) + 5) // 5
+	print_int((opt_expr & opt_expr) * 2) // 14
+	opt_large := 12345
+	print_int(opt_large - opt_large) // 0
+	print_int(opt_large ^ opt_large) // 0
+	print_int(opt_large & opt_large) // 12345
+	print_int(opt_large | opt_large) // 12345
+	mut opt_loop_sum := 0
+	for i in 1 .. 5 {
+		opt_loop_sum += i - i
+		opt_loop_sum += i & i
+	}
+	print_int(opt_loop_sum) // 10
+
+	// ==================== 84. DEAD STORE ELIMINATION ====================
+	print_str('--- 84. Dead Store Elimination ---')
+
+	{
+		mut dead_var := 100
+		dead_var = 200
+		_ = dead_var
+	}
+	print_int(1)
+	mut dse_var := 10
+	dse_var = 20
+	dse_var = 30
+	print_int(dse_var) // 30
+	mut dse_multi := 1
+	dse_multi = 2
+	dse_multi = 3
+	dse_multi = 4
+	dse_multi = 5
+	print_int(dse_multi) // 5
+	mut dse_branch := 100
+	if false {
+		dse_branch = 999
+	}
+	print_int(dse_branch) // 100
+	mut dse_live := 50
+	if true {
+		dse_live = 75
+	}
+	print_int(dse_live) // 75
+
+	// ==================== 85. GOTO STATEMENT ====================
+	print_str('--- 85. Goto Statement ---')
+
+	mut counter75 := 0
+	mut iterations75 := 0
+	start75:
+	counter75++
+	iterations75++
+	if counter75 < 3 {
+		unsafe {
+			goto start75
+		}
+	}
+	print_int(iterations75) // 3
+	mut skipped75 := false
+	unsafe {
+		goto skip75
+	}
+	skipped75 = true
+	skip75:
+	if skipped75 {
+		print_int(0)
+	} else {
+		print_int(1) // 1
+	}
+
+	// ==================== 86. STRING MATCH RETURN ====================
+	print_str('--- 86. String Match Return ---')
+
+	print_str(operator_to_name('+')) // __plus
+	print_str(operator_to_name('-')) // __minus
+	print_str(operator_to_name('*')) // __mul
+	print_str(operator_to_name('?')) // ?
+
+	// ==================== 87. RETURN IF EXPRESSION ====================
+	print_str('--- 87. Return If Expression ---')
+
+	test_return_if_expr()
+
+	print_str('=== ALL 87 TESTS PASSED ===')
 }
