@@ -129,7 +129,12 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				for i in 0 .. node.children_count {
 					f := a.child_node(&node, i)
 					if f.value.len > 0 && !f.value.starts_with('C.') {
-						tc.file_scope.insert(f.value, tc.parse_type(f.typ))
+						t := tc.parse_type(f.typ)
+						tc.file_scope.insert(f.value, t)
+						qname := tc.qualify_name(f.value)
+						if qname != f.value {
+							tc.file_scope.insert(qname, t)
+						}
 					}
 				}
 			}
@@ -472,6 +477,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			if typ := tc.cur_scope.lookup(node.value) {
 				return typ
 			}
+			$if debug {
+				eprintln('warning: unresolved ident `${node.value}`, recovering as int')
+			}
 			return Type(int_)
 		}
 		.call {
@@ -521,6 +529,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			qfn := tc.qualify_fn_name(fn_node.value)
 			if qfn in tc.fn_ret_types {
 				return tc.fn_ret_types[qfn]
+			}
+			$if debug {
+				eprintln('warning: unknown fn return type `${fn_node.value}`, recovering as int')
 			}
 			return Type(int_)
 		}
@@ -686,6 +697,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			return Type(bool_)
 		}
 		else {
+			$if debug {
+				eprintln('warning: unhandled node kind .${node.kind} in resolve_type, recovering as int')
+			}
 			return Type(int_)
 		}
 	}

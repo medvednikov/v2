@@ -6,23 +6,25 @@ import v3.types
 
 pub struct FlatGen {
 mut:
-	sb            strings.Builder
-	indent        int
-	a             &flat.FlatAst = unsafe { nil }
-	used_fns      map[string]bool
-	str_lits      []string
-	global_types  map[string]types.Type
-	enum_vals     map[string]int
-	defers        []flat.NodeId
-	interfaces    map[string][]string
-	const_vals    map[string]flat.NodeId
-	const_modules map[string]string
-	tc            types.TypeChecker
-	has_builtins  bool
-	tmp_count     int
-	modules       map[string]string // alias -> full module name
-	fn_ptr_types  map[string]string // fn_ptr:ret|params -> typedef name
-	smartcasts    map[string]string // var_name -> variant_name (active smartcasts)
+	sb             strings.Builder
+	indent         int
+	a              &flat.FlatAst = unsafe { nil }
+	used_fns       map[string]bool
+	str_lits       []string
+	global_types   map[string]types.Type
+	enum_vals      map[string]int
+	defers         []flat.NodeId
+	interfaces     map[string][]string
+	const_vals     map[string]flat.NodeId
+	const_modules  map[string]string
+	global_modules map[string]string
+	runtime_inits  []string
+	tc             types.TypeChecker
+	has_builtins   bool
+	tmp_count      int
+	modules        map[string]string // alias -> full module name
+	fn_ptr_types   map[string]string // fn_ptr:ret|params -> typedef name
+	smartcasts     map[string]string // var_name -> variant_name (active smartcasts)
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -45,6 +47,7 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, 
 	}
 	g.has_builtins = g.tc.has_builtins
 	g.collect_gen_info()
+	const_code := g.precompute_consts()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
 	g.gen_fns()
@@ -66,9 +69,16 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, 
 	g.global_decls()
 	g.fn_ptr_typedefs()
 	g.forward_decls()
-	const_code := g.precompute_consts()
 	g.string_literals()
 	g.sb.write_string(const_code)
+	if g.runtime_inits.len > 0 {
+		g.writeln('void _vinit() {')
+		for ri in g.runtime_inits {
+			g.writeln(ri)
+		}
+		g.writeln('}')
+		g.writeln('')
+	}
 	g.sb.write_string(fn_code)
 	return g.sb.str()
 }
@@ -97,8 +107,13 @@ fn (mut g FlatGen) collect_gen_info() {
 						continue
 					}
 					ft := g.tc.parse_type(f.typ)
-					g.global_types[f.value] = ft
+					qname := g.tc.qualify_name(f.value)
+					g.global_types[qname] = ft
+					g.global_modules[f.value] = g.tc.cur_module
 					g.tc.file_scope.insert(f.value, ft)
+					if qname != f.value {
+						g.tc.file_scope.insert(qname, ft)
+					}
 				}
 			}
 			.enum_decl {
@@ -163,7 +178,8 @@ fn (mut g FlatGen) gen_fns() {
 			if g.used_fns.len > 0 && node.value !in g.used_fns {
 				continue
 			}
-			if g.tc.cur_module == 'strings' {
+			if g.tc.cur_module == 'strings'
+				&& ('strings.new_builder' !in g.tc.fn_ret_types || !g.has_builtins) {
 				continue
 			}
 			if g.has_generic_params(node) {
@@ -193,6 +209,9 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 
 	if node.value == 'main' {
 		g.writeln('int main(int argc, char** argv) {')
+		if g.runtime_inits.len > 0 {
+			g.writeln('\t_vinit();')
+		}
 	} else {
 		ret_type := g.tc.parse_type(node.typ)
 		g.write(g.tc.c_type(ret_type))
@@ -1103,6 +1122,13 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				} else {
 					g.write(c_name(node.value))
 				}
+			} else if node.value in g.global_modules {
+				mod := g.global_modules[node.value]
+				if mod.len > 0 && mod != 'main' && mod != 'builtin' {
+					g.write(c_name('${mod}.${node.value}'))
+				} else {
+					g.write(c_name(node.value))
+				}
 			} else {
 				g.write(c_name(node.value))
 			}
@@ -1858,7 +1884,8 @@ fn (mut g FlatGen) forward_decls() {
 			if g.used_fns.len > 0 && node.value !in g.used_fns {
 				continue
 			}
-			if g.tc.cur_module == 'strings' {
+			if g.tc.cur_module == 'strings'
+				&& ('strings.new_builder' !in g.tc.fn_ret_types || !g.has_builtins) {
 				continue
 			}
 			if g.has_generic_params(node) {
@@ -2666,9 +2693,6 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 	if val_node.kind == .empty {
 		return
 	}
-	if !g.is_const_expr(val_id) {
-		return
-	}
 	tmp_sb := g.sb
 	g.sb = strings.new_builder(256)
 	g.gen_expr(val_id)
@@ -2684,6 +2708,13 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 		c_name('${g.const_modules[name]}.${name}')
 	} else {
 		c_name(name)
+	}
+	if !g.is_const_expr(val_id) {
+		if g.is_runtime_assignable(val_id) {
+			g.writeln('${ct} ${qname};')
+			g.runtime_inits << '\t${qname} = ${expr_str};'
+		}
+		return
 	}
 	if v_type is types.String {
 		g.writeln('string ${qname} = ${expr_str};')
@@ -2742,6 +2773,37 @@ fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
 		}
 		.ident {
 			node.value in g.const_vals
+		}
+		else {
+			false
+		}
+	}
+}
+
+fn (g &FlatGen) is_runtime_assignable(id flat.NodeId) bool {
+	if int(id) < 0 || int(id) >= g.a.nodes.len {
+		return false
+	}
+	node := g.a.nodes[int(id)]
+	return match node.kind {
+		.string_literal, .string_interp {
+			true
+		}
+		.call {
+			if node.children_count > 0 {
+				callee_id := g.a.child(&node, 0)
+				if int(callee_id) >= 0 {
+					callee := g.a.nodes[int(callee_id)]
+					callee.kind == .ident || callee.kind == .selector
+				} else {
+					false
+				}
+			} else {
+				false
+			}
+		}
+		.ident {
+			true
 		}
 		else {
 			false

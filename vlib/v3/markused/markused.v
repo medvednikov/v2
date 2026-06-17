@@ -8,6 +8,12 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	mut all_fns := map[string]bool{}
 	mut cur_module := ''
 
+	// Build a resolved function name set from the type checker
+	mut resolved_fns := map[string]bool{}
+	for name, _ in tc.fn_ret_types {
+		resolved_fns[name] = true
+	}
+
 	for node in a.nodes {
 		if node.kind == .module_decl {
 			cur_module = node.value
@@ -39,6 +45,11 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		if calls := call_graph[name] {
 			for callee in calls {
 				if callee in all_fns {
+					if callee !in used {
+						used[callee] = true
+						queue << callee
+					}
+				} else if callee in resolved_fns {
 					if callee !in used {
 						used[callee] = true
 						queue << callee

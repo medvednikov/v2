@@ -44,6 +44,11 @@ pub fn (mut p FlatParser) parse_files(paths []string) &flat.FlatAst {
 
 pub fn (mut p FlatParser) parse_into(path string) {
 	p.cur_file = path
+	// File marker before content so import resolver can track source files
+	p.a.add_node(flat.Node{
+		kind:  .file
+		value: path
+	})
 	src := os.read_file(path) or {
 		eprintln('error reading ${path}: ${err}')
 		return
@@ -1959,12 +1964,12 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 		}
 		// `is` / `!is` / `not_is` type check
 		if p.tok == .key_is || p.tok == .not_is {
-			is_negated := p.tok == .not_is
-			p.next()
 			bp := token.Token.key_is.left_binding_power()
 			if int(bp) < int(min_bp) {
 				break
 			}
+			is_negated := p.tok == .not_is
+			p.next()
 			type_name := p.parse_type_name()
 			istart := p.add_children([lhs])
 			is_node := p.a.add_node(flat.Node{
