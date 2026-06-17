@@ -4,9 +4,10 @@ import v3.flat
 
 pub struct Transformer {
 mut:
-	a       &flat.FlatAst = unsafe { nil }
-	structs map[string]StructInfo
-	globals map[string]string
+	a         &flat.FlatAst = unsafe { nil }
+	structs   map[string]StructInfo
+	globals   map[string]string
+	sum_types map[string][]string
 }
 
 pub struct StructInfo {
@@ -44,6 +45,16 @@ fn (mut t Transformer) collect_types() {
 				t.structs[node.value] = StructInfo{
 					name:   node.value
 					fields: fields
+				}
+			}
+			.type_decl {
+				if node.children_count > 0 {
+					mut variants := []string{}
+					for i in 0 .. node.children_count {
+						v := t.a.child_node(&node, i)
+						variants << v.value
+					}
+					t.sum_types[node.value] = variants
 				}
 			}
 			.global_decl {
@@ -168,10 +179,32 @@ fn (mut t Transformer) build_match_chain(match_expr_id flat.NodeId, branches []f
 	})
 }
 
+fn (t &Transformer) is_sum_variant(name string) bool {
+	for _, variants in t.sum_types {
+		for v in variants {
+			if v == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.Node) flat.NodeId {
 	n_conds := t.count_conds(branch)
 	if n_conds == 1 {
 		cond_val_id := t.a.child(&branch, 0)
+		cond_val := t.a.nodes[int(cond_val_id)]
+		if cond_val.kind == .ident && t.is_sum_variant(cond_val.value) {
+			is_start := t.a.children.len
+			t.a.children << match_expr_id
+			return t.a.add_node(flat.Node{
+				kind:           .is_expr
+				value:          cond_val.value
+				children_start: is_start
+				children_count: 1
+			})
+		}
 		cmp_start := t.a.children.len
 		t.a.children << match_expr_id
 		t.a.children << cond_val_id
@@ -185,15 +218,28 @@ fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.N
 	mut result := flat.empty_node
 	for i in 0 .. n_conds {
 		cond_val_id := t.a.child(&branch, i)
-		cmp_start := t.a.children.len
-		t.a.children << match_expr_id
-		t.a.children << cond_val_id
-		cmp := t.a.add_node(flat.Node{
-			kind:           .infix
-			op:             .eq
-			children_start: cmp_start
-			children_count: 2
-		})
+		cond_val := t.a.nodes[int(cond_val_id)]
+		is_sum_cond := cond_val.kind == .ident && t.is_sum_variant(cond_val.value)
+		cmp := if is_sum_cond {
+			is_start := t.a.children.len
+			t.a.children << match_expr_id
+			t.a.add_node(flat.Node{
+				kind:           .is_expr
+				value:          cond_val.value
+				children_start: is_start
+				children_count: 1
+			})
+		} else {
+			cmp_start := t.a.children.len
+			t.a.children << match_expr_id
+			t.a.children << cond_val_id
+			t.a.add_node(flat.Node{
+				kind:           .infix
+				op:             .eq
+				children_start: cmp_start
+				children_count: 2
+			})
+		}
 		if int(result) < 0 {
 			result = cmp
 		} else {

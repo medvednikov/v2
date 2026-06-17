@@ -544,6 +544,12 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			}
 			return Type(void_)
 		}
+		.as_expr {
+			return tc.parse_type(node.value)
+		}
+		.is_expr {
+			return Type(bool_)
+		}
 		else {
 			return Type(int_)
 		}
