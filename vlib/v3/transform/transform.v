@@ -206,7 +206,7 @@ pub fn (mut t Transformer) transform_stmt(id flat.NodeId) []flat.NodeId {
 		.return_stmt {
 			return t.transform_return_stmt(id, node)
 		}
-		.assign {
+		.assign, .selector_assign, .index_assign {
 			return t.transform_assign_stmt(id, node)
 		}
 		.decl_assign {
@@ -328,56 +328,80 @@ fn (mut t Transformer) transform_return_stmt(id flat.NodeId, node flat.Node) []f
 }
 
 fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
-	if node.children_count < 2 {
+	if node.children_count == 0 {
 		return [id]
 	}
-	lhs_id := t.a.child(&node, 0)
-	rhs_id := t.a.child(&node, 1)
-	new_lhs := t.transform_expr(lhs_id)
-	new_rhs := t.transform_expr(rhs_id)
+	// string `s += x` on a plain ident -> `s = string__plus(s, x)` (only when detectable as string)
+	if expanded := t.try_lower_string_compound_assign(id, node) {
+		return expanded
+	}
 	start := t.a.children.len
-	t.a.children << new_lhs
-	t.a.children << new_rhs
-	new_id := t.a.add_node(flat.Node{
-		kind:           .assign
+	for i in 0 .. node.children_count {
+		child_id := t.a.child(&node, i)
+		t.a.children << t.transform_expr(child_id)
+	}
+	return [t.a.add_node(flat.Node{
+		kind:           node.kind // preserve .assign / .selector_assign / .index_assign
 		op:             node.op
 		children_start: start
-		children_count: 2
+		children_count: node.children_count
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
-	})
-	return [new_id]
+	})]
 }
 
-fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
-	if node.children_count < 2 {
-		return [id]
+fn (mut t Transformer) try_lower_string_compound_assign(id flat.NodeId, node flat.Node) ?[]flat.NodeId {
+	if node.kind != .assign || node.op != .plus_assign || node.children_count != 2 {
+		return none
 	}
 	lhs_id := t.a.child(&node, 0)
 	lhs := t.a.nodes[int(lhs_id)]
+	if lhs.kind != .ident {
+		return none
+	}
 	rhs_id := t.a.child(&node, 1)
+	rhs := t.a.nodes[int(rhs_id)]
+	is_string := t.resolve_expr_type(lhs_id) == 'string' || rhs.kind == .string_literal
+		|| rhs.kind == .string_interp || t.resolve_expr_type(rhs_id) == 'string'
+	if !is_string {
+		return none
+	}
 	new_rhs := t.transform_expr(rhs_id)
-	// Track the variable type
-	if lhs.kind == .ident && lhs.value.len > 0 {
-		typ := t.infer_decl_type(node)
-		if typ.len > 0 {
-			t.var_types[lhs.value] = typ
+	lhs_copy := t.make_ident(lhs.value)
+	concat := t.make_call('string__plus', [lhs_copy, new_rhs])
+	new_lhs := t.make_ident(lhs.value)
+	return [t.make_assign(new_lhs, concat)]
+}
+
+fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
+	if node.children_count == 0 {
+		return [id]
+	}
+	// Track the variable type for the common 2-child case.
+	if node.children_count == 2 {
+		lhs := t.a.child_node(&node, 0)
+		if lhs.kind == .ident && lhs.value.len > 0 {
+			typ := t.infer_decl_type(node)
+			if typ.len > 0 {
+				t.var_types[lhs.value] = typ
+			}
 		}
 	}
 	start := t.a.children.len
-	t.a.children << lhs_id
-	t.a.children << new_rhs
-	new_id := t.a.add_node(flat.Node{
+	for i in 0 .. node.children_count {
+		child_id := t.a.child(&node, i)
+		t.a.children << t.transform_expr(child_id)
+	}
+	return [t.a.add_node(flat.Node{
 		kind:           .decl_assign
 		op:             node.op
 		children_start: start
-		children_count: 2
+		children_count: node.children_count
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
-	})
-	return [new_id]
+	})]
 }
 
 fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
@@ -1018,19 +1042,32 @@ fn (mut t Transformer) build_match_chain(match_expr_id flat.NodeId, branches []f
 	is_else := branch.value == 'else'
 
 	body_start_idx := if is_else { 0 } else { t.count_conds(branch) }
+	// Push a smartcast around the body transform when this branch matches a
+	// single sum-type variant, so selectors inside the body get narrowed.
+	mut sc_pushed := false
+	if !is_else {
+		n_conds := t.count_conds(branch)
+		if n_conds == 1 {
+			cond_val := t.a.nodes[int(t.a.child(&branch, 0))]
+			if cond_val.kind == .ident && t.is_sum_variant(cond_val.value) {
+				subj := t.expr_key(match_expr_id)
+				sum_name := t.find_sum_type_for_variant(cond_val.value)
+				if subj.len > 0 && sum_name.len > 0 {
+					t.push_smartcast(subj, cond_val.value, sum_name)
+					sc_pushed = true
+				}
+			}
+		}
+	}
 	mut body_ids := []flat.NodeId{}
 	for i in body_start_idx .. branch.children_count {
 		body_ids << t.a.child(&branch, i)
 	}
-	body_block_start := t.a.children.len
-	for id in body_ids {
-		t.a.children << id
+	new_body := t.transform_stmts(body_ids)
+	if sc_pushed {
+		t.pop_smartcast()
 	}
-	body_block := t.a.add_node(flat.Node{
-		kind:           .block
-		children_start: body_block_start
-		children_count: body_ids.len
-	})
+	body_block := t.make_block(new_body)
 
 	if is_else {
 		return body_block

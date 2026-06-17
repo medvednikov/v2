@@ -18,7 +18,7 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 	for f in info.fields {
 		field_types[f.name] = f.typ
 	}
-	start := t.a.children.len
+	mut field_ids := []flat.NodeId{}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		child := t.a.nodes[int(child_id)]
@@ -38,7 +38,7 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 			}
 			fi_start := t.a.children.len
 			t.a.children << new_val
-			t.a.children << t.a.add_node(flat.Node{
+			field_ids << t.a.add_node(flat.Node{
 				kind:           .field_init
 				op:             child.op
 				children_start: fi_start
@@ -48,15 +48,18 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 				typ:            child.typ
 			})
 		} else {
-			t.a.children << child_id
+			field_ids << child_id
 		}
 	}
-	count := t.a.children.len - start
+	start := t.a.children.len
+	for fid in field_ids {
+		t.a.children << fid
+	}
 	return t.a.add_node(flat.Node{
 		kind:           .struct_init
 		op:             node.op
 		children_start: start
-		children_count: count
+		children_count: field_ids.len
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -69,7 +72,7 @@ fn (mut t Transformer) transform_struct_children(id flat.NodeId, node flat.Node)
 	if node.children_count == 0 {
 		return id
 	}
-	start := t.a.children.len
+	mut field_ids := []flat.NodeId{}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		child := t.a.nodes[int(child_id)]
@@ -78,7 +81,7 @@ fn (mut t Transformer) transform_struct_children(id flat.NodeId, node flat.Node)
 			new_val := t.transform_expr(val_id)
 			fi_start := t.a.children.len
 			t.a.children << new_val
-			t.a.children << t.a.add_node(flat.Node{
+			field_ids << t.a.add_node(flat.Node{
 				kind:           .field_init
 				op:             child.op
 				children_start: fi_start
@@ -88,15 +91,18 @@ fn (mut t Transformer) transform_struct_children(id flat.NodeId, node flat.Node)
 				typ:            child.typ
 			})
 		} else {
-			t.a.children << child_id
+			field_ids << child_id
 		}
 	}
-	count := t.a.children.len - start
+	start := t.a.children.len
+	for fid in field_ids {
+		t.a.children << fid
+	}
 	return t.a.add_node(flat.Node{
 		kind:           .struct_init
 		op:             node.op
 		children_start: start
-		children_count: count
+		children_count: field_ids.len
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ

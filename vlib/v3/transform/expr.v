@@ -47,6 +47,30 @@ fn (mut t Transformer) transform_infix_string_ops(id flat.NodeId, node flat.Node
 			// a > b  ->  string__lt(b, a)
 			return t.make_call('string__lt', [new_rhs, new_lhs])
 		}
+		.le {
+			// a <= b  ->  !(b < a)  ->  !string__lt(rhs, lhs)
+			lt_call := t.make_call('string__lt', [new_rhs, new_lhs])
+			start := t.a.children.len
+			t.a.children << lt_call
+			return t.a.add_node(flat.Node{
+				kind:           .prefix
+				op:             .not
+				children_start: start
+				children_count: 1
+			})
+		}
+		.ge {
+			// a >= b  ->  !(a < b)  ->  !string__lt(lhs, rhs)
+			lt_call := t.make_call('string__lt', [new_lhs, new_rhs])
+			start := t.a.children.len
+			t.a.children << lt_call
+			return t.a.add_node(flat.Node{
+				kind:           .prefix
+				op:             .not
+				children_start: start
+				children_count: 1
+			})
+		}
 		else {
 			return none
 		}
@@ -102,8 +126,21 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			or_chain
 		}
 	} else {
-		// array/map containment - return unchanged for now
-		id
+		// array / map / other containment: let the C backend emit the membership test,
+		// but rebuild with transformed children and normalize value to 'in'.
+		new_rhs := t.transform_expr(rhs_id)
+		in_start := t.a.children.len
+		t.a.children << new_lhs
+		t.a.children << new_rhs
+		t.a.add_node(flat.Node{
+			kind:           .in_expr
+			op:             node.op
+			children_start: in_start
+			children_count: 2
+			pos:            node.pos
+			value:          'in'
+			typ:            node.typ
+		})
 	}
 
 	if is_not_in && result != id {

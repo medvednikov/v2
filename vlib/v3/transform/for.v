@@ -55,73 +55,92 @@ fn (mut t Transformer) transform_for_body(id flat.NodeId, node flat.Node) []flat
 }
 
 fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []flat.NodeId {
-	if node.children_count < 1 {
+	header_count := node.value.int()
+	if header_count < 3 || node.children_count < 3 {
 		return [id]
 	}
-	// Determine the iterable type
+	key_id := t.a.child(&node, 0) // loop var ident — pass through (do not transform a binding)
+	val_id := t.a.child(&node, 1) // may be flat.empty_node (-1)
+	container_id := t.a.child(&node, 2)
+	new_container := t.transform_expr(container_id)
+
+	// register loop-variable types (best effort) — read var NAMES from child0/child1 idents
 	iter_type := t.detect_for_in_type(node)
-	// Parse variable names from node.value and register their types
-	val_field := node.value
-	if val_field.len > 0 {
-		if val_field.contains(',') {
-			// "idx,val" form: two variables
-			parts := val_field.split(',')
-			idx_name := parts[0]
-			val_name := parts[1]
-			if idx_name.len > 0 {
-				if iter_type.starts_with('map[') {
-					// For maps, the index variable gets the key type
-					bracket_end := iter_type.index(']') or { 0 }
-					if bracket_end > 4 {
-						key_type := iter_type[4..bracket_end]
-						t.var_types[idx_name] = key_type
-					}
-				} else {
-					t.var_types[idx_name] = 'int'
-				}
+	has_index := int(val_id) >= 0
+	container_is_range := if int(container_id) >= 0 {
+		t.a.nodes[int(container_id)].kind == .range
+	} else {
+		false
+	}
+	if header_count == 4 || container_is_range {
+		// range `for i in 0 .. n`: single loop var (child0) is an int
+		if int(key_id) >= 0 {
+			key_name := t.a.nodes[int(key_id)].value
+			if key_name.len > 0 {
+				t.var_types[key_name] = 'int'
 			}
-			if val_name.len > 0 {
-				elem_type := t.infer_for_in_elem_type(iter_type, node)
-				if elem_type.len > 0 {
-					t.var_types[val_name] = elem_type
-				}
+		}
+	} else if has_index {
+		// two loop vars: child0 = key/index, child1 = value/element
+		key_name := if int(key_id) >= 0 { t.a.nodes[int(key_id)].value } else { '' }
+		val_name := if int(val_id) >= 0 { t.a.nodes[int(val_id)].value } else { '' }
+		if iter_type.starts_with('map[') {
+			// map[K]V: child0 (key) -> key type, child1 (val) -> value type
+			bracket_end := iter_type.index(']') or { 0 }
+			if key_name.len > 0 && bracket_end > 4 {
+				t.var_types[key_name] = iter_type[4..bracket_end]
 			}
 		} else {
-			// "val" form: single variable
-			if val_field.len > 0 {
+			// []E: child0 (index) -> 'int'
+			if key_name.len > 0 {
+				t.var_types[key_name] = 'int'
+			}
+		}
+		if val_name.len > 0 {
+			elem_type := t.infer_for_in_elem_type(iter_type, node)
+			if elem_type.len > 0 {
+				t.var_types[val_name] = elem_type
+			}
+		}
+	} else {
+		// single var, child0 is the element
+		if int(key_id) >= 0 {
+			key_name := t.a.nodes[int(key_id)].value
+			if key_name.len > 0 {
 				elem_type := t.infer_for_in_elem_type(iter_type, node)
 				if elem_type.len > 0 {
-					t.var_types[val_field] = elem_type
+					t.var_types[key_name] = elem_type
 				}
 			}
 		}
 	}
-	// child 0: iterable expression
-	iter_id := t.a.child(&node, 0)
-	new_iter := t.transform_expr(iter_id)
-	// children 1..n: body statements
-	mut body_ids := []flat.NodeId{}
-	for i in 1 .. node.children_count {
-		body_ids << t.a.child(&node, i)
+
+	mut ids := []flat.NodeId{}
+	ids << key_id
+	ids << val_id
+	ids << new_container
+	if header_count == 4 {
+		range_end_id := t.a.child(&node, 3)
+		ids << t.transform_expr(range_end_id)
 	}
+	body_ids := t.a.children_of(&node)[header_count..].clone()
 	new_body := t.transform_stmts(body_ids)
-	// Rebuild the for_in_stmt with transformed children
-	start := t.a.children.len
-	t.a.children << new_iter
 	for bid in new_body {
-		t.a.children << bid
+		ids << bid
 	}
-	count := t.a.children.len - start
-	new_id := t.a.add_node(flat.Node{
+	start := t.a.children.len
+	for cid in ids {
+		t.a.children << cid
+	}
+	return [t.a.add_node(flat.Node{
 		kind:           .for_in_stmt
 		op:             node.op
 		children_start: start
-		children_count: count
+		children_count: ids.len
 		pos:            node.pos
-		value:          node.value
+		value:          node.value // MUST preserve "3"/"4" header count
 		typ:            node.typ
-	})
-	return [new_id]
+	})]
 }
 
 fn (mut t Transformer) detect_for_in_type(node flat.Node) string {
