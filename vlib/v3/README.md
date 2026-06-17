@@ -38,7 +38,7 @@ The type system (`types/`) uses a `Type` sum type with structured variants inste
 
 The transformer lowers match statements to if/else chains and collects struct/global type info.
 
-The markused pass performs reachability analysis from `main`, building a call graph and BFS-walking to find all used functions. Both backends skip codegen for unreachable functions.
+The markused pass performs reachability analysis from `main`, building a call graph and BFS-walking to find all used functions. Method calls are resolved to `Type.method` names using the type checker, reducing false positives from syntactic matching. Both backends skip codegen for unreachable functions.
 
 The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machine code, and links a Mach-O executable directly — the entire path from source to binary uses no external tools.
 
@@ -46,8 +46,8 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 
 | Component      | Lines |
 |----------------|-------|
-| flat parser    | 3,089 |
-| C gen (flat)   | 2,491 |
+| flat parser    | 3,109 |
+| C gen (flat)   | 2,429 |
 | type system    | 286   |
 | type checker   | 709   |
 | universe       | 97    |
@@ -63,7 +63,7 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | AST            | 866   |
 | flatten        | 532   |
 | transformer    | 243   |
-| markused       | 116   |
+| markused       | 131   |
 | driver         | 182   |
 | builtins       | 89    |
 | pref           | 219   |

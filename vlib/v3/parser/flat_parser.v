@@ -536,6 +536,26 @@ fn (mut p FlatParser) struct_decl() flat.NodeId {
 				}
 				continue
 			}
+			// grouped fields: x, y int
+			if p.tok == .comma {
+				mut names := [field_name]
+				for p.tok == .comma {
+					p.next()
+					names << p.expect_name_or_keyword()
+				}
+				field_type := p.parse_type_name()
+				for n in names {
+					ids << p.a.add_node(flat.Node{
+						kind:  .field_decl
+						value: n
+						typ:   field_type
+					})
+				}
+				if p.tok == .semicolon {
+					p.next()
+				}
+				continue
+			}
 			// For embedded structs followed by access modifier or another field,
 			// check if the next token could be a type
 			field_type := p.parse_type_name()

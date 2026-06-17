@@ -1,8 +1,9 @@
 module markused
 
 import v3.flat
+import v3.types
 
-pub fn mark_used(a &flat.FlatAst) map[string]bool {
+pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	mut call_graph := map[string][]string{}
 	mut all_fns := map[string]bool{}
 
@@ -10,7 +11,7 @@ pub fn mark_used(a &flat.FlatAst) map[string]bool {
 		if node.kind == .fn_decl {
 			all_fns[node.value] = true
 			mut callees := []string{}
-			collect_calls(a, &node, mut callees)
+			collect_calls(a, tc, &node, mut callees)
 			call_graph[node.value] = callees
 		}
 	}
@@ -31,8 +32,6 @@ pub fn mark_used(a &flat.FlatAst) map[string]bool {
 						queue << callee
 					}
 				} else {
-					// Method call: callee may be just the method name,
-					// resolve by finding Type.method in all_fns
 					for fn_name, _ in all_fns {
 						if fn_name.ends_with('.${callee}') && fn_name !in used {
 							used[fn_name] = true
@@ -46,7 +45,7 @@ pub fn mark_used(a &flat.FlatAst) map[string]bool {
 	return used
 }
 
-fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
+fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, mut calls []string) {
 	for i in 0 .. node.children_count {
 		child_id := a.child(node, i)
 		if int(child_id) < 0 {
@@ -65,7 +64,6 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 								calls << 'int_str'
 							}
 						} else if callee.kind == .selector && callee.value.len > 0 {
-							calls << callee.value
 							if callee.children_count > 0 {
 								base_id := a.child(&callee, 0)
 								if int(base_id) >= 0 {
@@ -73,8 +71,14 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 									if base.kind == .ident && base.value.len > 0 {
 										calls << base.value + '.' + callee.value
 									}
+									base_type := tc.resolve_type(base_id)
+									type_name := resolve_type_name(base_type)
+									if type_name.len > 0 {
+										calls << type_name + '.' + callee.value
+									}
 								}
 							}
+							calls << callee.value
 						}
 					}
 				}
@@ -111,6 +115,17 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 			else {}
 		}
 
-		collect_calls(a, child, mut calls)
+		collect_calls(a, tc, child, mut calls)
+	}
+}
+
+fn resolve_type_name(t types.Type) string {
+	return match t {
+		types.Struct { t.name }
+		types.String { 'string' }
+		types.Array { 'Array' }
+		types.Map { 'map' }
+		types.Pointer { resolve_type_name(t.base_type) }
+		else { '' }
 	}
 }

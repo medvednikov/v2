@@ -100,7 +100,7 @@ fn main() {
 	b.step('check')
 
 	// Mark used functions (dead-code elimination)
-	used_fns := markused.mark_used(a)
+	used_fns := markused.mark_used(a, tc)
 	b.step('markused')
 
 	if backend == 'arm64' {
