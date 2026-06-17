@@ -3752,5 +3752,37 @@ fn main() {
 	print_int(numstr.int()) // 42
 	print_str('string methods: ok')
 
-	print_str('=== ALL 91 TESTS PASSED ===')
+	// ==================== 92. DYNAMIC ARRAYS ====================
+	print_str('--- 92. Dynamic Arrays ---')
+
+	mut arr := []int{}
+	arr << 10
+	arr << 20
+	arr << 30
+	print_int(arr.len) // 3
+	print_int(arr[0]) // 10
+	print_int(arr[1]) // 20
+	print_int(arr[2]) // 30
+	// for-in dynamic array
+	mut sum92 := 0
+	for x in arr {
+		sum92 = sum92 + x
+	}
+	print_int(sum92) // 60
+	// for-in with index
+	for i, x in arr {
+		if i == 1 {
+			print_int(x) // 20
+		}
+	}
+	// string array
+	mut names := []string{}
+	names << 'hello'
+	names << 'world'
+	print_int(names.len) // 2
+	print_str(names[0]) // hello
+	print_str(names[1]) // world
+	print_str('dynamic arrays: ok')
+
+	print_str('=== ALL 92 TESTS PASSED ===')
 }

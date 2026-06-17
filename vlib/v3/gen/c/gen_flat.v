@@ -52,6 +52,13 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) 
 	fn_code := g.sb.str()
 	g.sb = orig_sb
 	g.preamble()
+	if g.has_builtins {
+		g.writeln('typedef struct { void* data; int len; int cap; int elem_size; } Array;')
+		g.writeln('typedef Array array;')
+		g.writeln('typedef struct { unsigned int hash; bool used; } MapSlot;')
+		g.writeln('typedef struct { MapSlot* slots; char* keys; char* vals; int cap; int len; int key_size; int val_size; } HashMap;')
+		g.writeln('')
+	}
 	g.enum_decls()
 	g.struct_decls()
 	g.runtime_fns()
@@ -309,6 +316,26 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 			child := g.a.nodes[int(child_id)]
 			if child.kind == .or_expr {
 				g.gen_or_expr_stmt(child)
+			} else if child.kind == .infix && child.op == .left_shift {
+				lhs_id := g.a.child(&child, 0)
+				lhs_node := g.a.nodes[int(lhs_id)]
+				lhs_type := if lhs_node.kind == .ident {
+					g.tc.cur_scope.lookup(lhs_node.value) or { '' }
+				} else {
+					''
+				}
+				if lhs_type.starts_with('[]') {
+					elem_type := lhs_type[2..]
+					c_elem := g.tc.c_type(elem_type)
+					g.write('array_push(&')
+					g.gen_expr(lhs_id)
+					g.write(', &(${c_elem}[]){')
+					g.gen_expr(g.a.child(&child, 1))
+					g.writeln('});')
+				} else {
+					g.gen_expr(child_id)
+					g.writeln(';')
+				}
 			} else {
 				g.gen_expr(child_id)
 				g.writeln(';')
@@ -419,6 +446,27 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			}
 		} else if rhs.kind == .or_expr {
 			g.gen_decl_or_expr(lhs, rhs)
+		} else if rhs.kind == .array_init {
+			elem_type := rhs.value
+			c_elem := g.tc.c_type(elem_type)
+			mut init_len := '0'
+			mut init_cap := '0'
+			for j in 0 .. rhs.children_count {
+				child := g.a.child_node(&rhs, j)
+				if child.kind == .field_init {
+					if child.value == 'len' {
+						init_len = g.expr_to_string(g.a.child(child, 0))
+					} else if child.value == 'cap' {
+						init_cap = g.expr_to_string(g.a.child(child, 0))
+					}
+				}
+			}
+			g.write('Array ')
+			g.gen_expr(lhs_id)
+			g.writeln(' = array_new(sizeof(${c_elem}), ${init_len}, ${init_cap});')
+			if lhs.kind == .ident {
+				g.tc.cur_scope.insert(lhs.value, '[]${elem_type}')
+			}
 		} else if rhs.kind == .map_init {
 			v_type := g.tc.resolve_type(rhs_id)
 			c_typ := g.tc.c_type(v_type)
@@ -471,6 +519,20 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 			g.write('(void)(')
 			g.gen_expr(g.a.child(&node, i + 1))
 			g.writeln(');')
+		} else if node.op == .left_shift_assign && lhs.kind == .ident {
+			lhs_type := g.tc.cur_scope.lookup(lhs.value) or { '' }
+			if lhs_type.starts_with('[]') {
+				elem_type := lhs_type[2..]
+				c_elem := g.tc.c_type(elem_type)
+				g.write('array_push(&${c_name(lhs.value)}, &(${c_elem}[]){')
+				g.gen_expr(g.a.child(&node, i + 1))
+				g.writeln('});')
+			} else {
+				g.gen_expr(g.a.child(&node, i))
+				g.write(' <<= ')
+				g.gen_expr(g.a.child(&node, i + 1))
+				g.writeln(';')
+			}
 		} else {
 			g.gen_expr(g.a.child(&node, i))
 			g.write(' ${g.op_str(node.op)} ')
@@ -479,6 +541,15 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 		}
 		i += 2
 	}
+}
+
+fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
+	orig := g.sb
+	g.sb = strings.new_builder(64)
+	g.gen_expr(id)
+	result := g.sb.str()
+	g.sb = orig
+	return result
 }
 
 fn (mut g FlatGen) gen_index_assign(node flat.Node) {
@@ -575,11 +646,6 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			g.writeln('; ${var_name}++) {')
 		} else {
 			container_type := g.tc.resolve_type(g.a.child(&node, 2))
-			arr_len := if container_type.contains('[') {
-				container_type.after('[').before(']')
-			} else {
-				'0'
-			}
 			has_index := int(val_id) >= 0
 			idx_var := if has_index {
 				c_name(g.a.child_node(&node, 0).value)
@@ -591,17 +657,37 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			} else {
 				var_name
 			}
-			elem_type := if container_type.contains('[') {
-				g.tc.c_type(container_type.before('['))
+			if container_type.starts_with('[]') {
+				elem_type := g.tc.c_type(container_type[2..])
+				container_str := g.expr_to_string(g.a.child(&node, 2))
+				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${container_str}.len; ${idx_var}++) {')
+				g.indent++
+				g.writeln('${elem_type} ${elem_var} = *(${elem_type}*)array_get(${container_str}, ${idx_var});')
+				g.tc.cur_scope.insert(elem_var, container_type[2..])
+			} else if container_type == 'string' {
+				container_str := g.expr_to_string(g.a.child(&node, 2))
+				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${container_str}.len; ${idx_var}++) {')
+				g.indent++
+				g.writeln('u8 ${elem_var} = ((u8*)${container_str}.str)[${idx_var}];')
+				g.tc.cur_scope.insert(elem_var, 'u8')
 			} else {
-				'int'
+				arr_len := if container_type.contains('[') {
+					container_type.after('[').before(']')
+				} else {
+					'0'
+				}
+				elem_type := if container_type.contains('[') {
+					g.tc.c_type(container_type.before('['))
+				} else {
+					'int'
+				}
+				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${arr_len}; ${idx_var}++) {')
+				g.indent++
+				g.write('${elem_type} ${elem_var} = ')
+				g.gen_expr(g.a.child(&node, 2))
+				g.writeln('[${idx_var}];')
+				g.tc.cur_scope.insert(elem_var, elem_type)
 			}
-			g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${arr_len}; ${idx_var}++) {')
-			g.indent++
-			g.write('${elem_type} ${elem_var} = ')
-			g.gen_expr(g.a.child(&node, 2))
-			g.writeln('[${idx_var}];')
-			g.tc.cur_scope.insert(elem_var, elem_type)
 			if has_index {
 				g.tc.cur_scope.insert(var_name, 'int')
 			}
@@ -962,7 +1048,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				}
 			} else if node.value == 'len' && base.kind == .ident {
 				base_type := g.tc.cur_scope.lookup(base.value) or { '' }
-				if base_type.starts_with('map[') {
+				if base_type.starts_with('[]') || base_type.starts_with('map[') {
 					g.gen_expr(base_id)
 					g.write('.len')
 				} else if base_type.contains('[') {
@@ -1004,12 +1090,25 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write(', ')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write(')')
+			} else if base_type.starts_with('[]') {
+				elem_type := base_type[2..]
+				c_elem := g.tc.c_type(elem_type)
+				g.write('*(${c_elem}*)array_get(')
+				g.gen_expr(base_id)
+				g.write(', ')
+				g.gen_expr(g.a.child(&node, 1))
+				g.write(')')
 			} else {
 				g.gen_expr(base_id)
 				g.write('[')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write(']')
 			}
+		}
+		.array_init {
+			elem_type := node.value
+			c_elem := g.tc.c_type(elem_type)
+			g.write('array_new(sizeof(${c_elem}), 0, 0)')
 		}
 		.map_init {
 			g.gen_map_init(node)
@@ -1585,9 +1684,24 @@ fn (mut g FlatGen) preamble() {
 fn (mut g FlatGen) runtime_fns() {
 	g.writeln('typedef struct { bool ok; int value; string msg; } Optional;')
 	g.writeln('')
+	if !g.has_builtins {
+		g.writeln('typedef struct { void* data; int len; int cap; int elem_size; } Array;')
+	}
+	g.writeln('Array array_new(int elem_size, int len, int cap) {')
+	g.writeln('\tArray a; a.elem_size = elem_size; a.len = len; a.cap = cap > len ? cap : (len > 0 ? len : 4);')
+	g.writeln('\ta.data = calloc(a.cap, elem_size); return a;')
+	g.writeln('}')
+	g.writeln('void array_push(Array* a, void* elem) {')
+	g.writeln('\tif (a->len >= a->cap) { a->cap = a->cap < 4 ? 4 : a->cap * 2; a->data = realloc(a->data, a->cap * a->elem_size); }')
+	g.writeln('\tmemcpy((char*)a->data + a->len * a->elem_size, elem, a->elem_size); a->len++;')
+	g.writeln('}')
+	g.writeln('void* array_get(Array a, int idx) { return (char*)a.data + idx * a.elem_size; }')
+	g.writeln('')
 	g.writeln('static bool string__eq(string a, string b);')
-	g.writeln('typedef struct { unsigned int hash; bool used; } MapSlot;')
-	g.writeln('typedef struct { MapSlot* slots; char* keys; char* vals; int cap; int len; int key_size; int val_size; } HashMap;')
+	if !g.has_builtins {
+		g.writeln('typedef struct { unsigned int hash; bool used; } MapSlot;')
+		g.writeln('typedef struct { MapSlot* slots; char* keys; char* vals; int cap; int len; int key_size; int val_size; } HashMap;')
+	}
 	g.writeln('')
 	g.writeln('static unsigned int _map_hash_bytes(const void* key, int key_size) {')
 	g.writeln('\tunsigned int h = 2166136261u; const unsigned char* p = (const unsigned char*)key;')
@@ -1812,8 +1926,15 @@ fn (mut g FlatGen) enum_decls() {
 	}
 }
 
+fn (g &FlatGen) skip_builtin_struct(name string) bool {
+	return g.has_builtins && name in ['array', 'map', 'DenseArray', 'MapSlot', 'ArrayDataHeader']
+}
+
 fn (mut g FlatGen) struct_decls() {
 	for name, _ in g.tc.structs {
+		if g.skip_builtin_struct(name) {
+			continue
+		}
 		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
 	}
 	for name, variants in g.tc.sum_types {
@@ -1839,6 +1960,9 @@ fn (mut g FlatGen) struct_decls() {
 	// Topological sort: emit structs whose value-type deps are all satisfied
 	mut remaining := map[string]bool{}
 	for name, _ in g.tc.structs {
+		if g.skip_builtin_struct(name) {
+			continue
+		}
 		remaining[name] = true
 	}
 	for _ in 0 .. 20 {

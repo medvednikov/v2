@@ -160,10 +160,16 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 			if base_type.starts_with('map[') {
 				return base_type[base_type.index_u8(`]`) + 1..]
 			}
+			if base_type.starts_with('[]') {
+				return base_type[2..]
+			}
 			if base_type.contains('[') {
 				return base_type.before('[')
 			}
 			return 'int'
+		}
+		.array_init {
+			return '[]${node.value}'
 		}
 		.if_expr {
 			then_block := tc.a.child_node(&node, 1)
@@ -212,7 +218,7 @@ pub fn (tc &TypeChecker) c_type(typ string) string {
 		return 'Optional'
 	}
 	if typ.starts_with('[]') {
-		return if tc.has_builtins { 'array' } else { 'Array' }
+		return 'Array'
 	}
 	if typ.starts_with('map[') {
 		return 'HashMap'
