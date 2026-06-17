@@ -75,7 +75,7 @@ fn (mut g FlatGen) collect() {
 	for node in g.a.nodes {
 		match node.kind {
 			.fn_decl {
-				g.tc.fn_ret_types[node.value] = g.tc.c_type(node.typ)
+				g.tc.fn_ret_types[node.value] = node.typ
 				mut ptypes := []string{}
 				for i in 0 .. node.children_count {
 					child := g.a.child_node(&node, i)
@@ -194,6 +194,15 @@ fn (mut g FlatGen) register_runtime_methods() {
 		'string.count':           ['string', 'string']
 		'string.index_':          ['string', 'string']
 		'string.last_index_':     ['string', 'string']
+		'string.replace':         ['string', 'string', 'string']
+		'string.contains':        ['string', 'string']
+		'string.split':           ['string', 'string']
+		'string.starts_with':     ['string', 'string']
+		'string.ends_with':       ['string', 'string']
+		'string.index_u8':        ['string', 'u8']
+		'string.last_index_u8':   ['string', 'u8']
+		'string.contains_u8':     ['string', 'u8']
+		'string.int':             ['string']
 	}
 	ret_types := {
 		'string.all_before':      'string'
@@ -209,6 +218,15 @@ fn (mut g FlatGen) register_runtime_methods() {
 		'string.count':           'int'
 		'string.index_':          'int'
 		'string.last_index_':     'int'
+		'string.replace':         'string'
+		'string.contains':        'bool'
+		'string.split':           '[]string'
+		'string.starts_with':     'bool'
+		'string.ends_with':       'bool'
+		'string.index_u8':        'int'
+		'string.last_index_u8':   'int'
+		'string.contains_u8':     'bool'
+		'string.int':             'int'
 	}
 	for name, params in methods {
 		if name !in g.tc.fn_param_types {
@@ -497,14 +515,19 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 				}
 			}
 		} else {
-			typ := g.tc.c_type(g.tc.resolve_type(rhs_id))
+			v_type := g.tc.resolve_type(rhs_id)
+			typ := g.tc.c_type(v_type)
 			g.write('${typ} ')
 			g.gen_expr(lhs_id)
 			g.write(' = ')
 			g.gen_expr(rhs_id)
 			g.writeln(';')
 			if lhs.kind == .ident {
-				g.tc.cur_scope.insert(lhs.value, typ)
+				if v_type.starts_with('[]') || v_type.starts_with('map[') {
+					g.tc.cur_scope.insert(lhs.value, v_type)
+				} else {
+					g.tc.cur_scope.insert(lhs.value, typ)
+				}
 			}
 		}
 		i += 2
@@ -550,6 +573,106 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	result := g.sb.str()
 	g.sb = orig
 	return result
+}
+
+fn (mut g FlatGen) gen_slice_expr(node flat.Node, base_id flat.NodeId, base_type string) {
+	start_node := g.a.child_node(&node, 1)
+	has_start := start_node.kind != .empty
+	has_end := node.children_count > 2
+	base_str := g.expr_to_string(base_id)
+	start_str := if has_start { g.expr_to_string(g.a.child(&node, 1)) } else { '0' }
+	end_str := if has_end {
+		g.expr_to_string(g.a.child(&node, 2))
+	} else {
+		'${base_str}.len'
+	}
+	if base_type == 'string' {
+		g.write('string__substr(${base_str}, ${start_str}, ${end_str})')
+	} else if base_type.starts_with('[]') {
+		g.write('array_slice(${base_str}, ${start_str}, ${end_str})')
+	} else {
+		g.write('string__substr(${base_str}, ${start_str}, ${end_str})')
+	}
+}
+
+fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, base_type string) {
+	elem_type := base_type[2..]
+	c_elem := g.tc.c_type(elem_type)
+	base_id := g.a.child(fn_node, 0)
+	match fn_node.value {
+		'clone' {
+			g.write('array_clone(')
+			g.gen_expr(base_id)
+			g.write(')')
+		}
+		'last' {
+			g.write('*(${c_elem}*)array_get(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(base_id)
+			g.write('.len - 1)')
+		}
+		'first' {
+			g.write('*(${c_elem}*)array_get(')
+			g.gen_expr(base_id)
+			g.write(', 0)')
+		}
+		'delete_last' {
+			g.gen_expr(base_id)
+			g.write('.len--')
+		}
+		'clear' {
+			g.gen_expr(base_id)
+			g.write('.len = 0')
+		}
+		'delete' {
+			g.write('array_delete(&')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write(')')
+		}
+		'contains' {
+			contains_fn := if elem_type == 'string' {
+				'array_contains_string'
+			} else {
+				'array_contains_int'
+			}
+			g.write('${contains_fn}(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write(')')
+		}
+		'index' {
+			index_fn := if elem_type == 'string' {
+				'array_index_string'
+			} else {
+				'array_index_int'
+			}
+			g.write('${index_fn}(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write(')')
+		}
+		else {
+			g.gen_expr(g.a.child(&node, 0))
+			g.write('(')
+			g.gen_expr(base_id)
+			g.write(')')
+		}
+	}
+}
+
+fn (mut g FlatGen) gen_map_delete(node flat.Node, fn_node &flat.Node, base_type string) {
+	key_type := base_type[4..base_type.index_u8(`]`)]
+	del_fn := if key_type == 'string' { 'hashmap_delete_string' } else { 'hashmap_delete_int' }
+	g.write('${del_fn}(&')
+	g.gen_expr(g.a.child(fn_node, 0))
+	g.write(', ')
+	g.gen_expr(g.a.child(&node, 1))
+	g.write(')')
 }
 
 fn (mut g FlatGen) gen_index_assign(node flat.Node) {
@@ -1080,7 +1203,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		.index {
 			base_id := g.a.child(&node, 0)
 			base_type := g.tc.resolve_type(base_id)
-			if base_type.starts_with('map[') {
+			if node.value == 'range' {
+				g.gen_slice_expr(node, base_id, base_type)
+			} else if base_type.starts_with('map[') {
 				key_type := base_type[4..base_type.index_u8(`]`)]
 				val_type := base_type[base_type.index_u8(`]`) + 1..]
 				c_val := g.tc.c_type(val_type)
@@ -1332,6 +1457,21 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					return
 				} else {
 					base_type := g.tc.resolve_type(g.a.child(fn_node, 0))
+					if base_type.starts_with('[]') {
+						g.gen_array_method_call(node, fn_node, base_type)
+						return
+					}
+					if base_type.starts_with('map[') {
+						if fn_node.value == 'delete' {
+							g.gen_map_delete(node, fn_node, base_type)
+							return
+						} else if fn_node.value == 'clone' {
+							g.write('hashmap_clone(')
+							g.gen_expr(g.a.child(fn_node, 0))
+							g.write(')')
+							return
+						}
+					}
 					clean_type := base_type.trim_left('&').trim_right('*')
 					method_name = '${clean_type}.${fn_node.value}'
 					if method_name in g.tc.fn_param_types {
@@ -1656,6 +1796,20 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('\tn.vals = (char*)calloc(m.cap, m.val_size); memcpy(n.vals, m.vals, m.cap * m.val_size);')
 	g.writeln('\treturn n;')
 	g.writeln('}')
+	g.writeln('void hashmap_delete_int(HashMap* m, int key) {')
+	g.writeln('\tunsigned int hash = _map_hash_bytes(&key, sizeof(int));')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && *(int*)(m->keys + idx * m->key_size) == key) { m->slots[idx].used = 0; m->len--; return; }')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); }')
+	g.writeln('}')
+	g.writeln('void hashmap_delete_string(HashMap* m, string key) {')
+	g.writeln('\tunsigned int hash = _map_hash_string(key);')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && string__eq(*(string*)(m->keys + idx * m->key_size), key)) { m->slots[idx].used = 0; m->len--; return; }')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); }')
+	g.writeln('}')
 	g.writeln('')
 	g.writeln('string Array_int_str(Array a) {')
 	g.writeln('\tstring s = (string){"[", 1};')
@@ -1696,8 +1850,29 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\tmemcpy((char*)a->data + a->len * a->elem_size, elem, a->elem_size); a->len++;')
 	g.writeln('}')
 	g.writeln('void* array_get(Array a, int idx) { return (char*)a.data + idx * a.elem_size; }')
+	g.writeln('Array array_clone(Array a) {')
+	g.writeln('\tArray b = array_new(a.elem_size, a.len, a.cap);')
+	g.writeln('\tmemcpy(b.data, a.data, a.len * a.elem_size); return b;')
+	g.writeln('}')
+	g.writeln('Array array_slice(Array a, int start, int end) {')
+	g.writeln('\tint slen = end - start; if (slen < 0) slen = 0;')
+	g.writeln('\tArray b = array_new(a.elem_size, slen, slen > 0 ? slen : 1);')
+	g.writeln('\tif (slen > 0) memcpy(b.data, (char*)a.data + start * a.elem_size, slen * a.elem_size); return b;')
+	g.writeln('}')
+	g.writeln('void array_delete(Array* a, int idx) {')
+	g.writeln('\tif (idx < a->len - 1) memmove((char*)a->data + idx * a->elem_size, (char*)a->data + (idx+1) * a->elem_size, (a->len - idx - 1) * a->elem_size);')
+	g.writeln('\ta->len--;')
+	g.writeln('}')
+	g.writeln('int array_index_int(Array a, int val) {')
+	g.writeln('\tfor (int i = 0; i < a.len; i++) if (*(int*)array_get(a, i) == val) return i; return -1;')
+	g.writeln('}')
+	g.writeln('bool array_contains_int(Array a, int val) { return array_index_int(a, val) >= 0; }')
 	g.writeln('')
 	g.writeln('static bool string__eq(string a, string b);')
+	g.writeln('int array_index_string(Array a, string val) {')
+	g.writeln('\tfor (int i = 0; i < a.len; i++) if (string__eq(*(string*)array_get(a, i), val)) return i; return -1;')
+	g.writeln('}')
+	g.writeln('bool array_contains_string(Array a, string val) { return array_index_string(a, val) >= 0; }')
 	if !g.has_builtins {
 		g.writeln('typedef struct { unsigned int hash; bool used; } MapSlot;')
 		g.writeln('typedef struct { MapSlot* slots; char* keys; char* vals; int cap; int len; int key_size; int val_size; } HashMap;')
@@ -1756,6 +1931,31 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\twhile (m->slots[idx].used) {')
 	g.writeln('\t\tif (m->slots[idx].hash == hash && string__eq(*(string*)(m->keys + idx * m->key_size), key)) return m->vals + idx * m->val_size;')
 	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); } return NULL;')
+	g.writeln('}')
+	g.writeln('bool hashmap_has_int(HashMap* m, int key) { return hashmap_get_int(m, key) != NULL; }')
+	g.writeln('bool hashmap_has_string(HashMap* m, string key) { return hashmap_get_string(m, key) != NULL; }')
+	g.writeln('HashMap hashmap_clone(HashMap m) {')
+	g.writeln('\tHashMap n = hashmap_new(m.key_size, m.val_size);')
+	g.writeln('\tfree(n.slots); free(n.keys); free(n.vals);')
+	g.writeln('\tn.cap = m.cap; n.len = m.len;')
+	g.writeln('\tn.slots = (MapSlot*)calloc(m.cap, sizeof(MapSlot)); memcpy(n.slots, m.slots, m.cap * sizeof(MapSlot));')
+	g.writeln('\tn.keys = (char*)calloc(m.cap, m.key_size); memcpy(n.keys, m.keys, m.cap * m.key_size);')
+	g.writeln('\tn.vals = (char*)calloc(m.cap, m.val_size); memcpy(n.vals, m.vals, m.cap * m.val_size);')
+	g.writeln('\treturn n;')
+	g.writeln('}')
+	g.writeln('void hashmap_delete_int(HashMap* m, int key) {')
+	g.writeln('\tunsigned int hash = _map_hash_bytes(&key, sizeof(int));')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && *(int*)(m->keys + idx * m->key_size) == key) { m->slots[idx].used = 0; m->len--; return; }')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); }')
+	g.writeln('}')
+	g.writeln('void hashmap_delete_string(HashMap* m, string key) {')
+	g.writeln('\tunsigned int hash = _map_hash_string(key);')
+	g.writeln('\tunsigned int idx = hash & (m->cap - 1);')
+	g.writeln('\twhile (m->slots[idx].used) {')
+	g.writeln('\t\tif (m->slots[idx].hash == hash && string__eq(*(string*)(m->keys + idx * m->key_size), key)) { m->slots[idx].used = 0; m->len--; return; }')
+	g.writeln('\t\tidx = (idx + 1) & (m->cap - 1); }')
 	g.writeln('}')
 	g.writeln('')
 	g.writeln('void println(string s) {')
@@ -1901,6 +2101,20 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('string string__after(string s, string sub) { return string__all_after(s, sub); }')
 	g.writeln('string string__before(string s, string sub) { return string__all_before(s, sub); }')
 	g.writeln('int string__int(string s) { return (int)strtol(s.str, NULL, 10); }')
+	g.writeln('Array string__split(string s, string delim) {')
+	g.writeln('\tArray a = array_new(sizeof(string), 0, 4);')
+	g.writeln('\tif (delim.len == 0) { array_push(&a, &s); return a; }')
+	g.writeln('\tint i = 0;')
+	g.writeln('\twhile (i <= s.len - delim.len) {')
+	g.writeln('\t\tif (memcmp(s.str + i, delim.str, delim.len) == 0) {')
+	g.writeln('\t\t\tstring part = string__substr(s, 0, i);')
+	g.writeln('\t\t\tarray_push(&a, &part);')
+	g.writeln('\t\t\ts = string__substr(s, i + delim.len, s.len);')
+	g.writeln('\t\t\ti = 0; continue;')
+	g.writeln('\t\t} i++;')
+	g.writeln('\t}')
+	g.writeln('\tarray_push(&a, &s); return a;')
+	g.writeln('}')
 	g.writeln('void v_panic(string s) {')
 	g.writeln('\tfwrite(s.str, 1, s.len, stderr);')
 	g.writeln('\tputc(10, stderr);')

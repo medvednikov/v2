@@ -3784,5 +3784,96 @@ fn main() {
 	print_str(names[1]) // world
 	print_str('dynamic arrays: ok')
 
-	print_str('=== ALL 92 TESTS PASSED ===')
+	print_str('--- 93. Array Methods, Slicing, Split ---')
+
+	// array clone
+	mut ac := []int{}
+	ac << 1
+	ac << 2
+	ac << 3
+	mut ac2 := ac.clone()
+	ac2 << 4
+	print_int(ac.len) // 3
+	print_int(ac2.len) // 4
+
+	// array last/first
+	print_int(ac.first()) // 1
+	print_int(ac.last()) // 3
+
+	// array delete_last
+	mut ad := []int{}
+	ad << 10
+	ad << 20
+	ad << 30
+	ad.delete_last()
+	print_int(ad.len) // 2
+	print_int(ad.last()) // 20
+
+	// array delete (by index)
+	mut ae := []int{}
+	ae << 100
+	ae << 200
+	ae << 300
+	ae.delete(0)
+	print_int(ae.len) // 2
+	print_int(ae[0]) // 200
+
+	// array clear
+	mut af := []int{}
+	af << 1
+	af << 2
+	af.clear()
+	print_int(af.len) // 0
+
+	// array contains
+	mut ag := []int{}
+	ag << 5
+	ag << 10
+	ag << 15
+	if ag.contains(10) {
+		print_str('contains 10: yes')
+	}
+	if ag.contains(7) == false {
+		print_str('contains 7: no')
+	}
+
+	// string slicing
+	s93 := 'hello world'
+	print_str(s93[0..5]) // hello
+	print_str(s93[6..]) // world
+	print_str(s93[..5]) // hello
+
+	// array slicing
+	mut as93 := []int{}
+	as93 << 10
+	as93 << 20
+	as93 << 30
+	as93 << 40
+	as93 << 50
+	sl := as93[1..4]
+	print_int(sl.len) // 3
+	print_int(sl[0]) // 20
+	print_int(sl[1]) // 30
+
+	// string split
+	parts := 'a,b,c'.split(',')
+	print_int(parts.len) // 3
+	print_str(parts[0]) // a
+	print_str(parts[1]) // b
+	print_str(parts[2]) // c
+
+	// string replace
+	r93 := 'hello world'.replace('world', 'v3')
+	print_str(r93) // hello v3
+
+	// map delete
+	mut md := map[string]int{}
+	md['x'] = 10
+	md['y'] = 20
+	md.delete('x')
+	print_int(md.len) // 1
+
+	print_str('array methods, slicing, split: ok')
+
+	print_str('=== ALL 93 TESTS PASSED ===')
 }

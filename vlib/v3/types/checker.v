@@ -82,6 +82,21 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 			if fn_node.kind == .selector {
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
 				clean_type := base_type.trim_left('&').trim_right('*')
+				if clean_type.starts_with('[]') {
+					return match fn_node.value {
+						'clone' { clean_type }
+						'last', 'first', 'pop' { clean_type[2..] }
+						'contains' { 'bool' }
+						'index' { 'int' }
+						else { 'int' }
+					}
+				}
+				if clean_type.starts_with('map[') {
+					return match fn_node.value {
+						'clone' { clean_type }
+						else { 'int' }
+					}
+				}
 				mname := '${clean_type}.${fn_node.value}'
 				if ret := tc.fn_ret_types[mname] {
 					return ret
@@ -157,6 +172,12 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 		}
 		.index {
 			base_type := tc.resolve_type(tc.a.child(&node, 0))
+			if node.value == 'range' {
+				if base_type.starts_with('[]') {
+					return base_type
+				}
+				return 'string'
+			}
 			if base_type.starts_with('map[') {
 				return base_type[base_type.index_u8(`]`) + 1..]
 			}
