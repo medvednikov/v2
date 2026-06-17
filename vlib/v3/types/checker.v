@@ -35,6 +35,158 @@ pub fn (mut tc TypeChecker) pop_scope() {
 	tc.cur_scope = tc.cur_scope.parent
 }
 
+pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
+	tc.a = a
+	tc.file_scope = new_scope(unsafe { nil })
+	tc.cur_scope = tc.file_scope
+	for node in a.nodes {
+		if node.kind == .struct_decl && node.value == 'string' {
+			tc.has_builtins = true
+			break
+		}
+	}
+	for node in a.nodes {
+		match node.kind {
+			.fn_decl {
+				tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
+				mut ptypes := []Type{}
+				for i in 0 .. node.children_count {
+					child := a.child_node(&node, i)
+					if child.kind == .param {
+						ptypes << tc.parse_type(child.typ)
+					}
+				}
+				tc.fn_param_types[node.value] = ptypes
+			}
+			.struct_decl {
+				if node.value.starts_with('C.') {
+					continue
+				}
+				mut fields := []StructField{}
+				for i in 0 .. node.children_count {
+					f := a.child_node(&node, i)
+					if f.kind != .field_decl {
+						continue
+					}
+					fields << StructField{
+						name: f.value
+						typ:  tc.parse_type(f.typ)
+					}
+				}
+				tc.structs[node.value] = fields
+			}
+			.enum_decl {
+				tc.enum_names[node.value] = true
+				if node.typ == 'flag' {
+					tc.flag_enums[node.value] = true
+				}
+			}
+			.type_decl {
+				if node.children_count > 0 {
+					mut variants := []string{}
+					for i in 0 .. node.children_count {
+						v := a.child_node(&node, i)
+						variants << v.value
+					}
+					tc.sum_types[node.value] = variants
+				} else if node.typ.len > 0 {
+					tc.type_aliases[node.value] = node.typ
+				}
+			}
+			.c_fn_decl {
+				tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
+				mut ptypes := []Type{}
+				for i in 0 .. node.children_count {
+					child := a.child_node(&node, i)
+					if child.kind == .param {
+						ptypes << tc.parse_type(child.typ)
+					}
+				}
+				tc.fn_param_types[node.value] = ptypes
+			}
+			else {}
+		}
+	}
+	tc.register_runtime_methods()
+}
+
+fn (mut tc TypeChecker) register_runtime_methods() {
+	tc.fn_ret_types['strings.new_builder'] = tc.parse_type('strings.Builder')
+	tc.fn_param_types['strings.new_builder'] = [tc.parse_type('int')]
+	tc.fn_ret_types['strings.Builder.str'] = tc.parse_type('string')
+	tc.fn_param_types['strings.Builder.str'] = [tc.parse_type('&strings.Builder')]
+	tc.fn_ret_types['strings.Builder.write_string'] = tc.parse_type('void')
+	tc.fn_param_types['strings.Builder.write_string'] = [
+		tc.parse_type('&strings.Builder'),
+		tc.parse_type('string'),
+	]
+	tc.fn_ret_types['strings.Builder.writeln'] = tc.parse_type('void')
+	tc.fn_param_types['strings.Builder.writeln'] = [tc.parse_type('&strings.Builder'),
+		tc.parse_type('string')]
+	methods := {
+		'string.all_before':      ['string', 'string']
+		'string.all_before_last': ['string', 'string']
+		'string.all_after':       ['string', 'string']
+		'string.all_after_last':  ['string', 'string']
+		'string.before':          ['string', 'string']
+		'string.after':           ['string', 'string']
+		'string.substr':          ['string', 'int', 'int']
+		'string.trim_left':       ['string', 'string']
+		'string.trim_right':      ['string', 'string']
+		'string.trim_space':      ['string']
+		'string.count':           ['string', 'string']
+		'string.index_':          ['string', 'string']
+		'string.last_index_':     ['string', 'string']
+		'string.replace':         ['string', 'string', 'string']
+		'string.contains':        ['string', 'string']
+		'string.split':           ['string', 'string']
+		'string.starts_with':     ['string', 'string']
+		'string.ends_with':       ['string', 'string']
+		'string.index_u8':        ['string', 'u8']
+		'string.last_index_u8':   ['string', 'u8']
+		'string.contains_u8':     ['string', 'u8']
+		'string.int':             ['string']
+	}
+	ret_types := {
+		'string.all_before':      'string'
+		'string.all_before_last': 'string'
+		'string.all_after':       'string'
+		'string.all_after_last':  'string'
+		'string.before':          'string'
+		'string.after':           'string'
+		'string.substr':          'string'
+		'string.trim_left':       'string'
+		'string.trim_right':      'string'
+		'string.trim_space':      'string'
+		'string.count':           'int'
+		'string.index_':          'int'
+		'string.last_index_':     'int'
+		'string.replace':         'string'
+		'string.contains':        'bool'
+		'string.split':           '[]string'
+		'string.starts_with':     'bool'
+		'string.ends_with':       'bool'
+		'string.index_u8':        'int'
+		'string.last_index_u8':   'int'
+		'string.contains_u8':     'bool'
+		'string.int':             'int'
+	}
+	for name, params in methods {
+		if name !in tc.fn_param_types {
+			mut pt := []Type{}
+			for p in params {
+				pt << tc.parse_type(p)
+			}
+			tc.fn_param_types[name] = pt
+		}
+	}
+	for name, ret in ret_types {
+		if name !in tc.fn_ret_types {
+			tc.fn_ret_types[name] = tc.parse_type(ret)
+		}
+	}
+}
+
 // parse_type converts a V type string (from parser) to a structured Type.
 pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	if typ.len == 0 {
@@ -434,7 +586,7 @@ pub fn (tc &TypeChecker) c_type(t Type) string {
 			return if tc.has_builtins { 'array' } else { 'Array' }
 		}
 		Map {
-			return 'HashMap'
+			return 'map'
 		}
 		Pointer {
 			return tc.c_type(t.base_type) + '*'

@@ -1,21 +1,23 @@
 # v3
 
-Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a structured type system with sum-type variants, lexical scoping, a transformer for AST simplification (match lowering), a markused pass for dead-code elimination, recursive import resolution, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
+Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a structured type system with sum-type variants, lexical scoping, a transformer for AST simplification (match lowering), a shared type-checking phase, a markused pass for dead-code elimination, recursive import resolution, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
 
-Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation.
+Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation. Maps use the builtin `map` type name and API (`new_map`, `map__set`, `map__get`, `map__delete`, etc.) with a simplified open-addressing implementation until v3 can compile the full builtin map.v.
 
 The type system (`types/`) uses a `Type` sum type with 20 variants (Primitive, Array, Map, Pointer, FnType, Struct, Enum, etc.) instead of string-based type checks. Primitive types use a `Properties` flag enum with `boolean`, `float`, `integer`, `unsigned` flags and a `size` field. The parser produces string type names; `parse_type()` bridges them to structured `Type` values. `resolve_type()` infers types from AST nodes, and `c_type()` lowers to C type strings only at emission sites. Lexical scopes store `Type` values with parent-chain lookups.
+
+Type checking runs as a shared pipeline phase before backend selection: `TypeChecker.collect()` walks the flat AST to extract function signatures, struct fields, enum names, type aliases, sum types, and C function declarations, then registers runtime method signatures. Both the C backend and future backends receive the pre-populated `TypeChecker`.
 
 Imports are resolved recursively: after parsing the input file, the driver collects `import_decl` nodes, resolves module paths (relative to importing file, then vlib), parses module files, and repeats until no new imports are found.
 
 ## Architecture
 
 ```
-                                                                                   ┌→ gen C → cc
-source + vlib/builtin → scanner → flat parser → flat AST → import resolve → transform → markused ─┤
-                                                                                   └→ SSA build ──→ ARM64 gen → link
-                                                                                                └─→ optimize → MIR → insel ─┘
-                                                                                                    (-prod only)
+                                                                                                  ┌→ gen C → cc
+source + vlib/builtin → scanner → flat parser → flat AST → import resolve → transform → check → markused ─┤
+                                                                                                  └→ SSA build ──→ ARM64 gen → link
+                                                                                                               └─→ optimize → MIR → insel ─┘
+                                                                                                                   (-prod only)
 ```
 
 The parser directly emits a flat AST — no recursive AST intermediate, no flatten step. All nodes live in a single `[]Node` array with children as indices into a separate `[]NodeId` array. No pointer chasing, no recursive sum types during code generation.
@@ -44,17 +46,15 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 
 | Component      | Lines |
 |----------------|-------|
-| flat parser    | 3,050 |
-| C gen (flat)   | 2,694 |
-| type system    | 230   |
-| type checker   | 483   |
-| universe       | 54    |
-| scopes         | 32    |
+| flat parser    | 3,089 |
+| C gen (flat)   | 2,491 |
+| type system    | 286   |
+| type checker   | 709   |
+| universe       | 97    |
+| scopes         | 34    |
 | C gen (AST)    | 656   |
 | SSA IR+build   | 1,510 |
 | SSA optimize   | 474   |
-| MIR            | 188   |
-| insel          | 7     |
 | ARM64 gen      | 873   |
 | ARM64 asm      | 634   |
 | Mach-O         | 285   |
@@ -63,13 +63,13 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | AST            | 866   |
 | flatten        | 532   |
 | transformer    | 243   |
-| markused       | 107   |
-| driver         | 177   |
+| markused       | 116   |
+| driver         | 182   |
 | builtins       | 89    |
-| pref           | 220   |
+| pref           | 219   |
 | scanner        | 582   |
-| token          | 687   |
-| **total**      | **~15,800** |
+| token          | 338   |
+| **total**      | **~16,000** |
 
 The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~27% fewer lines thanks to the flat AST representation.
 
@@ -77,15 +77,16 @@ The flat parser covers the full V language (all constructs from the old 3,991-li
 
 Compiling `hello world` (`println('hello world')`) with full builtin import (38 files):
 
-| Step      | Time     | RSS      |
-|-----------|----------|----------|
-| parse     | 5.1 ms   | 7,632 KB |
-| transform | 0.3 ms   | 7,888 KB |
-| markused  | 0.9 ms   | 8,528 KB |
-| gen C     | 1.4 ms   | 9,184 KB |
-| write     | 0.1 ms   | 9,184 KB |
-| cc        | 37 ms    | 9,200 KB |
-| **total** | **~60 ms** | **9,200 KB** |
+| Step      | Time     | RSS       |
+|-----------|----------|-----------|
+| parse     | 22 ms    | 10,880 KB |
+| transform | 0.7 ms   | 11,024 KB |
+| check     | 1.9 ms   | 11,664 KB |
+| markused  | 2.2 ms   | 12,304 KB |
+| gen C     | 1.5 ms   | 12,816 KB |
+| write     | 0.2 ms   | 12,832 KB |
+| cc        | 43 ms    | 12,864 KB |
+| **total** | **~92 ms** | **12,864 KB** |
 
 Compiling `test.v` (4,026 lines, 100 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap, maps, string methods, dynamic arrays, array methods/slicing/split, map iteration/array init with len, in operator/array join, strings.Builder, static methods, @FILE, unsafe blocks, function pointers):
 

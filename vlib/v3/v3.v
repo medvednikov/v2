@@ -11,6 +11,7 @@ import v3.pref
 import v3.ssa
 import v3.ssa.optimize
 import v3.transform
+import v3.types
 
 fn main() {
 	args := os.args[1..]
@@ -93,6 +94,11 @@ fn main() {
 	transform.transform(mut a)
 	b.step('transform')
 
+	// Type check — shared phase before backend selection
+	mut tc := types.TypeChecker{}
+	tc.collect(a)
+	b.step('check')
+
 	// Mark used functions (dead-code elimination)
 	used_fns := markused.mark_used(a)
 	b.step('markused')
@@ -116,7 +122,7 @@ fn main() {
 	} else {
 		// C backend (default)
 		mut g := cgen.FlatGen.new()
-		c_code := g.gen_with_used(a, used_fns)
+		c_code := g.gen_with_used(a, used_fns, tc)
 		b.step('gen C')
 
 		os.write_file(output_file, c_code) or {
