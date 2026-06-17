@@ -2,7 +2,7 @@
 
 Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a structured type system with sum-type variants, lexical scoping, a transformer for AST simplification (match lowering), a shared type-checking phase, a markused pass for dead-code elimination, recursive import resolution, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
 
-Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation. Maps use the builtin `map` type name and API (`new_map`, `map__set`, `map__get`, `map__delete`, etc.) with a simplified open-addressing implementation until v3 can compile the full builtin map.v.
+Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). `#include` and `#flag` directives inside `$if` blocks are handled correctly: the scanner consumes the entire directive line as a single token, preventing the parser from reading past block boundaries. File selection filters out arch-specific files (`.arm64.v`, `.amd64.v`) and deduplicates function definitions when both `.v` and `.c.v` files exist. C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation. Maps use the builtin `map` type name and API (`new_map`, `map__set`, `map__get`, `map__delete`, etc.) with a simplified open-addressing implementation until v3 can compile the full builtin map.v.
 
 The type system (`types/`) uses a `Type` sum type with 20 variants (Primitive, Array, Map, Pointer, FnType, Struct, Enum, etc.) instead of string-based type checks. Primitive types use a `Properties` flag enum with `boolean`, `float`, `integer`, `unsigned` flags and a `size` field. The parser produces string type names; `parse_type()` bridges them to structured `Type` values. `resolve_type()` infers types from AST nodes, and `c_type()` lowers to C type strings only at emission sites. Lexical scopes store `Type` values with parent-chain lookups.
 
@@ -48,13 +48,13 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 
 | Component      | Lines |
 |----------------|-------|
-| flat parser    | 3,109 |
-| C gen (flat)   | 2,560 |
+| flat parser    | 3,129 |
+| C gen (flat)   | 3,669 |
 | type system    | 286   |
-| type checker   | 717   |
+| type checker   | 974   |
 | universe       | 97    |
 | scopes         | 34    |
-| C gen (AST)    | 656   |
+| C gen (AST)    | 669   |
 | SSA IR+build   | 1,510 |
 | SSA optimize   | 474   |
 | ARM64 gen      | 873   |
@@ -62,18 +62,14 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | Mach-O         | 285   |
 | ARM64 linker   | 1,478 |
 | flat AST       | 231   |
-| AST            | 866   |
-| flatten        | 532   |
 | transformer    | 289   |
-| markused       | 131   |
-| driver         | 182   |
-| builtins       | 89    |
-| pref           | 219   |
-| scanner        | 582   |
+| markused       | 190   |
+| driver         | 188   |
+| pref           | 250   |
+| scanner        | 593   |
 | token          | 338   |
-| **total**      | **~16,000** |
-
-The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~27% fewer lines thanks to the flat AST representation.
+| bench          | 81    |
+| **total**      | **~18,300** |
 
 ## Performance
 
@@ -94,19 +90,20 @@ Compiling `test.v` (4,026 lines, 100 test sections: structs, globals, match, rec
 
 **C backend:**
 
-| Step      | Time     | RSS      |
-|-----------|----------|----------|
-| parse     | 25.17 ms | 10,736 KB |
-| transform | 1.06 ms  | 10,928 KB |
-| markused  | 52.14 ms | 46,128 KB |
-| gen C     | 3.57 ms  | 48,320 KB |
-| write     | 2.19 ms  | 48,320 KB |
-| cc        | 57 ms    | 48,336 KB |
-| **total** | **~163 ms** | **48,336 KB** |
+| Step      | Time     | RSS       |
+|-----------|----------|-----------|
+| parse     | 16 ms    | 11,456 KB |
+| transform | 0.8 ms   | 11,872 KB |
+| check     | 2.4 ms   | 12,528 KB |
+| markused  | 127 ms   | 17,040 KB |
+| gen C     | 10 ms    | 17,312 KB |
+| write     | 0.1 ms   | 17,312 KB |
+| cc        | 79 ms    | 17,312 KB |
+| **total** | **~259 ms** | **17,312 KB** |
 
-All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~84 ms for test.v (4,026 lines) with C backend.
+All v3 steps (parse + transform + check + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~157 ms for test.v (4,026 lines) with C backend.
 
-Peak RSS: 9-20 MB.
+Peak RSS: 9-17 MB.
 
 ## Comparison with V1
 
