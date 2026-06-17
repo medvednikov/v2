@@ -540,8 +540,38 @@ fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) f
 	if node.children_count == 0 {
 		return id
 	}
+	base_id := t.a.child(&node, 0)
+	new_base := t.transform_expr(base_id)
+	sc_key := t.expr_key(base_id)
+	if sc_key.len > 0 {
+		if sc := t.find_smartcast(sc_key) {
+			field_name := t.sum_field_name(sc.variant_name)
+			use_arrow := t.variant_references_sum(sc.variant_name, sc.sum_type_name)
+			variant_sel_start := t.a.children.len
+			t.a.children << new_base
+			variant_sel := t.a.add_node(flat.Node{
+				kind:           .selector
+				op:             if use_arrow { flat.Op.arrow } else { flat.Op.dot }
+				value:          field_name
+				children_start: variant_sel_start
+				children_count: 1
+			})
+			sel_start := t.a.children.len
+			t.a.children << variant_sel
+			return t.a.add_node(flat.Node{
+				kind:           .selector
+				op:             node.op
+				children_start: sel_start
+				children_count: 1
+				pos:            node.pos
+				value:          node.value
+				typ:            node.typ
+			})
+		}
+	}
 	start := t.a.children.len
-	for i in 0 .. node.children_count {
+	t.a.children << new_base
+	for i in 1 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		t.a.children << t.transform_expr(child_id)
 	}
@@ -772,6 +802,62 @@ pub fn (t &Transformer) find_smartcast(expr_name string) ?SmartcastContext {
 		i--
 	}
 	return none
+}
+
+fn (t &Transformer) expr_key(id flat.NodeId) string {
+	if int(id) < 0 {
+		return ''
+	}
+	node := t.a.nodes[int(id)]
+	if node.kind == .ident {
+		return node.value
+	}
+	if node.kind == .selector && node.children_count >= 1 {
+		base_id := t.a.child(&node, 0)
+		base_key := t.expr_key(base_id)
+		if base_key.len > 0 {
+			return '${base_key}.${node.value}'
+		}
+	}
+	return ''
+}
+
+fn (t &Transformer) sum_field_name(variant string) string {
+	if variant.starts_with('[]') {
+		return '_Array_${c_name(variant[2..])}'
+	}
+	if variant.starts_with('map[') {
+		return '_Map_${c_name(variant[4..])}'
+	}
+	return match variant {
+		'int' { '_int' }
+		'i8' { '_i8' }
+		'i16' { '_i16' }
+		'i64' { '_i64' }
+		'u8', 'byte' { '_u8' }
+		'u16' { '_u16' }
+		'u32' { '_u32' }
+		'u64' { '_u64' }
+		'f32' { '_f32' }
+		'f64' { '_f64' }
+		'bool' { '_bool' }
+		'string' { '_string' }
+		else { c_name(variant) }
+	}
+}
+
+fn (t &Transformer) variant_references_sum(variant string, sum_name string) bool {
+	if variant == sum_name || variant.all_after_last('.') == sum_name.all_after_last('.') {
+		return true
+	}
+	if variant in t.structs {
+		for f in t.structs[variant].fields {
+			if f.typ == sum_name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 pub fn (mut t Transformer) drain_pending(mut result []flat.NodeId) {

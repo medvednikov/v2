@@ -182,3 +182,10 @@ pub fn (mut t Transformer) make_int_literal(value int) flat.NodeId {
 pub fn (mut t Transformer) make_bool_literal(value bool) flat.NodeId {
 	return t.a.add_val(.bool_literal, if value { 'true' } else { 'false' })
 }
+
+fn c_name(name string) string {
+	if name.starts_with('C.') {
+		return name[2..]
+	}
+	return name.replace('.', '__')
+}

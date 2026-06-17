@@ -126,6 +126,8 @@ pub enum Op {
 	right_shift_assign
 	inc
 	dec
+	dot
+	arrow
 }
 
 pub struct Node {

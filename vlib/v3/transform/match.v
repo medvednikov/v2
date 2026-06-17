@@ -56,7 +56,20 @@ fn (mut t Transformer) transform_match_branch_body(branch_id flat.NodeId, subjec
 	if body_ids.len == 0 {
 		return branch_id
 	}
-	// Transform the body statements
+	// Push smartcast if we have a sum type variant match
+	mut has_sc := subject_name.len > 0 && variant_name.len > 0
+	if has_sc {
+		sum_type_name := t.find_sum_type_for_variant(variant_name)
+		if sum_type_name.len > 0 {
+			t.push_smartcast(subject_name, variant_name, sum_type_name)
+		} else {
+			has_sc = false
+		}
+	}
+	// Transform the body statements under smartcast context
 	new_body := t.transform_stmts(body_ids)
+	if has_sc {
+		t.pop_smartcast()
+	}
 	return t.make_block(new_body)
 }
