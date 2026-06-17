@@ -1177,22 +1177,6 @@ fn (g &FlatGen) expr_key(id flat.NodeId) string {
 	return ''
 }
 
-fn (g &FlatGen) extract_smartcast_variant(cond &flat.Node) string {
-	is_node := g.find_is_expr(cond)
-	if is_node != unsafe { nil } {
-		return is_node.value
-	}
-	return ''
-}
-
-fn (g &FlatGen) extract_is_var_id(cond &flat.Node) flat.NodeId {
-	is_node := g.find_is_expr(cond)
-	if is_node != unsafe { nil } && is_node.children_count > 0 {
-		return g.a.child(is_node, 0)
-	}
-	return flat.empty_node
-}
-
 fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
 	lhs := g.a.child_node(&cond, 0)
 	rhs_id := g.a.child(&cond, 1)
@@ -4092,6 +4076,8 @@ fn (g &FlatGen) op_str(op flat.Op) string {
 		.right_shift_assign { '>>=' }
 		.inc { '++' }
 		.dec { '--' }
+		.dot { '.' }
+		.arrow { '->' }
 		.none { '' }
 	}
 }
