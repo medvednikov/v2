@@ -4619,9 +4619,8 @@ fn (g &Gen) find_matching_sumtype_variant(expected_type ast.Type, got_type ast.T
 			return variant
 		}
 	}
-	got_unaliased := g.table.fully_unaliased_type(got_type)
 	for variant in variants {
-		if g.table.fully_unaliased_type(variant) == got_unaliased {
+		if g.alias_chain_equivalent(variant, got_type) {
 			return variant
 		}
 	}
@@ -8164,26 +8163,47 @@ fn (mut g Gen) scope_gc_pin_pregen(node_pos int) []ScopeGcPin {
 			opened_scope = true
 		}
 		// Snapshot nested heap buffers before the call, then keep those snapshots
-		// reachable after it. This covers Boehm opt/noscan arrays of structs.
+		// reachable across it. This covers Boehm opt/noscan arrays of structs.
+		//
+		// The snapshot is normally placed in a small fixed stack array. Boehm scans
+		// the C stack conservatively, so the leaf pointers stored there stay rooted for
+		// the duration of the call without any GC root (de)registration. Only snapshots
+		// larger than the stack buffer fall back to an explicit `calloc` + `GC_add_roots`
+		// / `GC_remove_roots` pair. This avoids the per-call `GC_add_roots`/`GC_remove_roots`
+		// + `calloc`/`free` churn, which otherwise dominates hot loops that call functions
+		// while holding aggregates of pointers in scope (e.g. JSON encoding).
+		stack_cap := 32
 		tmp_name := g.new_tmp_var()
 		len_tmp_name := g.new_tmp_var()
 		roots_tmp_name := g.new_tmp_var()
+		stack_tmp_name := g.new_tmp_var()
+		on_heap_tmp_name := g.new_tmp_var()
 		setup_gc_state_name := g.new_tmp_var()
 		cleanup_gc_state_name := g.new_tmp_var()
+		styp := g.styp(obj.typ)
 		g.writeln('voidptr ${tmp_name} = &${cvar_name};')
-		g.writeln('int ${len_tmp_name} = ${collect_helper_name}((${g.styp(obj.typ)}*)${tmp_name}, 0, 0);')
-		g.writeln('int ${setup_gc_state_name} = GC_is_disabled();')
-		g.writeln('if (!${setup_gc_state_name}) { GC_disable(); }')
-		g.writeln('voidptr* ${roots_tmp_name} = 0;')
-		g.writeln('if (${len_tmp_name} > 0) {')
+		g.writeln('int ${len_tmp_name} = ${collect_helper_name}((${styp}*)${tmp_name}, 0, 0);')
+		g.writeln('voidptr ${stack_tmp_name}[${stack_cap}];')
+		g.writeln('voidptr* ${roots_tmp_name} = ${stack_tmp_name};')
+		g.writeln('bool ${on_heap_tmp_name} = false;')
+		g.writeln('if (${len_tmp_name} > ${stack_cap}) {')
+		// Oversized snapshot: the original explicit-roots path, guarded against a
+		// collection happening between allocation and registration.
+		g.writeln('\tint ${setup_gc_state_name} = GC_is_disabled();')
+		g.writeln('\tif (!${setup_gc_state_name}) { GC_disable(); }')
 		g.writeln('\t${roots_tmp_name} = (voidptr*)calloc(${len_tmp_name}, sizeof(voidptr));')
 		g.writeln('\tif (${roots_tmp_name} == 0) { builtin___memory_panic(_S("calloc"), sizeof(voidptr) * ${len_tmp_name}); }')
-		g.writeln('\t${collect_helper_name}((${g.styp(obj.typ)}*)${tmp_name}, ${roots_tmp_name}, 0);')
+		g.writeln('\t${on_heap_tmp_name} = true;')
+		g.writeln('\t${collect_helper_name}((${styp}*)${tmp_name}, ${roots_tmp_name}, 0);')
 		g.writeln('\tGC_add_roots(${roots_tmp_name}, ${roots_tmp_name} + ${len_tmp_name});')
+		g.writeln('\tif (!${setup_gc_state_name}) { GC_enable(); }')
+		g.writeln('} else if (${len_tmp_name} > 0) {')
+		// Common case: snapshot into the stack buffer. The fill performs no allocation,
+		// so no collection can run while it is partially filled.
+		g.writeln('\t${collect_helper_name}((${styp}*)${tmp_name}, ${roots_tmp_name}, 0);')
 		g.writeln('}')
-		g.writeln('if (!${setup_gc_state_name}) { GC_enable(); }')
 		pins << ScopeGcPin{
-			post_stmt: 'GC_reachable_here(${tmp_name}); if (${len_tmp_name} > 0) { for (int _v_keep_i = 0; _v_keep_i < ${len_tmp_name}; ++_v_keep_i) { GC_reachable_here(${roots_tmp_name}[_v_keep_i]); } } int ${cleanup_gc_state_name} = GC_is_disabled(); if (!${cleanup_gc_state_name}) { GC_disable(); } if (${len_tmp_name} > 0) { GC_remove_roots(${roots_tmp_name}, ${roots_tmp_name} + ${len_tmp_name}); free(${roots_tmp_name}); } if (!${cleanup_gc_state_name}) { GC_enable(); }'
+			post_stmt: 'GC_reachable_here(${tmp_name}); if (${len_tmp_name} > 0) { for (int _v_keep_i = 0; _v_keep_i < ${len_tmp_name}; ++_v_keep_i) { GC_reachable_here(${roots_tmp_name}[_v_keep_i]); } } GC_reachable_here(${roots_tmp_name}); if (${on_heap_tmp_name}) { int ${cleanup_gc_state_name} = GC_is_disabled(); if (!${cleanup_gc_state_name}) { GC_disable(); } GC_remove_roots(${roots_tmp_name}, ${roots_tmp_name} + ${len_tmp_name}); free(${roots_tmp_name}); if (!${cleanup_gc_state_name}) { GC_enable(); } }'
 		}
 	}
 	return pins
@@ -12208,13 +12228,11 @@ fn (mut g Gen) or_block_on_value(var_name string, or_block ast.OrExpr, return_ty
 }
 
 fn (mut g Gen) write_main_error_propagation_panic_tail() {
-	// Prevent synthetic main() propagation panics from falling through into cleanup
-	// if a backend panic helper unexpectedly returns.
-	if g.pref.is_bare {
-		g.writeln('\twhile (1) {}')
-	} else {
-		g.writeln('\texit(1);')
-	}
+	// The panic helper above is `@[noreturn]`, so mark the tail unreachable to
+	// prevent synthetic main() propagation panics from falling through into cleanup.
+	// This matches the `panic(...); VUNREACHABLE();` pattern used at the other panic
+	// sites; emitting a real `exit(1);` here would be dead code after a noreturn call
+	// (and is reported as such by `-Wunreachable-code`).
 	g.writeln('\tVUNREACHABLE();')
 }
 
@@ -12856,6 +12874,32 @@ fn (mut g Gen) as_cast_payload_type(target_type ast.Type, matching_variants []as
 	return target_type
 }
 
+// as_cast_operand_needs_tmp_eval reports whether emitting `expr` as the operand of
+// an `as` cast over a sum type may itself emit statements (option propagation,
+// if/match temporaries, calls). Such operands must be evaluated into a temporary
+// first: rendering them with g.expr_string() runs g.expr() into a saved builder
+// offset, but a hoisting operand calls go_before_last_stmt() which cuts the
+// builder back past that offset, so the subsequent cut_to() corrupts the output.
+// Plain values (idents, literals, field accesses) never emit statements and can be
+// rendered inline.
+fn as_cast_operand_needs_tmp_eval(expr ast.Expr) bool {
+	return match expr {
+		ast.Ident, ast.BoolLiteral, ast.IntegerLiteral, ast.FloatLiteral, ast.CharLiteral,
+		ast.StringLiteral, ast.EnumVal, ast.TypeNode {
+			false
+		}
+		ast.ParExpr {
+			as_cast_operand_needs_tmp_eval(expr.expr)
+		}
+		ast.SelectorExpr {
+			as_cast_operand_needs_tmp_eval(expr.expr)
+		}
+		else {
+			true
+		}
+	}
+}
+
 fn (mut g Gen) as_cast(node ast.AsCast) {
 	// Make sure the sum type can be cast to this type (the types
 	// are the same), otherwise panic.
@@ -12892,12 +12936,34 @@ fn (mut g Gen) as_cast(node ast.AsCast) {
 		index_exprs := g.type_idx_exprs_for_types(matching_variants)
 		payload_sym := g.table.sym(g.as_cast_payload_type(unwrapped_node_typ, matching_variants))
 		sidx := g.type_sidx(unwrapped_node_typ)
-		if node.expr.has_fn_call() && !g.is_cc_msvc {
+		if as_cast_operand_needs_tmp_eval(node.expr) {
+			// The operand emits statements while it is generated (option
+			// propagation, if/match temporaries, calls). g.expr_string() would
+			// drop those statements and corrupt the output, so evaluate the
+			// operand into a temporary first and reference it by name.
 			tmp_var := g.new_tmp_var()
 			expr_styp := g.styp(node.expr_type)
-			g.write('({ ${expr_styp} ${tmp_var} = ')
-			g.expr(node.expr)
-			g.write('; ')
+			if !g.is_cc_msvc {
+				g.write('({ ${expr_styp} ${tmp_var} = ')
+				g.expr(node.expr)
+				g.write('; ')
+			} else {
+				// MSVC has no statement-expressions; hoist the temporary onto its
+				// own line before the current statement instead.
+				mut cur_line := if g.inside_ternary > 0 {
+					g.go_before_ternary().trim_space()
+				} else {
+					g.go_before_last_stmt().trim_space()
+				}
+				if g.inside_return && cur_line.ends_with('return') {
+					cur_line += ' '
+				}
+				g.empty_line = true
+				g.write('${expr_styp} ${tmp_var} = ')
+				g.expr(node.expr)
+				g.writeln(';')
+				g.write(cur_line)
+			}
 			expr_str := if expr_is_option {
 				g.as_cast_option_payload_expr(unwrapped_expr_type, tmp_var, false)
 			} else {
@@ -12907,7 +12973,9 @@ fn (mut g Gen) as_cast(node ast.AsCast) {
 			tag_expr := '(${expr_str})${dot}_typ'
 			g.write_as_cast_call_start(styp, sym)
 			g.write_as_cast_call(obj_expr, tag_expr, sidx, index_exprs)
-			g.write('; })')
+			if !g.is_cc_msvc {
+				g.write('; })')
+			}
 		} else {
 			expr_str := if expr_is_option {
 				g.as_cast_option_payload_expr_from_expr(unwrapped_expr_type, node.expr)
@@ -12965,17 +13033,38 @@ fn (mut g Gen) as_cast(node ast.AsCast) {
 		index_exprs := g.type_idx_exprs_for_types(matching_variants)
 		payload_sym := g.table.sym(g.as_cast_payload_type(unwrapped_node_typ, matching_variants))
 		sidx := g.type_sidx(unwrapped_node_typ)
-		if node.expr.has_fn_call() && !g.is_cc_msvc {
+		if as_cast_operand_needs_tmp_eval(node.expr) {
+			// See as_cast_operand_needs_tmp_eval: a hoisting operand must be
+			// evaluated into a temporary, otherwise g.expr_string() drops the
+			// statements it emits and corrupts the output.
 			tmp_var := g.new_tmp_var()
 			expr_styp := g.styp(node.expr_type)
-			g.write('({ ${expr_styp} ${tmp_var} = ')
-			g.expr(node.expr)
-			g.write('; ')
+			if !g.is_cc_msvc {
+				g.write('({ ${expr_styp} ${tmp_var} = ')
+				g.expr(node.expr)
+				g.write('; ')
+			} else {
+				mut cur_line := if g.inside_ternary > 0 {
+					g.go_before_ternary().trim_space()
+				} else {
+					g.go_before_last_stmt().trim_space()
+				}
+				if g.inside_return && cur_line.ends_with('return') {
+					cur_line += ' '
+				}
+				g.empty_line = true
+				g.write('${expr_styp} ${tmp_var} = ')
+				g.expr(node.expr)
+				g.writeln(';')
+				g.write(cur_line)
+			}
 			obj_expr := '${tmp_var}${dot}_${payload_sym.cname}'
 			tag_expr := 'v_typeof_interface_idx_${expr_type_sym.cname}(${tmp_var}${dot}_typ)'
 			g.write_as_cast_call_start(styp, sym)
 			g.write_as_cast_call(obj_expr, tag_expr, sidx, index_exprs)
-			g.write('; })')
+			if !g.is_cc_msvc {
+				g.write('; })')
+			}
 		} else {
 			expr_str := g.expr_string(node.expr)
 			obj_expr := '(${expr_str})${dot}_${payload_sym.cname}'
