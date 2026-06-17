@@ -53,6 +53,21 @@ fn sum_recursive(n int) int {
 	return n + sum_recursive(n - 1)
 }
 
+struct Foo97 {
+	x    int
+	y    int
+	name string
+	val  int
+}
+
+fn Foo97.new(x int, y int) Foo97 {
+	return Foo97{x: x, y: y}
+}
+
+fn Foo97.with_name(name string, val int) Foo97 {
+	return Foo97{name: name, val: val}
+}
+
 fn gcd(a int, b int) int {
 	if b == 0 {
 		return a
@@ -3961,5 +3976,16 @@ fn main() {
 
 	print_str('strings.Builder: ok')
 
-	print_str('=== ALL 96 TESTS PASSED ===')
+	// 97. Static methods
+	f97 := Foo97.new(10, 20)
+	assert f97.x == 10
+	assert f97.y == 20
+
+	f97b := Foo97.with_name('test', 42)
+	assert f97b.name == 'test'
+	assert f97b.val == 42
+
+	print_str('static methods: ok')
+
+	print_str('=== ALL 97 TESTS PASSED ===')
 }

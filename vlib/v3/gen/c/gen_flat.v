@@ -1541,6 +1541,19 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					}
 					g.write(')')
 					return
+				} else if base.kind == .ident
+					&& (base.value in g.tc.structs || base.value in g.tc.enum_names) {
+					static_name := '${base.value}.${fn_node.value}'
+					g.write(c_name(static_name))
+					g.write('(')
+					for i in 1 .. node.children_count {
+						if i > 1 {
+							g.write(', ')
+						}
+						g.gen_expr(g.a.child(&node, i))
+					}
+					g.write(')')
+					return
 				} else {
 					base_type := g.tc.resolve_type(g.a.child(fn_node, 0))
 					if base_type.starts_with('[]') {
