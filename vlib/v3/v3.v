@@ -158,7 +158,12 @@ fn resolve_imports(mut a flat.FlatAst, mut p parser.FlatParser, prefs &pref.Pref
 	mut changed := true
 	for changed {
 		changed = false
+		mut cur_file := first_file
 		for node in a.nodes {
+			if node.kind == .file && node.value.len > 0 {
+				cur_file = node.value
+				continue
+			}
 			if node.kind != .import_decl {
 				continue
 			}
@@ -169,7 +174,8 @@ fn resolve_imports(mut a flat.FlatAst, mut p parser.FlatParser, prefs &pref.Pref
 			parsed_modules[mod_name] = true
 			changed = true
 
-			mod_dir := prefs.get_module_path(mod_name, first_file)
+			importing_file := if cur_file.len > 0 { cur_file } else { first_file }
+			mod_dir := prefs.get_module_path(mod_name, importing_file)
 			if mod_dir == '' || !os.is_dir(mod_dir) {
 				continue
 			}

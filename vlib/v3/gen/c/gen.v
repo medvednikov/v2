@@ -64,6 +64,7 @@ fn (mut g Gen) preamble() {
 	g.writeln('typedef struct {')
 	g.writeln('\tchar* str;')
 	g.writeln('\tint len;')
+	g.writeln('\tint is_lit;')
 	g.writeln('} string;')
 	g.writeln('')
 	g.writeln('typedef signed char i8;')
@@ -91,7 +92,7 @@ fn (mut g Gen) preamble() {
 	g.writeln('string int_str(int n) {')
 	g.writeln('\tstatic char buf[20];')
 	g.writeln('\tint len = snprintf(buf, sizeof(buf), "%d", n);')
-	g.writeln('\treturn (string){buf, len};')
+	g.writeln('\treturn (string){buf, len, 1};')
 	g.writeln('}')
 	g.writeln('')
 	g.writeln('string string__plus(string a, string b) {')
@@ -100,7 +101,7 @@ fn (mut g Gen) preamble() {
 	g.writeln('\tmemcpy(s, a.str, a.len);')
 	g.writeln('\tmemcpy(s + a.len, b.str, b.len);')
 	g.writeln('\ts[len] = 0;')
-	g.writeln('\treturn (string){s, len};')
+	g.writeln('\treturn (string){s, len, 0};')
 	g.writeln('}')
 	g.writeln('')
 }
@@ -122,7 +123,7 @@ fn (mut g Gen) forward_decls() {
 
 fn (mut g Gen) string_literals() {
 	for i, s in g.str_lits {
-		g.writeln("string _str_${i} = {\"${c_escape(s)}\", ${s.len}};")
+		g.writeln("string _str_${i} = {\"${c_escape(s)}\", ${s.len}, 1};")
 	}
 	if g.str_lits.len > 0 {
 		g.writeln('')

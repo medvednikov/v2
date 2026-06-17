@@ -5,19 +5,19 @@ import v3.flat
 @[heap]
 pub struct TypeChecker {
 pub mut:
-	a              &flat.FlatAst = unsafe { nil }
-	fn_ret_types   map[string]Type
-	fn_param_types map[string][]Type
-	structs        map[string][]StructField
-	type_aliases   map[string]string
-	sum_types      map[string][]string
-	enum_names     map[string]bool
-	flag_enums     map[string]bool
+	a               &flat.FlatAst = unsafe { nil }
+	fn_ret_types    map[string]Type
+	fn_param_types  map[string][]Type
+	structs         map[string][]StructField
+	type_aliases    map[string]string
+	sum_types       map[string][]string
+	enum_names      map[string]bool
+	flag_enums      map[string]bool
 	interface_names map[string]bool
-	file_scope     &Scope = unsafe { nil }
-	cur_scope      &Scope = unsafe { nil }
-	has_builtins   bool
-	cur_module     string
+	file_scope      &Scope = unsafe { nil }
+	cur_scope       &Scope = unsafe { nil }
+	has_builtins    bool
+	cur_module      string
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -125,6 +125,14 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				}
 				tc.fn_param_types[node.value] = ptypes
 			}
+			.global_decl {
+				for i in 0 .. node.children_count {
+					f := a.child_node(&node, i)
+					if f.value.len > 0 && !f.value.starts_with('C.') {
+						tc.file_scope.insert(f.value, tc.parse_type(f.typ))
+					}
+				}
+			}
 			else {}
 		}
 	}
@@ -164,6 +172,9 @@ pub fn (tc &TypeChecker) qualify_name(name string) string {
 		return '?' + tc.qualify_name(name[1..])
 	}
 	if name.contains('.') {
+		return name
+	}
+	if builtin_type(name) != none {
 		return name
 	}
 	return tc.cur_module + '.' + name
@@ -618,28 +629,38 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			})
 		}
 		.if_expr {
+			mut then_type := Type(void_)
 			then_block := tc.a.child_node(&node, 1)
 			if then_block.children_count > 0 {
 				last := tc.a.child_node(then_block, then_block.children_count - 1)
-				if last.kind == .expr_stmt {
-					return tc.resolve_type(tc.a.child(last, 0))
+				then_type = if last.kind == .expr_stmt {
+					tc.resolve_type(tc.a.child(last, 0))
+				} else {
+					tc.resolve_type(tc.a.child(then_block, then_block.children_count - 1))
 				}
-				return tc.resolve_type(tc.a.child(then_block, then_block.children_count - 1))
 			}
 			if node.children_count > 2 {
 				else_node := tc.a.child_node(&node, 2)
+				mut else_type := Type(void_)
 				if else_node.kind == .block && else_node.children_count > 0 {
 					last := tc.a.child_node(else_node, else_node.children_count - 1)
-					if last.kind == .expr_stmt {
-						return tc.resolve_type(tc.a.child(last, 0))
+					else_type = if last.kind == .expr_stmt {
+						tc.resolve_type(tc.a.child(last, 0))
+					} else {
+						tc.resolve_type(tc.a.child(else_node, else_node.children_count - 1))
 					}
-					return tc.resolve_type(tc.a.child(else_node, else_node.children_count - 1))
+				} else if else_node.kind == .if_expr {
+					else_type = tc.resolve_type(tc.a.child(&node, 2))
 				}
-				if else_node.kind == .if_expr {
-					return tc.resolve_type(tc.a.child(&node, 2))
+				if then_type !is Void {
+					return then_type
 				}
+				return else_type
 			}
-			return Type(int_)
+			if then_type !is Void {
+				return then_type
+			}
+			return Type(void_)
 		}
 		.map_init {
 			return tc.parse_type(node.value)

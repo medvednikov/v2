@@ -6,13 +6,25 @@ import v3.types
 pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	mut call_graph := map[string][]string{}
 	mut all_fns := map[string]bool{}
+	mut cur_module := ''
 
 	for node in a.nodes {
+		if node.kind == .module_decl {
+			cur_module = node.value
+			continue
+		}
 		if node.kind == .fn_decl {
 			all_fns[node.value] = true
+			qname := qualify_fn(cur_module, node.value)
+			if qname != node.value {
+				all_fns[qname] = true
+			}
 			mut callees := []string{}
-			collect_calls(a, tc, &node, mut callees)
+			collect_calls(a, tc, &node, cur_module, mut callees)
 			call_graph[node.value] = callees
+			if qname != node.value {
+				call_graph[qname] = callees
+			}
 		}
 	}
 
@@ -45,7 +57,17 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	return used
 }
 
-fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, mut calls []string) {
+fn qualify_fn(mod string, name string) string {
+	if mod.len == 0 || mod == 'main' || mod == 'builtin' {
+		return name
+	}
+	if name.contains('.') {
+		return name
+	}
+	return '${mod}.${name}'
+}
+
+fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_module string, mut calls []string) {
 	for i in 0 .. node.children_count {
 		child_id := a.child(node, i)
 		if int(child_id) < 0 {
@@ -60,6 +82,10 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, mut ca
 						callee := a.nodes[int(callee_id)]
 						if callee.kind == .ident && callee.value.len > 0 {
 							calls << callee.value
+							qcallee := qualify_fn(cur_module, callee.value)
+							if qcallee != callee.value {
+								calls << qcallee
+							}
 							if callee.value in ['println', 'print'] {
 								calls << 'int_str'
 							}
@@ -115,7 +141,7 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, mut ca
 			else {}
 		}
 
-		collect_calls(a, tc, child, mut calls)
+		collect_calls(a, tc, child, cur_module, mut calls)
 	}
 }
 

@@ -6,23 +6,23 @@ import v3.types
 
 pub struct FlatGen {
 mut:
-	sb           strings.Builder
-	indent       int
-	a            &flat.FlatAst = unsafe { nil }
-	used_fns     map[string]bool
-	str_lits     []string
-	global_types map[string]types.Type
-	enum_vals    map[string]int
-	defers       []flat.NodeId
-	interfaces   map[string][]string
+	sb            strings.Builder
+	indent        int
+	a             &flat.FlatAst = unsafe { nil }
+	used_fns      map[string]bool
+	str_lits      []string
+	global_types  map[string]types.Type
+	enum_vals     map[string]int
+	defers        []flat.NodeId
+	interfaces    map[string][]string
 	const_vals    map[string]flat.NodeId
 	const_modules map[string]string
 	tc            types.TypeChecker
-	has_builtins bool
-	tmp_count    int
-	modules      map[string]string // alias -> full module name
-	fn_ptr_types map[string]string // fn_ptr:ret|params -> typedef name
-	smartcasts   map[string]string // var_name -> variant_name (active smartcasts)
+	has_builtins  bool
+	tmp_count     int
+	modules       map[string]string // alias -> full module name
+	fn_ptr_types  map[string]string // fn_ptr:ret|params -> typedef name
+	smartcasts    map[string]string // var_name -> variant_name (active smartcasts)
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -1314,11 +1314,21 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				idx := g.sum_type_index(target_type.name, variant_name)
 				field := g.sum_field_name(variant_name)
 				if g.variant_references_sum(variant_name, target_type.name) {
-					tmp := g.tmp_name()
 					inner_ct := g.tc.c_type(g.tc.parse_type(variant_name))
-					g.write('({${inner_ct} ${tmp} = ')
-					g.gen_expr(inner_id)
-					g.write('; (${ct}){.typ = ${idx}, .${field} = &${tmp}}; })')
+					g.write('(${ct}){.typ = ${idx}, .${field} = (${inner_ct}*)memdup(&(${inner_ct}){')
+					if inner.kind == .struct_init {
+						for si in 0 .. inner.children_count {
+							sf := g.a.child_node(&inner, si)
+							if si > 0 {
+								g.write(', ')
+							}
+							g.write('.${c_name(sf.value)} = ')
+							g.gen_expr(g.a.child(sf, 0))
+						}
+					} else {
+						g.gen_expr(inner_id)
+					}
+					g.write('}, sizeof(${inner_ct}))}')
 				} else {
 					g.write('(${ct}){.typ = ${idx}, .${field} = ')
 					g.gen_expr(inner_id)
@@ -1924,6 +1934,7 @@ fn (mut g FlatGen) preamble() {
 		g.writeln('typedef struct {')
 		g.writeln('\tchar* str;')
 		g.writeln('\tint len;')
+		g.writeln('\tint is_lit;')
 		g.writeln('} string;')
 		g.writeln('')
 	}
@@ -2256,25 +2267,27 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('Optional optional_ok(int v) { return (Optional){.ok = true, .value = v}; }')
 	g.writeln('Optional optional_none() { return (Optional){.ok = false}; }')
 	g.writeln('')
-	g.writeln('typedef struct { char* buf; int len; int cap; } strings__Builder;')
-	g.writeln('strings__Builder strings__new_builder(int cap) {')
-	g.writeln('\tstrings__Builder b; b.cap = cap > 0 ? cap : 64; b.len = 0;')
-	g.writeln('\tb.buf = (char*)malloc(b.cap); return b;')
-	g.writeln('}')
-	g.writeln('void strings__Builder__write_string(strings__Builder* b, string s) {')
-	g.writeln('\twhile (b->len + s.len > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
-	g.writeln('\tmemcpy(b->buf + b->len, s.str, s.len); b->len += s.len;')
-	g.writeln('}')
-	g.writeln('void strings__Builder__writeln(strings__Builder* b, string s) {')
-	g.writeln('\tstrings__Builder__write_string(b, s);')
-	g.writeln('\twhile (b->len + 1 > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
-	g.writeln('\tb->buf[b->len++] = 10;')
-	g.writeln('}')
-	g.writeln('string strings__Builder__str(strings__Builder* b) {')
-	g.writeln('\tchar* s = (char*)malloc(b->len + 1); memcpy(s, b->buf, b->len); s[b->len] = 0;')
-	g.writeln('\tstring r = {s, b->len, 0}; b->len = 0; return r;')
-	g.writeln('}')
-	g.writeln('')
+	if 'strings.new_builder' !in g.tc.fn_ret_types || !g.has_builtins {
+		g.writeln('typedef struct { char* buf; int len; int cap; } strings__Builder;')
+		g.writeln('strings__Builder strings__new_builder(int cap) {')
+		g.writeln('\tstrings__Builder b; b.cap = cap > 0 ? cap : 64; b.len = 0;')
+		g.writeln('\tb.buf = (char*)malloc(b.cap); return b;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_string(strings__Builder* b, string s) {')
+		g.writeln('\twhile (b->len + s.len > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
+		g.writeln('\tmemcpy(b->buf + b->len, s.str, s.len); b->len += s.len;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__writeln(strings__Builder* b, string s) {')
+		g.writeln('\tstrings__Builder__write_string(b, s);')
+		g.writeln('\twhile (b->len + 1 > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
+		g.writeln('\tb->buf[b->len++] = 10;')
+		g.writeln('}')
+		g.writeln('string strings__Builder__str(strings__Builder* b) {')
+		g.writeln('\tchar* s = (char*)malloc(b->len + 1); memcpy(s, b->buf, b->len); s[b->len] = 0;')
+		g.writeln('\tstring r = {s, b->len, 0}; b->len = 0; return r;')
+		g.writeln('}')
+		g.writeln('')
+	}
 }
 
 fn (mut g FlatGen) enum_decls() {
