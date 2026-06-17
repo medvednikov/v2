@@ -1167,7 +1167,8 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	mut orig_var := ''
 	if smartcast_var.len > 0 {
 		variant := g.extract_smartcast_variant(cond)
-		expr_type := g.tc.resolve_type(g.a.child(cond, 0))
+		var_id := g.extract_is_var_id(cond)
+		expr_type := g.tc.resolve_type(var_id)
 		clean := types.unwrap_pointer(expr_type)
 		if clean is types.SumType {
 			resolved := g.resolve_variant(clean.name, variant)
@@ -1199,15 +1200,33 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	g.gen_if_else(node)
 }
 
-fn (g &FlatGen) extract_smartcast_var(cond &flat.Node) string {
-	if cond.kind == .is_expr && cond.children_count > 0 {
-		return g.expr_key(g.a.child(cond, 0))
+fn (g &FlatGen) find_is_expr(cond &flat.Node) &flat.Node {
+	if cond.kind == .is_expr {
+		return unsafe { cond }
 	}
 	if cond.kind == .infix && cond.op == .logical_and && cond.children_count > 0 {
 		lhs := g.a.child_node(cond, 0)
-		if lhs.kind == .is_expr && lhs.children_count > 0 {
-			return g.expr_key(g.a.child(lhs, 0))
+		if lhs.kind == .is_expr {
+			return lhs
 		}
+		if cond.children_count > 1 {
+			rhs := g.a.child_node(cond, 1)
+			if rhs.kind == .is_expr {
+				return rhs
+			}
+		}
+		found := g.find_is_expr(lhs)
+		if found != unsafe { nil } {
+			return found
+		}
+	}
+	return unsafe { nil }
+}
+
+fn (g &FlatGen) extract_smartcast_var(cond &flat.Node) string {
+	is_node := g.find_is_expr(cond)
+	if is_node != unsafe { nil } && is_node.children_count > 0 {
+		return g.expr_key(g.a.child(is_node, 0))
 	}
 	return ''
 }
@@ -1227,16 +1246,19 @@ fn (g &FlatGen) expr_key(id flat.NodeId) string {
 }
 
 fn (g &FlatGen) extract_smartcast_variant(cond &flat.Node) string {
-	if cond.kind == .is_expr {
-		return cond.value
-	}
-	if cond.kind == .infix && cond.op == .logical_and && cond.children_count > 0 {
-		lhs := g.a.child_node(cond, 0)
-		if lhs.kind == .is_expr {
-			return lhs.value
-		}
+	is_node := g.find_is_expr(cond)
+	if is_node != unsafe { nil } {
+		return is_node.value
 	}
 	return ''
+}
+
+fn (g &FlatGen) extract_is_var_id(cond &flat.Node) flat.NodeId {
+	is_node := g.find_is_expr(cond)
+	if is_node != unsafe { nil } && is_node.children_count > 0 {
+		return g.a.child(is_node, 0)
+	}
+	return flat.empty_node
 }
 
 fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
@@ -1406,7 +1428,9 @@ fn (mut g FlatGen) gen_if_expr(node flat.Node) {
 			needs_stmt_expr = true
 		}
 	}
-	if needs_stmt_expr {
+	cond := g.a.child_node(&node, 0)
+	smartcast_var := g.extract_smartcast_var(cond)
+	if needs_stmt_expr || smartcast_var.len > 0 {
 		g.gen_if_expr_stmt(node)
 		return
 	}
@@ -1505,7 +1529,8 @@ fn (mut g FlatGen) gen_if_expr_stmt(node flat.Node) {
 	g.writeln(') {')
 	if smartcast_var.len > 0 {
 		variant := g.extract_smartcast_variant(cond)
-		expr_type := g.tc.resolve_type(g.a.child(cond, 0))
+		var_id := g.extract_is_var_id(cond)
+		expr_type := g.tc.resolve_type(var_id)
 		clean := types.unwrap_pointer(expr_type)
 		if clean is types.SumType {
 			g.smartcasts[smartcast_var] = g.resolve_variant(clean.name, variant)
@@ -1544,7 +1569,8 @@ fn (mut g FlatGen) gen_if_expr_else_if(node flat.Node) {
 	g.writeln(') {')
 	if smartcast_var.len > 0 {
 		variant := g.extract_smartcast_variant(cond)
-		expr_type := g.tc.resolve_type(g.a.child(cond, 0))
+		var_id := g.extract_is_var_id(cond)
+		expr_type := g.tc.resolve_type(var_id)
 		clean := types.unwrap_pointer(expr_type)
 		if clean is types.SumType {
 			g.smartcasts[smartcast_var] = g.resolve_variant(clean.name, variant)
@@ -1687,11 +1713,12 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 			g.write(' ${g.op_str(node.op)} ')
 			mut sc_var := ''
-			if node.op == .logical_and && lhs_node.kind == .is_expr {
-				sc_var = g.extract_smartcast_var(&lhs_node)
+			if node.op == .logical_and {
+				sc_var = g.extract_smartcast_var(&node)
 				if sc_var.len > 0 {
-					variant := g.extract_smartcast_variant(&lhs_node)
-					expr_type := g.tc.resolve_type(g.a.child(&lhs_node, 0))
+					variant := g.extract_smartcast_variant(&node)
+					var_id := g.extract_is_var_id(&node)
+					expr_type := g.tc.resolve_type(var_id)
 					clean := types.unwrap_pointer(expr_type)
 					if clean is types.SumType {
 						g.smartcasts[sc_var] = g.resolve_variant(clean.name, variant)
