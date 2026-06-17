@@ -54,11 +54,15 @@ pub fn (mut p FlatParser) parse_into(path string) {
 	p.next()
 
 	mut ids := []flat.NodeId{}
-	mut iter_count := 0
 	for p.tok != .eof {
 		if p.tok == .key_module {
 			p.next()
 			p.cur_module = p.lit
+			mod_id := p.a.add_node(flat.Node{
+				kind:  .module_decl
+				value: p.lit
+			})
+			ids << mod_id
 			p.next()
 			continue
 		}
@@ -1910,6 +1914,30 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 			})
 			continue
 		}
+		// postfix `!` error propagation: expr!
+		if p.tok == .not {
+			p.next()
+			ostart := p.add_children([lhs, p.a.add(flat.NodeKind.empty)])
+			lhs = p.a.add_node(flat.Node{
+				kind:           .or_expr
+				value:          '!'
+				children_start: ostart
+				children_count: 2
+			})
+			continue
+		}
+		// postfix `?` optional propagation: expr?
+		if p.tok == .question {
+			p.next()
+			ostart := p.add_children([lhs, p.a.add(flat.NodeKind.empty)])
+			lhs = p.a.add_node(flat.Node{
+				kind:           .or_expr
+				value:          '?'
+				children_start: ostart
+				children_count: 2
+			})
+			continue
+		}
 		// `as` cast: expr as Type
 		if p.tok == .key_as {
 			p.next()
@@ -2288,6 +2316,9 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 				children_start: pstart
 				children_count: 1
 			})
+		}
+		.dollar {
+			return p.parse_comptime_if()
 		}
 		else {
 			p.next()

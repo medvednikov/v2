@@ -13,9 +13,11 @@ pub mut:
 	sum_types      map[string][]string
 	enum_names     map[string]bool
 	flag_enums     map[string]bool
+	interface_names map[string]bool
 	file_scope     &Scope = unsafe { nil }
 	cur_scope      &Scope = unsafe { nil }
 	has_builtins   bool
+	cur_module     string
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -45,10 +47,47 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 			break
 		}
 	}
+	// Pass 1: collect type-level names (aliases, enums, sum types)
 	for node in a.nodes {
 		match node.kind {
+			.module_decl {
+				tc.cur_module = node.value
+			}
+			.enum_decl {
+				qn := tc.qualify_name(node.value)
+				tc.enum_names[qn] = true
+				if node.typ == 'flag' {
+					tc.flag_enums[qn] = true
+				}
+			}
+			.type_decl {
+				if node.children_count > 0 {
+					mut variants := []string{}
+					for i in 0 .. node.children_count {
+						v := a.child_node(&node, i)
+						variants << tc.qualify_name(v.value)
+					}
+					tc.sum_types[tc.qualify_name(node.value)] = variants
+				} else if node.typ.len > 0 {
+					tc.type_aliases[tc.qualify_name(node.value)] = node.typ
+				}
+			}
+			.interface_decl {
+				tc.interface_names[tc.qualify_name(node.value)] = true
+			}
+			else {}
+		}
+	}
+	// Pass 2: collect struct fields, function signatures (type aliases now available)
+	tc.cur_module = ''
+	for node in a.nodes {
+		match node.kind {
+			.module_decl {
+				tc.cur_module = node.value
+			}
 			.fn_decl {
-				tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
+				qname := tc.qualify_fn_name(node.value)
+				tc.fn_ret_types[qname] = tc.parse_type(node.typ)
 				mut ptypes := []Type{}
 				for i in 0 .. node.children_count {
 					child := a.child_node(&node, i)
@@ -56,7 +95,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 						ptypes << tc.parse_type(child.typ)
 					}
 				}
-				tc.fn_param_types[node.value] = ptypes
+				tc.fn_param_types[qname] = ptypes
 			}
 			.struct_decl {
 				if node.value.starts_with('C.') {
@@ -73,25 +112,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 						typ:  tc.parse_type(f.typ)
 					}
 				}
-				tc.structs[node.value] = fields
-			}
-			.enum_decl {
-				tc.enum_names[node.value] = true
-				if node.typ == 'flag' {
-					tc.flag_enums[node.value] = true
-				}
-			}
-			.type_decl {
-				if node.children_count > 0 {
-					mut variants := []string{}
-					for i in 0 .. node.children_count {
-						v := a.child_node(&node, i)
-						variants << v.value
-					}
-					tc.sum_types[node.value] = variants
-				} else if node.typ.len > 0 {
-					tc.type_aliases[node.value] = node.typ
-				}
+				tc.structs[tc.qualify_name(node.value)] = fields
 			}
 			.c_fn_decl {
 				tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
@@ -108,6 +129,44 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 		}
 	}
 	tc.register_runtime_methods()
+}
+
+pub fn (tc &TypeChecker) qualify_fn_name(name string) string {
+	if tc.cur_module.len == 0 || tc.cur_module == 'main' || tc.cur_module == 'builtin' {
+		return name
+	}
+	return '${tc.cur_module}.${name}'
+}
+
+pub fn (tc &TypeChecker) qualify_name(name string) string {
+	if tc.cur_module.len == 0 || tc.cur_module == 'main' || tc.cur_module == 'builtin' {
+		return name
+	}
+	if name.starts_with('[]') {
+		return '[]' + tc.qualify_name(name[2..])
+	}
+	if name.starts_with('[') {
+		idx := name.index_u8(`]`)
+		if idx > 0 {
+			return name[..idx + 1] + tc.qualify_name(name[idx + 1..])
+		}
+	}
+	if name.starts_with('map[') {
+		bracket_end := find_matching_bracket(name, 3)
+		key_str := name[4..bracket_end]
+		val_str := name[bracket_end + 1..]
+		return 'map[${tc.qualify_name(key_str)}]${tc.qualify_name(val_str)}'
+	}
+	if name.starts_with('&') {
+		return '&' + tc.qualify_name(name[1..])
+	}
+	if name.starts_with('?') {
+		return '?' + tc.qualify_name(name[1..])
+	}
+	if name.contains('.') {
+		return name
+	}
+	return tc.cur_module + '.' + name
 }
 
 fn (mut tc TypeChecker) register_runtime_methods() {
@@ -210,6 +269,11 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 			base_type: tc.parse_type(typ[1..])
 		})
 	}
+	if typ.starts_with('...') {
+		return Type(Array{
+			elem_type: tc.parse_type(typ[3..])
+		})
+	}
 	if typ.starts_with('[]') {
 		return Type(Array{
 			elem_type: tc.parse_type(typ[2..])
@@ -250,12 +314,27 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	if bt := builtin_type(typ) {
 		return bt
 	}
+	if typ.starts_with('C.') {
+		return Type(Struct{
+			name: typ
+		})
+	}
+	qtyp := tc.qualify_name(typ)
 	if typ in tc.type_aliases {
 		return tc.parse_type(tc.type_aliases[typ])
+	}
+	if qtyp in tc.type_aliases {
+		return tc.parse_type(tc.type_aliases[qtyp])
 	}
 	if typ in tc.flag_enums {
 		return Type(Enum{
 			name:    typ
+			is_flag: true
+		})
+	}
+	if qtyp in tc.flag_enums {
+		return Type(Enum{
+			name:    qtyp
 			is_flag: true
 		})
 	}
@@ -264,9 +343,19 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 			name: typ
 		})
 	}
+	if qtyp in tc.enum_names {
+		return Type(Enum{
+			name: qtyp
+		})
+	}
 	if typ in tc.sum_types {
 		return Type(SumType{
 			name: typ
+		})
+	}
+	if qtyp in tc.sum_types {
+		return Type(SumType{
+			name: qtyp
 		})
 	}
 	if typ.contains('[') && !typ.starts_with('[') {
@@ -278,6 +367,21 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 				len:       typ[bracket + 1..bracket_end].int()
 			})
 		}
+	}
+	if typ in tc.interface_names {
+		return Type(Struct{
+			name: typ
+		})
+	}
+	if qtyp in tc.interface_names {
+		return Type(Struct{
+			name: qtyp
+		})
+	}
+	if qtyp != typ {
+		return Type(Struct{
+			name: qtyp
+		})
 	}
 	return Type(Struct{
 		name: typ
@@ -403,6 +507,10 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			if fn_node.value in tc.fn_ret_types {
 				return tc.fn_ret_types[fn_node.value]
 			}
+			qfn := tc.qualify_fn_name(fn_node.value)
+			if qfn in tc.fn_ret_types {
+				return tc.fn_ret_types[qfn]
+			}
 			return Type(int_)
 		}
 		.infix {
@@ -448,6 +556,12 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			return tc.parse_type(node.value)
 		}
 		.selector {
+			base_node := tc.a.child_node(&node, 0)
+			if base_node.kind == .ident {
+				if gt := tc.file_scope.lookup(node.value) {
+					return gt
+				}
+			}
 			base_type := tc.resolve_type(tc.a.child(&node, 0))
 			clean := unwrap_pointer(base_type)
 			if node.value == 'len' {
@@ -713,5 +827,8 @@ fn split_params(s string) []string {
 }
 
 fn c_name(name string) string {
+	if name.starts_with('C.') {
+		return name[2..]
+	}
 	return name.replace('.', '__')
 }

@@ -4781,18 +4781,16 @@ fn (mut c Checker) stmt(stmt ast.Stmt) {
 			if for_in := stmt_for_in_payload(stmt.init) {
 				expected_type_prev := c.expected_type
 				c.expected_type = none
-				expr_type := c.expr(for_in.expr)
+				mut expr_type := c.expr(for_in.expr)
 				c.expected_type = expected_type_prev
-				if key_ident := expr_ident_payload(for_in.key) {
-					// TODO: remove
-					if expr_type is Void {
-						if c.pref.verbose {
-							c.scope.print(false)
+				if expr_type is Void {
+					if for_in.expr is ast.Ident {
+						if ft := c.fallback_vars[for_in.expr.name] {
+							expr_type = ft
 						}
-						c.close_scope()
-						c.error_with_pos('for-in expression does not have a value',
-							for_in.expr.pos())
 					}
+				}
+				if key_ident := expr_ident_payload(for_in.key) {
 					key_type := expr_type.key_type()
 					c.scope.insert(key_ident.name, object_from_type(key_type))
 					c.fallback_vars[key_ident.name] = key_type
