@@ -1342,6 +1342,17 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		.or_expr {
 			g.gen_or_expr(node)
 		}
+		.block {
+			if node.children_count > 0 {
+				last_id := g.a.child(&node, node.children_count - 1)
+				last := g.a.nodes[int(last_id)]
+				if last.kind == .expr_stmt {
+					g.gen_expr(g.a.child(&last, 0))
+				} else {
+					g.gen_expr(last_id)
+				}
+			}
+		}
 		.empty {}
 		else {}
 	}

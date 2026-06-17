@@ -3993,5 +3993,17 @@ fn main() {
 	assert file_path.contains('test.v')
 	print_str('@FILE: ok')
 
-	print_str('=== ALL 98 TESTS PASSED ===')
+	// 99. Unsafe blocks
+	mut ux := 10
+	unsafe {
+		ux = 42
+	}
+	assert ux == 42
+
+	uval := unsafe { 100 }
+	assert uval == 100
+
+	print_str('unsafe blocks: ok')
+
+	print_str('=== ALL 99 TESTS PASSED ===')
 }

@@ -230,6 +230,17 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 		.in_expr {
 			return 'bool'
 		}
+		.block {
+			if node.children_count > 0 {
+				last_id := tc.a.child(&node, node.children_count - 1)
+				last := tc.a.nodes[int(last_id)]
+				if last.kind == .expr_stmt {
+					return tc.resolve_type(tc.a.child(&last, 0))
+				}
+				return tc.resolve_type(last_id)
+			}
+			return 'void'
+		}
 		else {
 			return 'int'
 		}
