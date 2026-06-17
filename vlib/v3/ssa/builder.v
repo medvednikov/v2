@@ -1052,9 +1052,7 @@ fn (b &Builder) infer_v_type(id flat.NodeId) string {
 		.ident {
 			if addr := b.vars[node.value] {
 				val := b.m.values[addr]
-				if val.typ == b.str_type || (val.typ > 0 && val.typ < b.m.type_store.types.len
-					&& b.m.type_store.types[val.typ].kind == .ptr_t
-					&& b.m.type_store.types[val.typ].elem_type == b.str_type) {
+				if val.typ == b.str_type || (val.typ > 0 && val.typ < b.m.type_store.types.len && b.m.type_store.types[val.typ].kind == .ptr_t && b.m.type_store.types[val.typ].elem_type == b.str_type) {
 					return 'string'
 				}
 			}

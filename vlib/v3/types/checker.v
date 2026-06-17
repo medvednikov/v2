@@ -269,6 +269,7 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		'string.int':             ['string']
 		'string.free':            ['&string']
 		'string.clone':           ['string']
+		'string.bytes':           ['string']
 	}
 	ret_types := {
 		'string.all_before':      'string'
@@ -295,6 +296,7 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		'string.int':             'int'
 		'string.free':            'void'
 		'string.clone':           'string'
+		'string.bytes':           '[]u8'
 	}
 	for name, params in methods {
 		if name !in tc.fn_param_types {
@@ -557,6 +559,21 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					mod_name := '${resolved}.${fn_node.value}'
 					if mod_name in tc.fn_ret_types {
 						return tc.fn_ret_types[mod_name]
+					}
+					if base_node.value in tc.structs || base_node.value in tc.enum_names {
+						qname := tc.qualify_name(base_node.value)
+						sname := '${qname}.${fn_node.value}'
+						if sname in tc.fn_ret_types {
+							return tc.fn_ret_types[sname]
+						}
+					} else {
+						qname := tc.qualify_name(base_node.value)
+						if qname in tc.structs || qname in tc.enum_names {
+							sname := '${qname}.${fn_node.value}'
+							if sname in tc.fn_ret_types {
+								return tc.fn_ret_types[sname]
+							}
+						}
 					}
 				} else if base_node.kind == .selector {
 					inner := tc.a.child_node(base_node, 0)

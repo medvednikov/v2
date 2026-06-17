@@ -88,6 +88,7 @@ pub fn builtin_type(name string) ?Type {
 		'usize' { Type(usize_) }
 		'void' { Type(void_) }
 		'voidptr' { Type(voidptr_) }
+		'array' { Type(Array{elem_type: Type(void_)}) }
 		'charptr' { Type(charptr_) }
 		'byteptr' { Type(byteptr_) }
 		'nil' { Type(nil_) }

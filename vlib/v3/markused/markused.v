@@ -31,8 +31,20 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			if qname != node.value {
 				all_fns[qname] = true
 			}
+			mut receiver_name := ''
+			mut receiver_struct := ''
+			if node.value.contains('.') {
+				receiver_struct = node.value.all_before_last('.')
+				for pi in 0 .. node.children_count {
+					pc := a.child_node(&node, pi)
+					if pc.kind == .param {
+						receiver_name = pc.value
+						break
+					}
+				}
+			}
 			mut callees := []string{}
-			collect_calls(a, tc, &node, cur_module, imports, mut callees)
+			collect_calls(a, tc, &node, cur_module, imports, receiver_name, receiver_struct, mut callees)
 			call_graph[node.value] = callees
 			if qname != node.value {
 				call_graph[qname] = callees
@@ -60,7 +72,8 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 						used[callee] = true
 						queue << callee
 					}
-				} else {
+				}
+				if callee.len > 0 {
 					for fn_name, _ in all_fns {
 						if fn_name.ends_with('.${callee}') && fn_name !in used {
 							used[fn_name] = true
@@ -81,7 +94,7 @@ fn qualify_fn(mod string, name string) string {
 	return '${mod}.${name}'
 }
 
-fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_module string, imports map[string]string, mut calls []string) {
+fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_module string, imports map[string]string, receiver_name string, receiver_struct string, mut calls []string) {
 	for i in 0 .. node.children_count {
 		child_id := a.child(node, i)
 		if int(child_id) < 0 {
@@ -109,6 +122,13 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 								if int(base_id) >= 0 {
 									base := a.nodes[int(base_id)]
 									if base.kind == .ident && base.value.len > 0 {
+										if receiver_name.len > 0 && base.value == receiver_name {
+											calls << receiver_struct + '.' + callee.value
+											qrecv := qualify_fn(cur_module, receiver_struct + '.' + callee.value)
+											if qrecv != receiver_struct + '.' + callee.value {
+												calls << qrecv
+											}
+										}
 										mod_name := if base.value in imports {
 											imports[base.value]
 										} else {
@@ -174,17 +194,21 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 			else {}
 		}
 
-		collect_calls(a, tc, child, cur_module, imports, mut calls)
+		collect_calls(a, tc, child, cur_module, imports, receiver_name, receiver_struct, mut calls)
 	}
 }
 
 fn resolve_type_name(t types.Type) string {
-	return match t {
-		types.Struct { t.name }
-		types.String { 'string' }
-		types.Array { 'Array' }
-		types.Map { 'map' }
-		types.Pointer { resolve_type_name(t.base_type) }
-		else { '' }
+	if t is types.Struct {
+		return t.name
+	} else if t is types.String {
+		return 'string'
+	} else if t is types.Array {
+		return 'Array'
+	} else if t is types.Map {
+		return 'map'
+	} else if t is types.Pointer {
+		return resolve_type_name(t.base_type)
 	}
+	return ''
 }

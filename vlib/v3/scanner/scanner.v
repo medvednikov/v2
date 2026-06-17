@@ -545,8 +545,7 @@ fn (mut s Scanner) number() {
 			s.offset++
 			for s.offset < s.src.len {
 				c2 := s.src[s.offset]
-				if (c2 >= `0` && c2 <= `9`) || (c2 >= `a` && c2 <= `f`)
-					|| (c2 >= `A` && c2 <= `F`) || c2 == `_` {
+				if (c2 >= `0` && c2 <= `9`) || (c2 >= `a` && c2 <= `f`) || (c2 >= `A` && c2 <= `F`) || c2 == `_` {
 					s.offset++
 					continue
 				}

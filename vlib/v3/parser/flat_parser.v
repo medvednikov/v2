@@ -368,8 +368,7 @@ fn (mut p FlatParser) fn_decl_body(name string, receiver_name string, receiver_t
 
 	// return type
 	mut ret_type := 'void'
-	if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr
-		|| p.tok == .lpar || p.tok == .key_fn || p.tok == .ellipsis {
+	if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr || p.tok == .lpar || p.tok == .key_fn || p.tok == .ellipsis {
 		ret_type = p.parse_type_name()
 	}
 
@@ -1399,7 +1398,8 @@ fn (mut p FlatParser) for_stmt() flat.NodeId {
 		return p.for_in(first_expr)
 	}
 	if p.tok == .key_mut && p.peek() == .name {
-		first_expr := p.expr(.bit_or)
+		p.next()
+		first_expr := p.a.add_val(.ident, p.expect_name())
 		if p.tok == .key_in || p.tok == .comma {
 			return p.for_in(first_expr)
 		}
@@ -1608,6 +1608,35 @@ fn (mut p FlatParser) match_branch_cond() flat.NodeId {
 		name := p.lit
 		p.next()
 		return p.a.add_val(.ident, name)
+	}
+	if p.tok == .name && p.peek() == .dot {
+		mod_name := p.lit
+		p.next()
+		p.next()
+		if p.tok == .name && p.lit.len > 0 && p.lit[0] >= `A` && p.lit[0] <= `Z` && p.peek() == .lcbr {
+			type_name := p.lit
+			p.next()
+			mod_id := p.a.add_val(.ident, mod_name)
+			start := p.add_children([mod_id])
+			return p.a.add_node(flat.Node{
+				kind:           .selector
+				value:          type_name
+				children_start: start
+				children_count: 1
+			})
+		}
+		base_id := p.a.add_val(.ident, mod_name)
+		start := p.add_children([base_id])
+		sel := p.a.add_node(flat.Node{
+			kind:           .selector
+			value:          p.lit
+			children_start: start
+			children_count: 1
+		})
+		if p.tok == .name {
+			p.next()
+		}
+		return sel
 	}
 	return p.expr(.lowest)
 }
@@ -1876,11 +1905,9 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 		// module-qualified struct init: module.Type{} or module.Type{field: val, ...}
 		if p.tok == .lcbr {
 			lhs_node := p.a.nodes[int(lhs)]
-			if lhs_node.kind == .selector && lhs_node.value.len > 0
-				&& (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
+			if lhs_node.kind == .selector && lhs_node.value.len > 0 && (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
 				base := p.a.child_node(&lhs_node, 0)
-				if base.kind == .ident
-					&& (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
+				if base.kind == .ident && (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
 					full_name := '${base.value}.${lhs_node.value}'
 					lhs = p.struct_init(full_name)
 					continue
@@ -2191,8 +2218,7 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 				return p.struct_init(name)
 			}
 			// type cast: TypeName(expr) or builtin_type(expr)
-			if p.tok == .lpar && name.len > 0 && ((name[0] >= `A` && name[0] <= `Z`)
-				|| is_builtin_type(name)) {
+			if p.tok == .lpar && name.len > 0 && ((name[0] >= `A` && name[0] <= `Z`) || is_builtin_type(name)) {
 				p.next() // skip (
 				inner := p.expr(.lowest)
 				p.check(.rpar)
@@ -2741,8 +2767,7 @@ fn (mut p FlatParser) fn_literal() flat.NodeId {
 	// return type
 	mut ret_type := 'void'
 	if p.tok != .lcbr && p.tok != .semicolon && p.tok != .eof {
-		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr
-			|| p.tok == .lpar || p.tok == .key_fn {
+		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr || p.tok == .lpar || p.tok == .key_fn {
 			ret_type = p.parse_type_name()
 		}
 	}
@@ -2978,8 +3003,7 @@ fn (mut p FlatParser) parse_type_name() string {
 		}
 		p.check(.rpar)
 		mut ret := ''
-		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr
-			|| p.tok == .lpar || p.tok == .key_fn {
+		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr || p.tok == .lpar || p.tok == .key_fn {
 			ret = p.parse_type_name()
 		}
 		if ret.len > 0 {
@@ -3052,8 +3076,7 @@ fn (mut p FlatParser) parse_type_name() string {
 		if p.tok == .lsbr {
 			// peek ahead to distinguish generic from index
 			pk := p.peek()
-			if pk == .name || pk == .amp || pk == .lsbr || pk == .question || pk == .rsbr
-				|| pk == .key_fn {
+			if pk == .name || pk == .amp || pk == .lsbr || pk == .question || pk == .rsbr || pk == .key_fn {
 				p.next() // skip [
 				mut params := [p.parse_type_name()]
 				for p.tok == .comma {

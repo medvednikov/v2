@@ -99,8 +99,7 @@ pub fn file_has_incompatible_os_suffix(file string, current_os string) bool {
 	if os_name != 'solaris' && file.contains('_solaris.') {
 		return true
 	}
-	if file.contains('.amd64.') || file.contains('_amd64.') || file.contains('.arm64.')
-		|| file.contains('_arm64.') {
+	if file.contains('.amd64.') || file.contains('_amd64.') || file.contains('.arm64.') || file.contains('_arm64.') {
 		return true
 	}
 	return false
@@ -194,8 +193,7 @@ pub fn comptime_flag_value(pref &Preferences, name string) bool {
 			return pref.normalized_target_os() != 'windows'
 		}
 		'bsd' {
-			return pref.normalized_target_os() in ['macos', 'freebsd', 'openbsd', 'netbsd',
-				'dragonfly']
+			return pref.normalized_target_os() in ['macos', 'freebsd', 'openbsd', 'netbsd', 'dragonfly']
 		}
 		'x64', 'amd64' {
 			$if amd64 {
@@ -227,8 +225,7 @@ pub fn comptime_flag_value(pref &Preferences, name string) bool {
 			}
 			return false
 		}
-		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
-		'nofloat' {
+		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding', 'nofloat' {
 			return name in pref.user_defines
 		}
 		else {
