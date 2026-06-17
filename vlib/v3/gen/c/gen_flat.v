@@ -498,11 +498,11 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 			g.writeln('${c_name(node.value)}: ;')
 			g.indent = old_indent
 		}
-		.match_stmt {
-			g.gen_match(node)
-		}
 		.empty, .asm_stmt {}
 		else {
+			// NOTE: match_stmt is intentionally absent — the transformer lowers every
+			// match into an if/else-if chain (see transform.lower_match_stmts), so the
+			// backend never sees one. Match lowering lives in the transformer, not here.
 			eprintln('gen_node: unsupported node kind: ${node.kind}')
 		}
 	}
@@ -1258,65 +1258,6 @@ fn (mut g FlatGen) gen_if_else(node flat.Node) {
 	}
 }
 
-fn (mut g FlatGen) gen_match(node flat.Node) {
-	match_expr_id := g.a.child(&node, 0)
-	match_type := g.tc.resolve_type(match_expr_id)
-	clean_type := types.unwrap_pointer(match_type)
-	is_sum := clean_type is types.SumType
-
-	for i in 1 .. node.children_count {
-		branch := g.a.child_node(&node, i)
-		is_else := branch.value == 'else'
-		n_conds := if is_else {
-			0
-		} else if branch.value.len > 0 && branch.value != 'else' {
-			branch.value.int()
-		} else {
-			1
-		}
-		body_start := if is_else { 0 } else { n_conds }
-
-		if is_else {
-			if i > 1 {
-				g.writeln('} else {')
-			} else {
-				g.writeln('{')
-			}
-		} else {
-			if i > 1 {
-				g.write('} else if (')
-			} else {
-				g.write('if (')
-			}
-			for c in 0 .. n_conds {
-				if c > 0 {
-					g.write(' || ')
-				}
-				cond := g.a.child_node(branch, c)
-				if is_sum {
-					sum_name := (clean_type as types.SumType).name
-					idx := g.sum_type_index(sum_name, cond.value)
-					g.gen_expr(match_expr_id)
-					g.write('.typ == ${idx}')
-				} else {
-					g.gen_expr(match_expr_id)
-					g.write(' == ')
-					g.gen_expr(g.a.child(branch, c))
-				}
-			}
-			g.writeln(') {')
-		}
-		g.tc.push_scope()
-		g.indent++
-		for j in body_start .. branch.children_count {
-			g.gen_node(g.a.child(branch, j))
-		}
-		g.indent--
-		g.tc.pop_scope()
-	}
-	g.writeln('}')
-}
-
 fn (mut g FlatGen) gen_if_expr(node flat.Node) {
 	then_block := g.a.child_node(&node, 1)
 	mut needs_stmt_expr := then_block.children_count > 1
@@ -1538,30 +1479,11 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_call(node)
 		}
 		.infix {
-			if node.op == .plus {
-				if g.is_string_node(g.a.child(&node, 0)) || g.is_string_node(g.a.child(&node, 1)) {
-					g.write('string__plus(')
-					g.gen_expr(g.a.child(&node, 0))
-					g.write(', ')
-					g.gen_expr(g.a.child(&node, 1))
-					g.write(')')
-					return
-				}
-			}
-			if node.op in [.eq, .ne] {
-				if g.is_string_node(g.a.child(&node, 0)) || g.is_string_node(g.a.child(&node, 1)) {
-					if node.op == .eq {
-						g.write('string__eq(')
-					} else {
-						g.write('!string__eq(')
-					}
-					g.gen_expr(g.a.child(&node, 0))
-					g.write(', ')
-					g.gen_expr(g.a.child(&node, 1))
-					g.write(')')
-					return
-				}
-			}
+			// NOTE: string operators (+, ==, !=, <, >, <=, >=) are lowered to
+			// string__plus / string__eq / string__lt calls by the transformer
+			// (transform.transform_infix_string_ops + match/condition lowering),
+			// which is type-aware via the pre-transform type checker. The backend
+			// only emits primitive infix here.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			lhs_node := g.a.nodes[int(lhs_id)]
@@ -1624,6 +1546,11 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.in_expr {
+			// NOTE: range membership, inline-array-literal membership, dynamic- and
+			// fixed-array membership, and `!in` negation are all lowered by the
+			// transformer (transform.transform_in_expr). Only MAP membership reaches
+			// the backend, because map__exists needs a C key pointer (compound
+			// literal) that cannot be expressed at the AST level.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			rhs_type := g.tc.resolve_type(rhs_id)
@@ -1634,34 +1561,6 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(lhs_id)
 				g.write('})')
-			} else if rhs_type is types.Array {
-				contains_fn := if rhs_type.elem_type is types.String {
-					'array_contains_string'
-				} else {
-					'array_contains_int'
-				}
-				g.write('${contains_fn}(')
-				g.gen_expr(rhs_id)
-				g.write(', ')
-				g.gen_expr(lhs_id)
-				g.write(')')
-			} else if rhs_type is types.ArrayFixed {
-				af := rhs_type as types.ArrayFixed
-				contains_fn := if af.elem_type is types.String {
-					'fixed_array_contains_string'
-				} else {
-					'fixed_array_contains_int'
-				}
-				rhs_node := g.a.nodes[int(rhs_id)]
-				c_elem := g.tc.c_type(af.elem_type)
-				g.write('${contains_fn}(')
-				if rhs_node.kind == .array_literal {
-					g.write('(${c_elem}[])')
-				}
-				g.gen_expr(rhs_id)
-				g.write(', ${af.len}, ')
-				g.gen_expr(lhs_id)
-				g.write(')')
 			} else {
 				g.gen_expr(lhs_id)
 				g.write(' == ')

@@ -78,6 +78,26 @@ fn (t &Transformer) resolve_index_elem_type(node flat.Node) string {
 	return ''
 }
 
+// node_type returns the v-type string for an expression node, preferring the
+// precise type recorded by the type checker (tc.expr_types, populated before
+// transform) and falling back to the transformer's local heuristics. This is the
+// bridge that makes the transformer type-aware, so type-dependent lowering lives
+// here rather than in the backend.
+fn (t &Transformer) node_type(id flat.NodeId) string {
+	if int(id) < 0 {
+		return ''
+	}
+	if !isnil(t.tc) {
+		if typ := t.tc.expr_type(id) {
+			name := typ.name()
+			if name.len > 0 && name != 'void' {
+				return name
+			}
+		}
+	}
+	return t.resolve_expr_type(id)
+}
+
 // is_string_type checks if an expression resolves to string type.
 // Handles string literals, interpolations, and ident/call expressions typed as string.
 fn (t &Transformer) is_string_type(id flat.NodeId) bool {
@@ -88,7 +108,7 @@ fn (t &Transformer) is_string_type(id flat.NodeId) bool {
 	if node.kind == .string_literal || node.kind == .string_interp {
 		return true
 	}
-	return t.resolve_expr_type(id) == 'string'
+	return t.node_type(id) == 'string'
 }
 
 // is_array_type checks if a type string represents an array type (starts with `[]`).

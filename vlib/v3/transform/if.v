@@ -161,22 +161,19 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	//   a) directly an is_expr
 	//   b) an && chain where one term is an is_expr
 	is_info := t.extract_is_expr(cond_id)
-	has_smartcast := is_info.expr_name.len > 0
 
-	// Transform the condition (sets up smartcasts as a side-effect).
-	new_cond_id := t.transform_and_chain_smartcasts(cond_id)
-
-	// If extract_is_expr found an is_expr but transform_and_chain_smartcasts
-	// did not push a smartcast (e.g. the expression was not an ident), push
-	// it now based on what we extracted.
-	if has_smartcast && is_info.sum_type_name.len > 0 {
-		// The smartcast may already have been pushed by
-		// transform_and_chain_smartcasts; avoid double-push by checking.
-		existing := t.find_smartcast(is_info.expr_name)
-		if existing == none {
-			t.push_smartcast(is_info.expr_name, is_info.variant_name, is_info.sum_type_name)
-		}
+	// Push the smartcast (if any) BEFORE transforming the condition, so that a
+	// chain like `x is T && x.field` rewrites the payload access on the rhs, and
+	// keep it pushed for the then-branch below. Then run the whole condition
+	// through the normal expression path so that string/`in`/etc. lowering
+	// applies to conditions too — this is the single place that owns condition
+	// lowering (the backend no longer special-cases it).
+	mut has_smartcast := false
+	if is_info.expr_name.len > 0 && is_info.sum_type_name.len > 0 {
+		t.push_smartcast(is_info.expr_name, is_info.variant_name, is_info.sum_type_name)
+		has_smartcast = true
 	}
+	new_cond_id := t.transform_expr(cond_id)
 
 	// Transform then-block children under the smartcast context.
 	then_node := t.a.nodes[int(then_id)]

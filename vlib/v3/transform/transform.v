@@ -42,9 +42,10 @@ pub:
 
 // --- entry point ---
 
-pub fn transform(mut a flat.FlatAst) {
+pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 	mut t := Transformer{
-		a: &a
+		a:  &a
+		tc: unsafe { tc }
 	}
 	t.collect_types()
 	t.transform_all()
@@ -123,6 +124,36 @@ fn (mut t Transformer) transform_all() {
 		}
 		if node.kind == .fn_decl {
 			t.transform_fn_body(i, node)
+		} else if node.kind == .const_decl {
+			t.transform_const_decl(node)
+		}
+	}
+}
+
+// transform_const_decl transforms the initializer expression of each const field
+// so that const-level lowering (e.g. string concatenation in the prelude's
+// embedded data tables) happens in the transformer rather than the backend.
+fn (mut t Transformer) transform_const_decl(node flat.Node) {
+	for ci in 0 .. node.children_count {
+		cf_id := t.a.child(&node, ci)
+		if int(cf_id) < 0 {
+			continue
+		}
+		cf := t.a.nodes[int(cf_id)]
+		if cf.kind == .const_field && cf.children_count >= 1 {
+			val_id := t.a.child(&cf, 0)
+			val := t.a.nodes[int(val_id)]
+			// Only lower string concatenation in const initializers (e.g. the
+			// prelude's chunked embedded-data tables: `"chunk" + "chunk" + ...`).
+			// Other const values are left byte-identical so backend const codegen
+			// is undisturbed.
+			if val.kind == .infix && val.children_count >= 2
+				&& (t.is_string_type(t.a.child(&val, 0)) || t.is_string_type(t.a.child(&val, 1))) {
+				new_val := t.transform_expr(val_id)
+				// Overwrite the field's value slot in place (each const_field owns
+				// its own single-element child range, so this is safe).
+				t.a.children[cf.children_start] = new_val
+			}
 		}
 	}
 }
@@ -1094,6 +1125,24 @@ fn (mut t Transformer) build_match_chain(match_expr_id flat.NodeId, branches []f
 	})
 }
 
+// make_match_eq builds the equality test between a match subject and a branch
+// value, lowering string comparisons to string__eq (the transformer owns string
+// lowering; the backend no longer special-cases it).
+fn (mut t Transformer) make_match_eq(lhs flat.NodeId, rhs flat.NodeId) flat.NodeId {
+	if t.is_string_type(lhs) || t.is_string_type(rhs) {
+		return t.make_call('string__eq', [lhs, rhs])
+	}
+	start := t.a.children.len
+	t.a.children << lhs
+	t.a.children << rhs
+	return t.a.add_node(flat.Node{
+		kind:           .infix
+		op:             .eq
+		children_start: start
+		children_count: 2
+	})
+}
+
 fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.Node) flat.NodeId {
 	n_conds := t.count_conds(branch)
 	if n_conds == 1 {
@@ -1109,15 +1158,7 @@ fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.N
 				children_count: 1
 			})
 		}
-		cmp_start := t.a.children.len
-		t.a.children << match_expr_id
-		t.a.children << cond_val_id
-		return t.a.add_node(flat.Node{
-			kind:           .infix
-			op:             .eq
-			children_start: cmp_start
-			children_count: 2
-		})
+		return t.make_match_eq(match_expr_id, cond_val_id)
 	}
 	mut result := flat.empty_node
 	for i in 0 .. n_conds {
@@ -1134,15 +1175,7 @@ fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.N
 				children_count: 1
 			})
 		} else {
-			cmp_start := t.a.children.len
-			t.a.children << match_expr_id
-			t.a.children << cond_val_id
-			t.a.add_node(flat.Node{
-				kind:           .infix
-				op:             .eq
-				children_start: cmp_start
-				children_count: 2
-			})
+			t.make_match_eq(match_expr_id, cond_val_id)
 		}
 		if int(result) < 0 {
 			result = cmp

@@ -37,7 +37,8 @@ pub mut:
 	has_builtins    bool
 	cur_module      string
 	errors          []TypeError
-	resolved_calls  map[int]string // node_id -> resolved function name
+	resolved_calls  map[int]string  // node_id -> resolved function name
+	expr_types      map[int]Type    // node_id -> resolved type (populated by annotate_types)
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -341,6 +342,151 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 			tc.fn_ret_types[name] = tc.parse_type(ret)
 		}
 	}
+}
+
+// annotate_types performs a scope-aware walk over every function body, tracking
+// local variable types as they are declared, and records the resolved type of
+// every expression node into tc.expr_types (keyed by node id). This mirrors what
+// the v2 transformer relies on: the type checker runs BEFORE the transformer and
+// publishes per-expression types, so the transformer can own type-dependent
+// lowering (string ops, `in` membership, ...) instead of the backend.
+//
+// It uses a single flat scope per function (an over-approximation: a local stays
+// visible after its block ends), which is harmless for type lookup since variable
+// names are effectively unique within a function.
+pub fn (mut tc TypeChecker) annotate_types() {
+	tc.cur_module = ''
+	for node in tc.a.nodes {
+		if node.kind == .module_decl {
+			tc.cur_module = node.value
+		} else if node.kind == .fn_decl {
+			tc.cur_scope = new_scope(tc.file_scope)
+			for pi in 0 .. node.children_count {
+				p := tc.a.child_node(&node, pi)
+				if p.kind == .param && p.value.len > 0 {
+					tc.cur_scope.insert(p.value, tc.parse_type(p.typ))
+				}
+			}
+			for i in 0 .. node.children_count {
+				child := tc.a.child_node(&node, i)
+				if child.kind != .param {
+					tc.annotate_node(tc.a.child(&node, i))
+				}
+			}
+			tc.cur_scope = tc.file_scope
+		}
+	}
+}
+
+fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
+	if int(id) < 0 {
+		return
+	}
+	node := tc.a.nodes[int(id)]
+	match node.kind {
+		.decl_assign {
+			// children are interleaved pairs [lhs0, rhs0, lhs1, rhs1, ...].
+			// Multi-return (`a, b := f()`) yields an odd count; we only insert
+			// locals for clean pairs and skip MultiReturn rhs values.
+			mut i := 0
+			for i + 1 < node.children_count {
+				lhs_id := tc.a.child(&node, i)
+				rhs_id := tc.a.child(&node, i + 1)
+				tc.annotate_node(rhs_id)
+				lhs := tc.a.nodes[int(lhs_id)]
+				if lhs.kind == .ident && lhs.value.len > 0 {
+					mut typ := Type(void_)
+					if node.children_count == 2 && node.typ.len > 0 {
+						typ = tc.parse_type(node.typ)
+					} else {
+						typ = tc.resolve_type(rhs_id)
+					}
+					if typ !is MultiReturn && typ !is Void {
+						tc.cur_scope.insert(lhs.value, typ)
+						tc.expr_types[int(lhs_id)] = typ
+					}
+				}
+				i += 2
+			}
+			return
+		}
+		.for_in_stmt {
+			tc.annotate_for_in(id, node)
+			return
+		}
+		else {}
+	}
+	tc.expr_types[int(id)] = tc.resolve_type(id)
+	for i in 0 .. node.children_count {
+		tc.annotate_node(tc.a.child(&node, i))
+	}
+}
+
+fn (mut tc TypeChecker) annotate_for_in(id flat.NodeId, node flat.Node) {
+	header := node.value.int()
+	if header < 3 || node.children_count < 3 {
+		return
+	}
+	key_id := tc.a.child(&node, 0)
+	val_id := tc.a.child(&node, 1)
+	container_id := tc.a.child(&node, 2)
+	tc.annotate_node(container_id)
+	has_val := int(val_id) >= 0
+	if header == 4 {
+		tc.insert_loop_var(key_id, Type(int_))
+		tc.annotate_node(tc.a.child(&node, 3))
+	} else {
+		clean := unwrap_pointer(tc.resolve_type(container_id))
+		if clean is Array {
+			if has_val {
+				tc.insert_loop_var(key_id, Type(int_))
+				tc.insert_loop_var(val_id, clean.elem_type)
+			} else {
+				tc.insert_loop_var(key_id, clean.elem_type)
+			}
+		} else if clean is Map {
+			if has_val {
+				tc.insert_loop_var(key_id, clean.key_type)
+				tc.insert_loop_var(val_id, clean.value_type)
+			} else {
+				tc.insert_loop_var(key_id, clean.value_type)
+			}
+		} else if clean is String {
+			if has_val {
+				tc.insert_loop_var(key_id, Type(int_))
+				tc.insert_loop_var(val_id, Type(u8_))
+			} else {
+				tc.insert_loop_var(key_id, Type(u8_))
+			}
+		} else {
+			container := tc.a.nodes[int(container_id)]
+			if container.kind == .range {
+				tc.insert_loop_var(key_id, Type(int_))
+			}
+		}
+	}
+	for i in header .. node.children_count {
+		tc.annotate_node(tc.a.child(&node, i))
+	}
+}
+
+fn (mut tc TypeChecker) insert_loop_var(id flat.NodeId, typ Type) {
+	if int(id) < 0 {
+		return
+	}
+	v := tc.a.nodes[int(id)]
+	if v.kind == .ident && v.value.len > 0 {
+		tc.cur_scope.insert(v.value, typ)
+		tc.expr_types[int(id)] = typ
+	}
+}
+
+// expr_type returns the resolved type recorded for a node during annotate_types.
+pub fn (tc &TypeChecker) expr_type(id flat.NodeId) ?Type {
+	if t := tc.expr_types[int(id)] {
+		return t
+	}
+	return none
 }
 
 pub fn (mut tc TypeChecker) check_semantics() {

@@ -98,8 +98,15 @@ fn main() {
 
 	b.step('parse')
 
-	// Transform (match lowering etc.)
-	transform.transform(mut a)
+	// Type-collect + annotate expression types BEFORE transform, so the
+	// transformer is type-aware (like v2: check runs before transform). The
+	// transformer reads per-expression types to own type-dependent lowering.
+	mut pre_tc := types.TypeChecker.new(a)
+	pre_tc.collect(a)
+	pre_tc.annotate_types()
+
+	// Transform (match lowering, string/in lowering, etc.)
+	transform.transform(mut a, &pre_tc)
 	b.step('transform')
 
 	// Type check — shared phase before backend selection

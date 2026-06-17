@@ -8,12 +8,8 @@ fn (mut t Transformer) transform_infix_string_ops(id flat.NodeId, node flat.Node
 	}
 	lhs_id := t.a.child(&node, 0)
 	rhs_id := t.a.child(&node, 1)
-	lhs := t.a.nodes[int(lhs_id)]
-	rhs := t.a.nodes[int(rhs_id)]
 
-	is_string := lhs.kind == .string_literal || rhs.kind == .string_literal
-		|| lhs.kind == .string_interp || rhs.kind == .string_interp
-		|| t.resolve_expr_type(lhs_id) == 'string' || t.resolve_expr_type(rhs_id) == 'string'
+	is_string := t.is_string_type(lhs_id) || t.is_string_type(rhs_id)
 
 	if !is_string {
 		return none
@@ -126,21 +122,41 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			or_chain
 		}
 	} else {
-		// array / map / other containment: let the C backend emit the membership test,
-		// but rebuild with transformed children and normalize value to 'in'.
 		new_rhs := t.transform_expr(rhs_id)
-		in_start := t.a.children.len
-		t.a.children << new_lhs
-		t.a.children << new_rhs
-		t.a.add_node(flat.Node{
-			kind:           .in_expr
-			op:             node.op
-			children_start: in_start
-			children_count: 2
-			pos:            node.pos
-			value:          'in'
-			typ:            node.typ
-		})
+		rhs_type := t.node_type(rhs_id)
+		if rhs_type.starts_with('[]') {
+			// dynamic array membership -> array_contains_int/string(arr, val)
+			elem := rhs_type[2..]
+			fn_name := if elem == 'string' { 'array_contains_string' } else { 'array_contains_int' }
+			t.make_call(fn_name, [new_rhs, new_lhs])
+		} else if is_fixed_array_type(rhs_type) {
+			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
+			elem := rhs_type.all_before('[')
+			len_str := rhs_type.all_after('[').all_before(']')
+			fn_name := if elem == 'string' {
+				'fixed_array_contains_string'
+			} else {
+				'fixed_array_contains_int'
+			}
+			len_lit := t.make_int_literal(len_str.int())
+			t.make_call(fn_name, [new_rhs, len_lit, new_lhs])
+		} else {
+			// map / unknown containment: the backend renders the membership test.
+			// map__exists needs a C key pointer (compound literal) that cannot be
+			// expressed at the AST level, so this stays in the backend by design.
+			in_start := t.a.children.len
+			t.a.children << new_lhs
+			t.a.children << new_rhs
+			t.a.add_node(flat.Node{
+				kind:           .in_expr
+				op:             node.op
+				children_start: in_start
+				children_count: 2
+				pos:            node.pos
+				value:          'in'
+				typ:            node.typ
+			})
+		}
 	}
 
 	if is_not_in && result != id {
@@ -218,6 +234,15 @@ pub fn (mut t Transformer) make_int_literal(value int) flat.NodeId {
 
 pub fn (mut t Transformer) make_bool_literal(value bool) flat.NodeId {
 	return t.a.add_val(.bool_literal, if value { 'true' } else { 'false' })
+}
+
+// is_fixed_array_type reports whether a v-type string denotes a fixed array
+// like `int[5]` (as opposed to a dynamic array `[]int` or a map `map[...]...`).
+fn is_fixed_array_type(s string) bool {
+	if s.starts_with('[]') || s.starts_with('map[') {
+		return false
+	}
+	return s.contains('[') && s.ends_with(']')
 }
 
 fn c_name(name string) string {
