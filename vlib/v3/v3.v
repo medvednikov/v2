@@ -2,6 +2,7 @@ module main
 
 import os
 import v3.bench
+import v3.flat
 import v3.gen.arm64
 import v3.gen.c as cgen
 import v3.markused
@@ -66,33 +67,26 @@ fn main() {
 			files << builtin_path
 		}
 	} else {
-		vlib_dir := os.join_path(os.dir(os.dir(@FILE)))
-		builtin_dir := os.join_path(vlib_dir, 'builtin')
-		if os.is_dir(builtin_dir) {
-			builtin_files := os.ls(builtin_dir) or { []string{} }
-			for f in builtin_files {
-				if !f.ends_with('.v') {
-					continue
-				}
-				if f.ends_with('_test.v') {
-					continue
-				}
-				if f.contains('_d_') || f.contains('_notd_') {
-					continue
-				}
-				if f.contains('_windows') || f.contains('_ios') || f.contains('_android') {
-					continue
-				}
-				if f.contains('_js') || f.contains('_wasm') || f.contains('_bare') {
-					continue
-				}
-				files << os.join_path(builtin_dir, f)
-			}
-		}
+		builtin_dir := os.join_path(prefs.vroot, 'vlib', 'builtin')
+		files << pref.get_v_files_from_dir(builtin_dir, prefs.user_defines, prefs.target_os)
 	}
 	mut a := p.parse_files(files)
 	a.user_code_start = a.nodes.len
-	p.parse_into(input_file)
+
+	// Parse user input: single file or directory
+	mut user_files := []string{}
+	if os.is_dir(input_file) {
+		user_files = pref.get_v_files_from_dir(input_file, prefs.user_defines, prefs.target_os)
+	} else {
+		user_files << input_file
+	}
+	for uf in user_files {
+		p.parse_into(uf)
+	}
+
+	// Resolve imports recursively
+	resolve_imports(mut a, mut p, prefs, user_files)
+
 	b.step('parse')
 
 	// Transform (match lowering etc.)
@@ -143,4 +137,40 @@ fn main() {
 	}
 
 	b.print_report()
+}
+
+fn resolve_imports(mut a flat.FlatAst, mut p parser.FlatParser, prefs &pref.Preferences, initial_files []string) {
+	mut parsed_modules := map[string]bool{}
+	parsed_modules['builtin'] = true
+	parsed_modules['main'] = true
+
+	mut first_file := ''
+	if initial_files.len > 0 {
+		first_file = initial_files[0]
+	}
+
+	mut changed := true
+	for changed {
+		changed = false
+		for node in a.nodes {
+			if node.kind != .import_decl {
+				continue
+			}
+			mod_name := node.value
+			if mod_name in parsed_modules {
+				continue
+			}
+			parsed_modules[mod_name] = true
+			changed = true
+
+			mod_dir := prefs.get_module_path(mod_name, first_file)
+			if mod_dir == '' || !os.is_dir(mod_dir) {
+				continue
+			}
+			mod_files := pref.get_v_files_from_dir(mod_dir, prefs.user_defines, prefs.target_os)
+			for mf in mod_files {
+				p.parse_into(mf)
+			}
+		}
+	}
 }

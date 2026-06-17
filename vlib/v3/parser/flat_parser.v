@@ -10,15 +10,16 @@ import v3.token
 pub struct FlatParser {
 	prefs &pref.Preferences
 mut:
-	s        &scanner.Scanner
-	tok      token.Token
-	lit      string
-	prev_tok token.Token
-	peek_tok token.Token = .eof
-	peek_lit string
-	has_peek bool
-	a        flat.FlatAst
-	cur_file string
+	s          &scanner.Scanner
+	tok        token.Token
+	lit        string
+	prev_tok   token.Token
+	peek_tok   token.Token = .eof
+	peek_lit   string
+	has_peek   bool
+	a          flat.FlatAst
+	cur_file   string
+	cur_module string
 }
 
 pub fn FlatParser.new(prefs &pref.Preferences) FlatParser {
@@ -57,6 +58,7 @@ pub fn (mut p FlatParser) parse_into(path string) {
 	for p.tok != .eof {
 		if p.tok == .key_module {
 			p.next()
+			p.cur_module = p.lit
 			p.next()
 			continue
 		}
@@ -2924,7 +2926,12 @@ fn (mut p FlatParser) parse_type_name() string {
 		p.next()
 		mut ptypes := []string{}
 		for p.tok != .rpar && p.tok != .eof {
-			ptypes << p.parse_type_name()
+			typ := p.parse_type_name()
+			if p.tok != .comma && p.tok != .rpar && p.tok != .eof {
+				ptypes << p.parse_type_name()
+			} else {
+				ptypes << typ
+			}
 			if p.tok == .comma {
 				p.next()
 			}

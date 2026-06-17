@@ -1,22 +1,38 @@
 # v3
 
-Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a type checker with lexical scoping, a transformer for AST simplification (match lowering), a markused pass for dead-code elimination, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
+Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a structured type system with sum-type variants, lexical scoping, a transformer for AST simplification (match lowering), a markused pass for dead-code elimination, recursive import resolution, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
 
-Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation. The type checker resolves V types through scope chains and converts them to C types at emission sites.
+Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation.
+
+The type system (`types/`) uses a `Type` sum type with 20 variants (Primitive, Array, Map, Pointer, FnType, Struct, Enum, etc.) instead of string-based type checks. Primitive types use a `Properties` flag enum with `boolean`, `float`, `integer`, `unsigned` flags and a `size` field. The parser produces string type names; `parse_type()` bridges them to structured `Type` values. `resolve_type()` infers types from AST nodes, and `c_type()` lowers to C type strings only at emission sites. Lexical scopes store `Type` values with parent-chain lookups.
+
+Imports are resolved recursively: after parsing the input file, the driver collects `import_decl` nodes, resolves module paths (relative to importing file, then vlib), parses module files, and repeats until no new imports are found.
 
 ## Architecture
 
 ```
-                                                                        ┌→ gen C → cc
-source + vlib/builtin → scanner → flat parser → flat AST → transform → markused ─┤
-                                                                        └→ SSA build ──→ ARM64 gen → link
-                                                                                     └─→ optimize → MIR → insel ─┘
-                                                                                         (-prod only)
+                                                                                   ┌→ gen C → cc
+source + vlib/builtin → scanner → flat parser → flat AST → import resolve → transform → markused ─┤
+                                                                                   └→ SSA build ──→ ARM64 gen → link
+                                                                                                └─→ optimize → MIR → insel ─┘
+                                                                                                    (-prod only)
 ```
 
 The parser directly emits a flat AST — no recursive AST intermediate, no flatten step. All nodes live in a single `[]Node` array with children as indices into a separate `[]NodeId` array. No pointer chasing, no recursive sum types during code generation.
 
-All `vlib/builtin/` files (38 files: both `.v` and `.c.v`) are parsed first to collect struct, enum, type alias, interface, C function, and global definitions. `$if` compile-time conditionals (`$if !no_bounds_checking`, `$if gcboehm_opt ?`, `$if freestanding`, etc.) are resolved inline during parsing — the parser evaluates the condition, parses only the taken branch, and skips the other, so no `comptime_if` AST nodes reach the transformer or backends. The type checker (`types/`) uses lexical scopes with parent chains to resolve V types (`resolve_type`) and convert them to C types (`c_type`) at each emission site. `C.` structs and globals are recognized as extern C types and excluded from code generation. Function bodies from builtins are skipped during C code generation — only type and declaration information is used.
+All `vlib/builtin/` files (38 files: both `.v` and `.c.v`) are parsed first to collect struct, enum, type alias, interface, C function, and global definitions. `$if` compile-time conditionals (`$if !no_bounds_checking`, `$if gcboehm_opt ?`, `$if freestanding`, etc.) are resolved inline during parsing — the parser evaluates the condition, parses only the taken branch, and skips the other, so no `comptime_if` AST nodes reach the transformer or backends.
+
+After parsing the input file, imports are resolved recursively: the driver scans for `import_decl` nodes, resolves module paths (relative to importing file first, then under `vlib/`), parses module `.v` and `.c.v` files, and repeats until all transitive imports are loaded.
+
+The type system (`types/`) uses a `Type` sum type with structured variants instead of string-based type checks:
+- **Primitive** types use a `Properties` flag enum (`boolean`, `float`, `integer`, `unsigned`) and a `size` field — `int`, `i64`, `u8`, `f32`, `bool` are all `Primitive` with different flags
+- **Compound** types: `Array{elem_type}`, `ArrayFixed{elem_type, len}`, `Map{key_type, value_type}`, `Pointer{base_type}`, `FnType{params, return_type}`, `OptionType`, `ResultType`, `MultiReturn`
+- **Named** types: `Struct{name}`, `Enum{name, is_flag}`, `SumType{name}`, `Alias{name, base_type}`
+- **Simple** tags: `Void`, `String`, `Char`, `Rune`, `ISize`, `USize`, `Nil`, `None`
+
+`parse_type(string) Type` bridges parser string output to structured types. `resolve_type(NodeId) Type` infers types from AST nodes. `c_type(Type) string` lowers to C type strings only at final emission. Lexical scopes store `map[string]Type` with parent-chain lookups.
+
+`C.` structs and globals are recognized as extern C types and excluded from code generation. Function bodies from builtins are skipped during C code generation — only type and declaration information is used.
 
 The transformer lowers match statements to if/else chains and collects struct/global type info.
 
@@ -28,9 +44,11 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 
 | Component      | Lines |
 |----------------|-------|
-| flat parser    | 3,034 |
-| C gen (flat)   | 2,635 |
-| type checker   | 290   |
+| flat parser    | 3,050 |
+| C gen (flat)   | 2,694 |
+| type system    | 230   |
+| type checker   | 483   |
+| universe       | 54    |
 | scopes         | 32    |
 | C gen (AST)    | 656   |
 | SSA IR+build   | 1,510 |
@@ -46,12 +64,12 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | flatten        | 532   |
 | transformer    | 243   |
 | markused       | 107   |
-| driver         | 146   |
+| driver         | 177   |
 | builtins       | 89    |
-| pref           | 90    |
+| pref           | 220   |
 | scanner        | 582   |
 | token          | 687   |
-| **total**      | **~14,900** |
+| **total**      | **~15,800** |
 
 The flat parser covers the full V language (all constructs from the old 3,991-line v2 parser), but in ~27% fewer lines thanks to the flat AST representation.
 

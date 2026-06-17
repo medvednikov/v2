@@ -5,21 +5,23 @@ pub struct Scope {
 pub:
 	parent &Scope = unsafe { nil }
 pub mut:
-	objects map[string]string
+	objects map[string]Type
 }
 
 pub fn new_scope(parent &Scope) &Scope {
 	unsafe {
-		return &Scope{parent: parent}
+		return &Scope{
+			parent: parent
+		}
 	}
 }
 
-pub fn (s &Scope) lookup(name string) ?string {
+pub fn (s &Scope) lookup(name string) ?Type {
 	if name.len == 0 {
 		return none
 	}
-	if typ := s.objects[name] {
-		return typ
+	if name in s.objects {
+		return s.objects[name]
 	}
 	if s.parent != unsafe { nil } {
 		return s.parent.lookup(name)
@@ -27,6 +29,6 @@ pub fn (s &Scope) lookup(name string) ?string {
 	return none
 }
 
-pub fn (mut s Scope) insert(name string, typ string) {
+pub fn (mut s Scope) insert(name string, typ Type) {
 	s.objects[name] = typ
 }

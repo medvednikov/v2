@@ -2,18 +2,12 @@ module types
 
 import v3.flat
 
-pub struct StructField {
-pub:
-	name string
-	typ  string
-}
-
 @[heap]
 pub struct TypeChecker {
 pub mut:
 	a              &flat.FlatAst = unsafe { nil }
-	fn_ret_types   map[string]string
-	fn_param_types map[string][]string
+	fn_ret_types   map[string]Type
+	fn_param_types map[string][]Type
 	structs        map[string][]StructField
 	type_aliases   map[string]string
 	sum_types      map[string][]string
@@ -41,41 +35,177 @@ pub fn (mut tc TypeChecker) pop_scope() {
 	tc.cur_scope = tc.cur_scope.parent
 }
 
-pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
+// parse_type converts a V type string (from parser) to a structured Type.
+pub fn (tc &TypeChecker) parse_type(typ string) Type {
+	if typ.len == 0 {
+		return Type(void_)
+	}
+	if typ.starts_with('&') {
+		return Type(Pointer{
+			base_type: tc.parse_type(typ[1..])
+		})
+	}
+	if typ.starts_with('shared ') {
+		return tc.parse_type(typ[7..])
+	}
+	if typ.starts_with('?') {
+		return Type(OptionType{
+			base_type: tc.parse_type(typ[1..])
+		})
+	}
+	if typ.starts_with('!') {
+		return Type(ResultType{
+			base_type: tc.parse_type(typ[1..])
+		})
+	}
+	if typ.starts_with('[]') {
+		return Type(Array{
+			elem_type: tc.parse_type(typ[2..])
+		})
+	}
+	if typ.starts_with('map[') {
+		bracket_end := find_matching_bracket(typ, 3)
+		key_str := typ[4..bracket_end]
+		val_str := typ[bracket_end + 1..]
+		return Type(Map{
+			key_type:   tc.parse_type(key_str)
+			value_type: tc.parse_type(val_str)
+		})
+	}
+	if typ.starts_with('[') {
+		idx := typ.index_u8(`]`)
+		if idx > 0 {
+			return Type(ArrayFixed{
+				elem_type: tc.parse_type(typ[idx + 1..])
+				len:       typ[1..idx].int()
+			})
+		}
+	}
+	if typ.starts_with('(') && typ.contains(',') {
+		inner := typ[1..typ.len - 1]
+		parts := split_params(inner)
+		mut types := []Type{}
+		for p in parts {
+			types << tc.parse_type(p.trim_space())
+		}
+		return Type(MultiReturn{
+			types: types
+		})
+	}
+	if typ.starts_with('fn(') || typ.starts_with('fn (') {
+		return tc.parse_fn_type(typ)
+	}
+	if bt := builtin_type(typ) {
+		return bt
+	}
+	if typ in tc.type_aliases {
+		return tc.parse_type(tc.type_aliases[typ])
+	}
+	if typ in tc.flag_enums {
+		return Type(Enum{
+			name:    typ
+			is_flag: true
+		})
+	}
+	if typ in tc.enum_names {
+		return Type(Enum{
+			name: typ
+		})
+	}
+	if typ in tc.sum_types {
+		return Type(SumType{
+			name: typ
+		})
+	}
+	if typ.contains('[') && !typ.starts_with('[') {
+		bracket := typ.index_u8(`[`)
+		bracket_end := typ.index_u8(`]`)
+		if bracket_end > bracket {
+			return Type(ArrayFixed{
+				elem_type: tc.parse_type(typ[..bracket])
+				len:       typ[bracket + 1..bracket_end].int()
+			})
+		}
+	}
+	return Type(Struct{
+		name: typ
+	})
+}
+
+fn (tc &TypeChecker) parse_fn_type(typ string) Type {
+	params_start := typ.index_u8(`(`) + 1
+	mut depth := 1
+	mut params_end := params_start
+	for params_end < typ.len {
+		if typ[params_end] == `(` {
+			depth++
+		} else if typ[params_end] == `)` {
+			depth--
+			if depth == 0 {
+				break
+			}
+		}
+		params_end++
+	}
+	params_str := typ[params_start..params_end]
+	ret_str := typ[params_end + 1..].trim_left(' ')
+	mut params := []Type{}
+	if params_str.len > 0 {
+		param_parts := split_params(params_str)
+		for p in param_parts {
+			trimmed := p.trim_space()
+			parts := trimmed.split(' ')
+			param_type := if parts.len >= 2 { parts[parts.len - 1] } else { trimmed }
+			params << tc.parse_type(param_type)
+		}
+	}
+	mut ret_type := ?Type(none)
+	if ret_str.len > 0 {
+		ret_type = tc.parse_type(ret_str)
+	}
+	return Type(FnType{
+		params:      params
+		return_type: ret_type
+	})
+}
+
+pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 	if int(id) < 0 {
-		return 'int'
+		return Type(int_)
 	}
 	node := tc.a.nodes[int(id)]
 	match node.kind {
 		.int_literal {
-			return 'int'
+			return Type(int_)
 		}
 		.float_literal {
-			return 'double'
+			return Type(f64_)
 		}
 		.bool_literal {
-			return 'bool'
+			return Type(bool_)
 		}
 		.char_literal {
-			return 'u8'
+			return Type(u8_)
 		}
 		.string_literal, .string_interp {
-			return 'string'
+			return Type(string_)
 		}
 		.nil_literal {
-			return 'void*'
+			return Type(voidptr_)
 		}
 		.none_expr {
-			return 'Optional'
+			return Type(OptionType{
+				base_type: Type(void_)
+			})
 		}
 		.enum_val {
-			return 'int'
+			return Type(int_)
 		}
 		.ident {
 			if typ := tc.cur_scope.lookup(node.value) {
 				return typ
 			}
-			return 'int'
+			return Type(int_)
 		}
 		.call {
 			fn_node := tc.a.child_node(&node, 0)
@@ -83,63 +213,74 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 				base_node := tc.a.child_node(fn_node, 0)
 				if base_node.kind == .ident {
 					mod_name := '${base_node.value}.${fn_node.value}'
-					if ret := tc.fn_ret_types[mod_name] {
-						return ret
+					if mod_name in tc.fn_ret_types {
+						return tc.fn_ret_types[mod_name]
 					}
 				}
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
-				clean_type := base_type.trim_left('&').trim_right('*')
-				if clean_type.starts_with('[]') {
+				clean_type := unwrap_pointer(base_type)
+				if clean_type is Array {
 					return match fn_node.value {
-						'clone' { clean_type }
-						'last', 'first', 'pop' { clean_type[2..] }
-						'contains' { 'bool' }
-						'index' { 'int' }
-						'join' { 'string' }
-						else { 'int' }
+						'clone' { base_type }
+						'last', 'first', 'pop' { clean_type.elem_type }
+						'contains' { Type(bool_) }
+						'index' { Type(int_) }
+						'join' { Type(string_) }
+						else { Type(int_) }
 					}
 				}
-				if clean_type.starts_with('map[') {
+				if clean_type is Map {
 					return match fn_node.value {
-						'clone' { clean_type }
-						else { 'int' }
+						'clone' { base_type }
+						else { Type(int_) }
 					}
 				}
-				mname := '${clean_type}.${fn_node.value}'
-				if ret := tc.fn_ret_types[mname] {
-					return ret
+				if clean_type is String {
+					mname := 'string.${fn_node.value}'
+					if mname in tc.fn_ret_types {
+						return tc.fn_ret_types[mname]
+					}
+				}
+				if clean_type is Struct {
+					mname := '${clean_type.name}.${fn_node.value}'
+					if mname in tc.fn_ret_types {
+						return tc.fn_ret_types[mname]
+					}
 				}
 			}
-			if ret := tc.fn_ret_types[fn_node.value] {
-				return ret
+			if fn_node.value in tc.fn_ret_types {
+				return tc.fn_ret_types[fn_node.value]
 			}
-			return 'int'
+			return Type(int_)
 		}
 		.infix {
 			if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .logical_and, .logical_or] {
-				return 'bool'
+				return Type(bool_)
 			}
 			lt := tc.resolve_type(tc.a.child(&node, 0))
-			if lt == 'string' {
-				return 'string'
+			if lt is String {
+				return lt
 			}
 			rt := tc.resolve_type(tc.a.child(&node, 1))
-			if rt == 'string' {
-				return 'string'
+			if rt is String {
+				return rt
 			}
-			if lt == 'double' || rt == 'double' {
-				return 'double'
+			if lt.is_float() || rt.is_float() {
+				return Type(f64_)
 			}
 			return lt
 		}
 		.prefix {
 			if node.op == .amp {
-				return tc.resolve_type(tc.a.child(&node, 0)) + '*'
+				inner := tc.resolve_type(tc.a.child(&node, 0))
+				return Type(Pointer{
+					base_type: inner
+				})
 			}
 			if node.op == .mul {
 				inner := tc.resolve_type(tc.a.child(&node, 0))
-				if inner.ends_with('*') {
-					return inner[..inner.len - 1]
+				if inner is Pointer {
+					return inner.base_type
 				}
 				return inner
 			}
@@ -149,56 +290,66 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 			return tc.resolve_type(tc.a.child(&node, 0))
 		}
 		.struct_init {
-			return node.value
+			return tc.parse_type(node.value)
 		}
 		.cast_expr {
-			return node.value
+			return tc.parse_type(node.value)
 		}
 		.selector {
 			base_type := tc.resolve_type(tc.a.child(&node, 0))
-			clean_base := base_type.trim_right('*')
+			clean := unwrap_pointer(base_type)
 			if node.value == 'len' {
-				if base_type.contains('[') || clean_base == 'string' {
-					return 'int'
+				if clean is Array || clean is Map || clean is String || clean is ArrayFixed {
+					return Type(int_)
 				}
 			}
-			if fields := tc.structs[clean_base] {
-				for f in fields {
-					if f.name == node.value {
-						return f.typ
+			if clean is Struct {
+				if clean.name in tc.structs {
+					for f in tc.structs[clean.name] {
+						if f.name == node.value {
+							return f.typ
+						}
 					}
 				}
 			}
-			return 'int'
+			return Type(int_)
 		}
 		.array_literal {
 			if node.children_count > 0 {
 				elem_type := tc.resolve_type(tc.a.child(&node, 0))
-				return '${elem_type}[${node.children_count}]'
+				return Type(ArrayFixed{
+					elem_type: elem_type
+					len:       node.children_count
+				})
 			}
-			return 'int[0]'
+			return Type(ArrayFixed{
+				elem_type: Type(int_)
+				len:       0
+			})
 		}
 		.index {
 			base_type := tc.resolve_type(tc.a.child(&node, 0))
 			if node.value == 'range' {
-				if base_type.starts_with('[]') {
+				if base_type is Array {
 					return base_type
 				}
-				return 'string'
+				return Type(string_)
 			}
-			if base_type.starts_with('map[') {
-				return base_type[base_type.index_u8(`]`) + 1..]
+			if base_type is Map {
+				return base_type.value_type
 			}
-			if base_type.starts_with('[]') {
-				return base_type[2..]
+			if base_type is Array {
+				return base_type.elem_type
 			}
-			if base_type.contains('[') {
-				return base_type.before('[')
+			if base_type is ArrayFixed {
+				return base_type.elem_type
 			}
-			return 'int'
+			return Type(int_)
 		}
 		.array_init {
-			return '[]${node.value}'
+			return Type(Array{
+				elem_type: tc.parse_type(node.value)
+			})
 		}
 		.if_expr {
 			then_block := tc.a.child_node(&node, 1)
@@ -222,13 +373,13 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 					return tc.resolve_type(tc.a.child(&node, 2))
 				}
 			}
-			return 'int'
+			return Type(int_)
 		}
 		.map_init {
-			return node.value
+			return tc.parse_type(node.value)
 		}
 		.in_expr {
-			return 'bool'
+			return Type(bool_)
 		}
 		.block {
 			if node.children_count > 0 {
@@ -239,105 +390,168 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 				}
 				return tc.resolve_type(last_id)
 			}
-			return 'void'
+			return Type(void_)
 		}
 		else {
+			return Type(int_)
+		}
+	}
+}
+
+pub fn (tc &TypeChecker) c_type(t Type) string {
+	match t {
+		Void {
+			return 'void'
+		}
+		Nil {
+			return 'void*'
+		}
+		None {
+			return 'Optional'
+		}
+		String {
+			return 'string'
+		}
+		Char {
+			return 'char'
+		}
+		Rune {
+			return 'i32'
+		}
+		ISize {
+			return 'ptrdiff_t'
+		}
+		USize {
+			return 'size_t'
+		}
+		Primitive {
+			return prim_c_type(t)
+		}
+		Array {
+			return 'Array'
+		}
+		ArrayFixed {
+			return if tc.has_builtins { 'array' } else { 'Array' }
+		}
+		Map {
+			return 'HashMap'
+		}
+		Pointer {
+			return tc.c_type(t.base_type) + '*'
+		}
+		FnType {
+			ret := if r := t.return_type { tc.c_type(r) } else { 'void' }
+			if t.params.len == 0 {
+				return 'fn_ptr:${ret}|void'
+			}
+			mut params := []string{}
+			for p in t.params {
+				params << tc.c_type(p)
+			}
+			return 'fn_ptr:${ret}|${params.join(', ')}'
+		}
+		OptionType {
+			return 'Optional'
+		}
+		ResultType {
+			return 'Optional'
+		}
+		Struct {
+			return c_name(t.name)
+		}
+		Enum {
 			return 'int'
 		}
+		SumType {
+			return c_name(t.name)
+		}
+		Alias {
+			return tc.c_type(t.base_type)
+		}
+		MultiReturn {
+			mut parts := []string{}
+			for ty in t.types {
+				parts << tc.c_type(ty)
+			}
+			return 'multi_return_${parts.join('_')}'
+		}
 	}
 }
 
-pub fn (tc &TypeChecker) c_type(typ string) string {
-	if typ.starts_with('&') {
-		return tc.c_type(typ[1..]) + '*'
+fn prim_c_type(p Primitive) string {
+	if p.props.has(.boolean) {
+		return 'bool'
 	}
-	if typ.starts_with('shared ') {
-		return tc.c_type(typ[7..])
-	}
-	if typ.starts_with('?') {
-		return 'Optional'
-	}
-	if typ.starts_with('!') {
-		return 'Optional'
-	}
-	if typ.starts_with('[]') {
-		return 'Array'
-	}
-	if typ.starts_with('map[') {
-		return 'HashMap'
-	}
-	if typ.starts_with('[') && typ.contains(']') {
-		return if tc.has_builtins { 'array' } else { 'Array' }
-	}
-	if typ.starts_with('fn(') {
-		return tc.c_fn_ptr_type(typ)
-	}
-	if typ in tc.type_aliases {
-		return tc.c_type(tc.type_aliases[typ])
-	}
-	if typ in tc.sum_types {
-		return c_name(typ)
-	}
-	if typ in tc.flag_enums {
-		return 'int'
-	}
-	if typ in tc.enum_names {
-		return 'int'
-	}
-	return match typ {
-		'int' { 'int' }
-		'i8' { 'i8' }
-		'i16' { 'i16' }
-		'i32' { 'i32' }
-		'i64' { 'i64' }
-		'u8', 'byte' { 'u8' }
-		'u16' { 'u16' }
-		'u32' { 'u32' }
-		'u64' { 'u64' }
-		'isize' { 'ptrdiff_t' }
-		'usize' { 'size_t' }
-		'f32' { 'float' }
-		'f64' { 'double' }
-		'bool' { 'bool' }
-		'string' { 'string' }
-		'char' { 'char' }
-		'void' { 'void' }
-		'voidptr' { 'void*' }
-		'charptr' { 'char*' }
-		'byteptr' { 'u8*' }
-		'' { 'void' }
-		else { c_name(typ) }
-	}
-}
-
-fn (tc &TypeChecker) c_fn_ptr_type(typ string) string {
-	// fn(param_types) ret_type → fn_ptr:c_ret|c_param1, c_param2
-	params_start := typ.index_u8(`(`) + 1
-	mut depth := 1
-	mut params_end := params_start
-	for params_end < typ.len {
-		if typ[params_end] == `(` {
-			depth++
-		} else if typ[params_end] == `)` {
-			depth--
-			if depth == 0 {
-				break
+	if p.props.has(.integer) {
+		if p.props.has(.unsigned) {
+			return match p.size {
+				8 { 'u8' }
+				16 { 'u16' }
+				32 { 'u32' }
+				64 { 'u64' }
+				else { 'u${p.size}' }
 			}
 		}
-		params_end++
+		return match p.size {
+			0 { 'int' }
+			8 { 'i8' }
+			16 { 'i16' }
+			32 { 'i32' }
+			64 { 'i64' }
+			else { 'i${p.size}' }
+		}
 	}
-	params_str := typ[params_start..params_end]
-	ret_str := typ[params_end + 1..].trim_left(' ')
-	ret_c := if ret_str.len > 0 { tc.c_type(ret_str) } else { 'void' }
-	if params_str.len == 0 {
-		return 'fn_ptr:${ret_c}|void'
+	if p.props.has(.float) {
+		return match p.size {
+			32 { 'float' }
+			64 { 'double' }
+			else { 'double' }
+		}
 	}
-	params := params_str.split(',')
-	mut c_params := []string{}
-	for p in params {
-		c_params << tc.c_type(p.trim_space())
+	return 'int'
+}
+
+fn find_matching_bracket(s string, start int) int {
+	mut depth := 1
+	for i := start + 1; i < s.len; i++ {
+		if s[i] == `[` {
+			depth++
+		}
+		if s[i] == `]` {
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
 	}
-	return 'fn_ptr:${ret_c}|${c_params.join(', ')}'
+	return s.len
+}
+
+fn split_params(s string) []string {
+	mut parts := []string{}
+	mut depth := 0
+	mut start := 0
+	for i := 0; i < s.len; i++ {
+		match s[i] {
+			`(`, `[` {
+				depth++
+			}
+			`)`, `]` {
+				depth--
+			}
+			`,` {
+				if depth == 0 {
+					parts << s[start..i]
+					start = i + 1
+				}
+			}
+			else {}
+		}
+	}
+	if start < s.len {
+		parts << s[start..]
+	}
+	return parts
 }
 
 fn c_name(name string) string {
