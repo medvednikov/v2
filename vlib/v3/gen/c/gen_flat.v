@@ -25,6 +25,7 @@ mut:
 	fn_ptr_types          map[string]string // fn_ptr:ret|params -> typedef name
 	smartcasts            map[string]string // var_name -> variant_name (active smartcasts)
 	smartcast_sums        map[string]string // var_name -> sum_type_name
+	match_tmp_origins     map[string]string // __match_tmp_* -> original expr key
 	runtime_inits         []string
 	cur_fn_ret            types.Type = types.Type(types.void_)
 	needed_optional_types map[string]string
@@ -396,8 +397,10 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					ct := g.optional_type_name(g.cur_fn_ret)
 					base := if g.cur_fn_ret is types.OptionType {
 						g.cur_fn_ret.base_type
+					} else if g.cur_fn_ret is types.ResultType {
+						g.cur_fn_ret.base_type
 					} else {
-						(g.cur_fn_ret as types.ResultType).base_type
+						types.Type(types.void_)
 					}
 					if base is types.Void {
 						g.writeln('return (${ct}){.ok = false};')
@@ -519,6 +522,12 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		rhs_id := g.a.child(&node, i + 1)
 		lhs := g.a.nodes[int(lhs_id)]
 		rhs := g.a.nodes[int(rhs_id)]
+		if lhs.kind == .ident && lhs.value.starts_with('__match_tmp_') {
+			orig_key := g.expr_key(rhs_id)
+			if orig_key.len > 0 {
+				g.match_tmp_origins[lhs.value] = orig_key
+			}
+		}
 		if rhs.kind == .array_literal {
 			elem_type := if rhs.children_count > 0 {
 				g.tc.resolve_type(g.a.child(&rhs, 0))
@@ -639,16 +648,16 @@ fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
 		if lhs.kind == .ident && lhs.value == '_' {
 			continue
 		}
-		field_type := if rhs_type is types.MultiReturn && j < rhs_type.types.len {
-			g.tc.c_type(rhs_type.types[j])
+		field_type := if rhs_type is types.MultiReturn && j < (rhs_type as types.MultiReturn).types.len {
+			g.tc.c_type((rhs_type as types.MultiReturn).types[j])
 		} else {
 			'int'
 		}
 		lhs_name := c_name(lhs.value)
 		g.writeln('${field_type} ${lhs_name} = ${tmp}.arg${j};')
 		if lhs.kind == .ident {
-			inner := if rhs_type is types.MultiReturn && j < rhs_type.types.len {
-				rhs_type.types[j]
+			inner := if rhs_type is types.MultiReturn && j < (rhs_type as types.MultiReturn).types.len {
+				(rhs_type as types.MultiReturn).types[j]
 			} else {
 				types.Type(types.int_)
 			}
@@ -775,11 +784,7 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 	base_id := g.a.child(fn_node, 0)
 	base_node := g.a.nodes[int(base_id)]
 	is_ptr := if base_node.kind == .ident {
-		if t := g.tc.cur_scope.lookup(base_node.value) {
-			t is types.Pointer
-		} else {
-			false
-		}
+		g.tc.resolve_type(base_id) is types.Pointer
 	} else {
 		false
 	}
@@ -932,7 +937,7 @@ fn (mut g FlatGen) gen_index_assign(node flat.Node) {
 			g.writeln('});')
 			return
 		}
-		if base_type is types.Pointer && base_type.base_type is types.Void {
+		if base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Void {
 			g.write('((u8*)')
 			g.gen_expr(base_id)
 			g.write(')[')
@@ -942,11 +947,11 @@ fn (mut g FlatGen) gen_index_assign(node flat.Node) {
 			g.writeln(';')
 			return
 		}
-		if base_type is types.Array || (base_type is types.Pointer && base_type.base_type is types.Array) {
+		if base_type is types.Array || (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
 			arr_type := if base_type is types.Array {
-				base_type
-			} else if base_type is types.Pointer && base_type.base_type is types.Array {
-				base_type.base_type
+				base_type as types.Array
+			} else if base_type is types.Pointer {
+				(base_type as types.Pointer).base_type as types.Array
 			} else {
 				types.Array{}
 			}
@@ -1075,14 +1080,15 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 				g.writeln('u8 ${elem_var} = ((u8*)${container_str}.str)[${idx_var}];')
 				g.tc.cur_scope.insert(elem_var, types.Type(types.u8_))
 			} else if container_type is types.ArrayFixed {
-				c_elem := g.tc.c_type(container_type.elem_type)
-				arr_len := '${container_type.len}'
+				af := container_type as types.ArrayFixed
+				c_elem := g.tc.c_type(af.elem_type)
+				arr_len := '${af.len}'
 				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${arr_len}; ${idx_var}++) {')
 				g.indent++
 				g.write('${c_elem} ${elem_var} = ')
 				g.gen_expr(g.a.child(&node, 2))
 				g.writeln('[${idx_var}];')
-				g.tc.cur_scope.insert(elem_var, container_type.elem_type)
+				g.tc.cur_scope.insert(elem_var, af.elem_type)
 			} else {
 				g.writeln('for (int ${idx_var} = 0; ${idx_var} < 0; ${idx_var}++) {')
 				g.indent++
@@ -1158,13 +1164,20 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	}
 	g.tc.push_scope()
 	g.indent++
+	mut orig_var := ''
 	if smartcast_var.len > 0 {
 		variant := g.extract_smartcast_variant(cond)
 		expr_type := g.tc.resolve_type(g.a.child(cond, 0))
 		clean := types.unwrap_pointer(expr_type)
 		if clean is types.SumType {
-			g.smartcasts[smartcast_var] = g.resolve_variant(clean.name, variant)
+			resolved := g.resolve_variant(clean.name, variant)
+			g.smartcasts[smartcast_var] = resolved
 			g.smartcast_sums[smartcast_var] = clean.name
+			if smartcast_var in g.match_tmp_origins {
+				orig_var = g.match_tmp_origins[smartcast_var]
+				g.smartcasts[orig_var] = resolved
+				g.smartcast_sums[orig_var] = clean.name
+			}
 		} else {
 			g.smartcasts[smartcast_var] = variant
 		}
@@ -1176,6 +1189,10 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	if smartcast_var.len > 0 {
 		g.smartcasts.delete(smartcast_var)
 		g.smartcast_sums.delete(smartcast_var)
+		if orig_var.len > 0 {
+			g.smartcasts.delete(orig_var)
+			g.smartcast_sums.delete(orig_var)
+		}
 	}
 	g.indent--
 	g.tc.pop_scope()
@@ -1184,9 +1201,26 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 
 fn (g &FlatGen) extract_smartcast_var(cond &flat.Node) string {
 	if cond.kind == .is_expr && cond.children_count > 0 {
-		inner := g.a.child_node(cond, 0)
-		if inner.kind == .ident {
-			return inner.value
+		return g.expr_key(g.a.child(cond, 0))
+	}
+	if cond.kind == .infix && cond.op == .logical_and && cond.children_count > 0 {
+		lhs := g.a.child_node(cond, 0)
+		if lhs.kind == .is_expr && lhs.children_count > 0 {
+			return g.expr_key(g.a.child(lhs, 0))
+		}
+	}
+	return ''
+}
+
+fn (g &FlatGen) expr_key(id flat.NodeId) string {
+	node := g.a.nodes[int(id)]
+	if node.kind == .ident {
+		return node.value
+	}
+	if node.kind == .selector && node.children_count > 0 {
+		base_key := g.expr_key(g.a.child(&node, 0))
+		if base_key.len > 0 {
+			return '${base_key}.${node.value}'
 		}
 	}
 	return ''
@@ -1195,6 +1229,12 @@ fn (g &FlatGen) extract_smartcast_var(cond &flat.Node) string {
 fn (g &FlatGen) extract_smartcast_variant(cond &flat.Node) string {
 	if cond.kind == .is_expr {
 		return cond.value
+	}
+	if cond.kind == .infix && cond.op == .logical_and && cond.children_count > 0 {
+		lhs := g.a.child_node(cond, 0)
+		if lhs.kind == .is_expr {
+			return lhs.value
+		}
 	}
 	return ''
 }
@@ -1332,12 +1372,15 @@ fn (mut g FlatGen) gen_match(node flat.Node) {
 		g.indent++
 		match_expr := g.a.nodes[int(match_expr_id)]
 		mut sc_var := ''
-		if is_sum && !is_else && n_conds == 1 && match_expr.kind == .ident {
-			variant0 := g.a.child_node(branch, 0).value
-			sc_var = match_expr.value
-			sum_name := (clean_type as types.SumType).name
-			g.smartcasts[sc_var] = g.resolve_variant(sum_name, variant0)
-			g.smartcast_sums[sc_var] = sum_name
+		if is_sum && !is_else && n_conds == 1 {
+			sc_key := g.expr_key(match_expr_id)
+			if sc_key.len > 0 {
+				variant0 := g.a.child_node(branch, 0).value
+				sc_var = sc_key
+				sum_name := (clean_type as types.SumType).name
+				g.smartcasts[sc_var] = g.resolve_variant(sum_name, variant0)
+				g.smartcast_sums[sc_var] = sum_name
+			}
 		}
 		for j in body_start .. branch.children_count {
 			g.gen_node(g.a.child(branch, j))
@@ -1420,13 +1463,62 @@ fn (mut g FlatGen) gen_if_expr_block(block &flat.Node) {
 
 fn (mut g FlatGen) gen_if_expr_stmt(node flat.Node) {
 	then_block := g.a.child_node(&node, 1)
-	ret_type := g.tc.resolve_type(g.a.child(then_block, then_block.children_count - 1))
+	cond := g.a.child_node(&node, 0)
+	smartcast_var := g.extract_smartcast_var(cond)
+	last := g.a.child_node(then_block, then_block.children_count - 1)
+	mut ret_type := if last.kind == .expr_stmt {
+		g.tc.resolve_type(g.a.child(last, 0))
+	} else {
+		g.tc.resolve_type(g.a.child(then_block, then_block.children_count - 1))
+	}
+	if ret_type is types.Primitive && node.children_count > 2 {
+		else_node := g.a.child_node(&node, 2)
+		if else_node.kind == .block && else_node.children_count > 0 {
+			el := g.a.child_node(else_node, else_node.children_count - 1)
+			et := if el.kind == .expr_stmt {
+				g.tc.resolve_type(g.a.child(el, 0))
+			} else {
+				g.tc.resolve_type(g.a.child(else_node, else_node.children_count - 1))
+			}
+			if et !is types.Primitive {
+				ret_type = et
+			}
+		} else if else_node.kind == .if_expr && else_node.children_count > 2 {
+			inner_else := g.a.child_node(else_node, 2)
+			if inner_else.kind == .block && inner_else.children_count > 0 {
+				el := g.a.child_node(inner_else, inner_else.children_count - 1)
+				et := if el.kind == .expr_stmt {
+					g.tc.resolve_type(g.a.child(el, 0))
+				} else {
+					g.tc.resolve_type(g.a.child(inner_else, inner_else.children_count - 1))
+				}
+				if et !is types.Primitive {
+					ret_type = et
+				}
+			}
+		}
+	}
 	ct := g.tc.c_type(ret_type)
 	g.writeln('({${ct} _ifexpr;')
 	g.write('if (')
 	g.gen_expr(g.a.child(&node, 0))
 	g.writeln(') {')
+	if smartcast_var.len > 0 {
+		variant := g.extract_smartcast_variant(cond)
+		expr_type := g.tc.resolve_type(g.a.child(cond, 0))
+		clean := types.unwrap_pointer(expr_type)
+		if clean is types.SumType {
+			g.smartcasts[smartcast_var] = g.resolve_variant(clean.name, variant)
+			g.smartcast_sums[smartcast_var] = clean.name
+		} else {
+			g.smartcasts[smartcast_var] = variant
+		}
+	}
 	g.gen_if_expr_block(then_block)
+	if smartcast_var.len > 0 {
+		g.smartcasts.delete(smartcast_var)
+		g.smartcast_sums.delete(smartcast_var)
+	}
 	g.write('} else ')
 	if node.children_count > 2 {
 		else_node := g.a.child_node(&node, 2)
@@ -1445,10 +1537,27 @@ fn (mut g FlatGen) gen_if_expr_stmt(node flat.Node) {
 
 fn (mut g FlatGen) gen_if_expr_else_if(node flat.Node) {
 	then_block := g.a.child_node(&node, 1)
+	cond := g.a.child_node(&node, 0)
+	smartcast_var := g.extract_smartcast_var(cond)
 	g.write('if (')
 	g.gen_expr(g.a.child(&node, 0))
 	g.writeln(') {')
+	if smartcast_var.len > 0 {
+		variant := g.extract_smartcast_variant(cond)
+		expr_type := g.tc.resolve_type(g.a.child(cond, 0))
+		clean := types.unwrap_pointer(expr_type)
+		if clean is types.SumType {
+			g.smartcasts[smartcast_var] = g.resolve_variant(clean.name, variant)
+			g.smartcast_sums[smartcast_var] = clean.name
+		} else {
+			g.smartcasts[smartcast_var] = variant
+		}
+	}
 	g.gen_if_expr_block(then_block)
+	if smartcast_var.len > 0 {
+		g.smartcasts.delete(smartcast_var)
+		g.smartcast_sums.delete(smartcast_var)
+	}
 	g.write('} else ')
 	if node.children_count > 2 {
 		else_node := g.a.child_node(&node, 2)
@@ -1508,11 +1617,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_string_interp(node)
 		}
 		.ident {
-			is_local := if _ := g.tc.cur_scope.lookup(node.value) {
-				true
-			} else {
-				false
-			}
+			looked_up := g.tc.cur_scope.lookup(node.value) or { types.Type(types.void_) }
+			is_local := looked_up !is types.Void
 			if !is_local && node.value in g.const_vals {
 				mod := if node.value in g.const_modules { g.const_modules[node.value] } else { '' }
 				if mod.len > 0 && mod != 'main' && mod != 'builtin' {
@@ -1580,12 +1686,31 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.gen_expr(lhs_id)
 			}
 			g.write(' ${g.op_str(node.op)} ')
+			mut sc_var := ''
+			if node.op == .logical_and && lhs_node.kind == .is_expr {
+				sc_var = g.extract_smartcast_var(&lhs_node)
+				if sc_var.len > 0 {
+					variant := g.extract_smartcast_variant(&lhs_node)
+					expr_type := g.tc.resolve_type(g.a.child(&lhs_node, 0))
+					clean := types.unwrap_pointer(expr_type)
+					if clean is types.SumType {
+						g.smartcasts[sc_var] = g.resolve_variant(clean.name, variant)
+						g.smartcast_sums[sc_var] = clean.name
+					} else {
+						g.smartcasts[sc_var] = variant
+					}
+				}
+			}
 			if rhs_node.kind == .infix {
 				g.write('(')
 				g.gen_expr(rhs_id)
 				g.write(')')
 			} else {
 				g.gen_expr(rhs_id)
+			}
+			if sc_var.len > 0 {
+				g.smartcasts.delete(sc_var)
+				g.smartcast_sums.delete(sc_var)
 			}
 		}
 		.prefix {
@@ -1652,19 +1777,20 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.gen_expr(lhs_id)
 				g.write(')')
 			} else if rhs_type is types.ArrayFixed {
-				contains_fn := if rhs_type.elem_type is types.String {
+				af := rhs_type as types.ArrayFixed
+				contains_fn := if af.elem_type is types.String {
 					'fixed_array_contains_string'
 				} else {
 					'fixed_array_contains_int'
 				}
 				rhs_node := g.a.nodes[int(rhs_id)]
-				c_elem := g.tc.c_type(rhs_type.elem_type)
+				c_elem := g.tc.c_type(af.elem_type)
 				g.write('${contains_fn}(')
 				if rhs_node.kind == .array_literal {
 					g.write('(${c_elem}[])')
 				}
 				g.gen_expr(rhs_id)
-				g.write(', ${rhs_type.len}, ')
+				g.write(', ${af.len}, ')
 				g.gen_expr(lhs_id)
 				g.write(')')
 			} else {
@@ -1702,13 +1828,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			} else if node.value == 'len' && base.kind == .ident {
 				base_type := g.tc.resolve_type(base_id)
 				if base_type is types.ArrayFixed {
-					g.write('${base_type.len}')
+					g.write('${(base_type as types.ArrayFixed).len}')
 				} else {
-					raw_type := if t := g.tc.cur_scope.lookup(base.value) {
-						t
-					} else {
-						base_type
-					}
+					raw_type := g.tc.cur_scope.lookup(base.value) or { base_type }
 					g.gen_expr(base_id)
 					if raw_type is types.Pointer {
 						g.write('->len')
@@ -1740,11 +1862,12 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				} else {
 					g.write('.')
 				}
-				if base.kind == .ident && base.value in g.smartcasts {
-					variant := g.smartcasts[base.value]
+				sc_key := g.expr_key(base_id)
+				if sc_key.len > 0 && sc_key in g.smartcasts {
+					variant := g.smartcasts[sc_key]
 					field := g.sum_field_name(variant)
-					sum_name := if base.value in g.smartcast_sums {
-						g.smartcast_sums[base.value]
+					sum_name := if sc_key in g.smartcast_sums {
+						g.smartcast_sums[sc_key]
 					} else {
 						''
 					}
@@ -1770,11 +1893,11 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write('}, &(${c_val}[]){0})')
-			} else if base_type is types.Array || (base_type is types.Pointer && base_type.base_type is types.Array) {
+			} else if base_type is types.Array || (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
 				arr_type := if base_type is types.Array {
-					base_type
-				} else if base_type is types.Pointer && base_type.base_type is types.Array {
-					base_type.base_type
+					base_type as types.Array
+				} else if base_type is types.Pointer {
+					(base_type as types.Pointer).base_type as types.Array
 				} else {
 					types.Array{}
 				}
@@ -1792,7 +1915,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write('.str[')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write(']')
-			} else if base_type is types.Pointer && base_type.base_type is types.Void {
+			} else if base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Void {
 				g.write('((u8*)')
 				g.gen_expr(base_id)
 				g.write(')[')
@@ -1960,7 +2083,7 @@ fn (mut g FlatGen) gen_decl_or_expr(lhs flat.Node, or_node flat.Node) {
 		base_type := g.tc.resolve_type(g.a.child(&expr_node, 0))
 		clean := types.unwrap_pointer(base_type)
 		if clean is types.Map {
-			g.gen_decl_or_map_index(lhs, expr_node, clean, or_body)
+			g.gen_decl_or_map_index(lhs, expr_node, clean as types.Map, or_body)
 			return
 		}
 	}
@@ -2068,7 +2191,7 @@ fn (mut g FlatGen) gen_or_expr(node flat.Node) {
 		base_type := g.tc.resolve_type(g.a.child(&expr_node, 0))
 		clean := types.unwrap_pointer(base_type)
 		if clean is types.Map {
-			g.gen_or_map_index(expr_node, clean, or_body)
+			g.gen_or_map_index(expr_node, clean as types.Map, or_body)
 			return
 		}
 	}
@@ -2261,15 +2384,50 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					}
 					full_name := '${short_mod}.${fn_node.value}'
 					if full_name in g.tc.type_aliases || full_name in g.tc.structs || full_name in g.tc.enum_names || full_name in g.tc.sum_types {
-						ct := g.tc.c_type(g.tc.parse_type(full_name))
-						g.write('(${ct})(')
-						for i in 1 .. node.children_count {
-							if i > 1 {
-								g.write(', ')
+						target_type := g.tc.parse_type(full_name)
+						ct := g.tc.c_type(target_type)
+						if target_type is types.SumType && node.children_count > 1 {
+							inner_id := g.a.child(&node, 1)
+							inner := g.a.nodes[int(inner_id)]
+							variant_name0 := if inner.kind == .struct_init || inner.kind == .cast_expr {
+								inner.value
+							} else {
+								g.tc.resolve_type(inner_id).name()
 							}
-							g.gen_expr(g.a.child(&node, i))
+							variant_name := g.resolve_variant(target_type.name, variant_name0)
+							idx := g.sum_type_index(target_type.name, variant_name)
+							field := g.sum_field_name(variant_name)
+							if g.variant_references_sum(variant_name, target_type.name) {
+								inner_ct := g.tc.c_type(g.tc.parse_type(variant_name))
+								g.write('(${ct}){.typ = ${idx}, .${field} = (${inner_ct}*)memdup(&(${inner_ct}){')
+								if inner.kind == .struct_init {
+									for si in 0 .. inner.children_count {
+										sf := g.a.child_node(&inner, si)
+										if si > 0 {
+											g.write(', ')
+										}
+										g.write('.${c_name(sf.value)} = ')
+										g.gen_expr(g.a.child(sf, 0))
+									}
+								} else {
+									g.gen_expr(inner_id)
+								}
+								g.write('}, sizeof(${inner_ct}))}')
+							} else {
+								g.write('(${ct}){.typ = ${idx}, .${field} = ')
+								g.gen_expr(inner_id)
+								g.write('}')
+							}
+						} else {
+							g.write('(${ct})(')
+							for i in 1 .. node.children_count {
+								if i > 1 {
+									g.write(', ')
+								}
+								g.gen_expr(g.a.child(&node, i))
+							}
+							g.write(')')
 						}
-						g.write(')')
 						return
 					}
 					g.write(c_name(full_name))
@@ -2297,12 +2455,12 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						base_type := g.tc.resolve_type(g.a.child(fn_node, 0))
 						clean_type := types.unwrap_pointer(base_type)
 						if clean_type is types.Array {
-							g.gen_array_method_call(node, fn_node, clean_type)
+							g.gen_array_method_call(node, fn_node, clean_type as types.Array)
 							return
 						}
 						if clean_type is types.Map {
 							if fn_node.value == 'delete' {
-								g.gen_map_delete(node, fn_node, clean_type)
+								g.gen_map_delete(node, fn_node, clean_type as types.Map)
 								return
 							} else if fn_node.value == 'clone' {
 								g.write('map__clone(&')
@@ -2316,29 +2474,56 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 								return
 							}
 						}
-						struct_name := if clean_type is types.Struct {
-							clean_type.name
-						} else {
-							clean_type.name()
+						if clean_type is types.String {
+							method_name = 'string.${fn_node.value}'
+							if method_name in g.tc.fn_param_types {
+								is_method = true
+								base_id = g.a.child(fn_node, 0)
+								g.write(c_name(method_name))
+							} else {
+								g.write('string__${fn_node.value}(')
+								g.gen_expr(g.a.child(fn_node, 0))
+								for i in 1 .. node.children_count {
+									g.write(', ')
+									g.gen_expr(g.a.child(&node, i))
+								}
+								g.write(')')
+								return
+							}
 						}
-						method_name = '${struct_name}.${fn_node.value}'
-						if method_name !in g.tc.fn_param_types {
-							for alias, target in g.tc.type_aliases {
-								if target == struct_name {
-									alias_method := '${alias}.${fn_node.value}'
-									if alias_method in g.tc.fn_param_types {
-										method_name = alias_method
-										break
+						if !is_method {
+							struct_name := if clean_type is types.Struct {
+								clean_type.name
+							} else {
+								clean_type.name()
+							}
+							method_name = '${struct_name}.${fn_node.value}'
+							if method_name !in g.tc.fn_param_types {
+								for alias, target in g.tc.type_aliases {
+									if target == struct_name {
+										alias_method := '${alias}.${fn_node.value}'
+										if alias_method in g.tc.fn_param_types {
+											method_name = alias_method
+											break
+										}
 									}
 								}
 							}
-						}
-						if method_name in g.tc.fn_param_types {
-							is_method = true
-							base_id = g.a.child(fn_node, 0)
-							g.write(c_name(method_name))
-						} else {
-							g.gen_expr(g.a.child(&node, 0))
+							if method_name in g.tc.fn_param_types {
+								is_method = true
+								base_id = g.a.child(fn_node, 0)
+								g.write(c_name(method_name))
+							} else {
+								str_method := 'string.${fn_node.value}'
+								if str_method in g.tc.fn_param_types {
+									is_method = true
+									method_name = str_method
+									base_id = g.a.child(fn_node, 0)
+									g.write(c_name(str_method))
+								} else {
+									g.gen_expr(g.a.child(&node, 0))
+								}
+							}
 						}
 					}
 				} else if base.kind == .ident && (base.value in g.tc.structs || base.value in g.tc.enum_names || g.tc.qualify_name(base.value) in g.tc.structs || g.tc.qualify_name(base.value) in g.tc.enum_names) {
@@ -2362,12 +2547,12 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					base_type := g.tc.resolve_type(g.a.child(fn_node, 0))
 					clean_type := types.unwrap_pointer(base_type)
 					if clean_type is types.Array {
-						g.gen_array_method_call(node, fn_node, clean_type)
+						g.gen_array_method_call(node, fn_node, clean_type as types.Array)
 						return
 					}
 					if clean_type is types.Map {
 						if fn_node.value == 'delete' {
-							g.gen_map_delete(node, fn_node, clean_type)
+							g.gen_map_delete(node, fn_node, clean_type as types.Map)
 							return
 						} else if fn_node.value == 'clone' {
 							g.write('map__clone(&')
@@ -2381,7 +2566,24 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							return
 						}
 					}
-					if (clean_type is types.Void || clean_type is types.Primitive) && fn_node.value in ['vstring', 'vstring_with_len'] {
+					if clean_type is types.String {
+						method_name = 'string.${fn_node.value}'
+						if method_name in g.tc.fn_param_types {
+							is_method = true
+							base_id = g.a.child(fn_node, 0)
+							g.write(c_name(method_name))
+						} else {
+							g.write('string__${fn_node.value}(')
+							g.gen_expr(g.a.child(fn_node, 0))
+							for i in 1 .. node.children_count {
+								g.write(', ')
+								g.gen_expr(g.a.child(&node, i))
+							}
+							g.write(')')
+							return
+						}
+					}
+					if !is_method && (clean_type is types.Void || clean_type is types.Primitive) && fn_node.value in ['vstring', 'vstring_with_len'] {
 						g.write('u8__${fn_node.value}((u8*)')
 						g.gen_expr(g.a.child(fn_node, 0))
 						for i in 1 .. node.children_count {
@@ -2391,7 +2593,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						g.write(')')
 						return
 					}
-					if clean_type is types.Struct && clean_type.name == 'IError' {
+					if !is_method && clean_type is types.Struct && clean_type.name == 'IError' {
 						if fn_node.value == 'msg' {
 							g.gen_expr(g.a.child(fn_node, 0))
 							g.write('.message')
@@ -2402,6 +2604,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							return
 						}
 					}
+					if !is_method {
 					struct_name := if clean_type is types.Struct {
 						clean_type.name
 					} else {
@@ -2422,14 +2625,19 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					if method_name in g.tc.fn_param_types {
 						is_method = true
 						base_id = g.a.child(fn_node, 0)
-						if clean_type is types.Primitive {
-							g.write(c_name(method_name))
-						} else {
-							g.write(c_name(method_name))
-						}
+						g.write(c_name(method_name))
 					} else {
-						g.gen_expr(g.a.child(&node, 0))
+						str_method := 'string.${fn_node.value}'
+						if str_method in g.tc.fn_param_types {
+							is_method = true
+							method_name = str_method
+							base_id = g.a.child(fn_node, 0)
+							g.write(c_name(str_method))
+						} else {
+							g.gen_expr(g.a.child(&node, 0))
+						}
 					}
+					} // !is_method
 				}
 			} else {
 				fn_id := g.a.child(&node, 0)
@@ -2437,15 +2645,50 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				if fn_ident.kind == .ident {
 					qname := g.tc.qualify_name(fn_ident.value)
 					if fn_ident.value in g.tc.type_aliases || qname in g.tc.type_aliases || fn_ident.value in g.tc.structs || qname in g.tc.structs || fn_ident.value in g.tc.enum_names || qname in g.tc.enum_names || fn_ident.value in g.tc.sum_types || qname in g.tc.sum_types {
-						ct := g.tc.c_type(g.tc.parse_type(fn_ident.value))
-						g.write('(${ct})(')
-						for i in 1 .. node.children_count {
-							if i > 1 {
-								g.write(', ')
+						target_type := g.tc.parse_type(fn_ident.value)
+						ct := g.tc.c_type(target_type)
+						if target_type is types.SumType && node.children_count > 1 {
+							inner_id := g.a.child(&node, 1)
+							inner := g.a.nodes[int(inner_id)]
+							variant_name0 := if inner.kind == .struct_init || inner.kind == .cast_expr {
+								inner.value
+							} else {
+								g.tc.resolve_type(inner_id).name()
 							}
-							g.gen_expr(g.a.child(&node, i))
+							variant_name := g.resolve_variant(target_type.name, variant_name0)
+							idx := g.sum_type_index(target_type.name, variant_name)
+							field := g.sum_field_name(variant_name)
+							if g.variant_references_sum(variant_name, target_type.name) {
+								inner_ct := g.tc.c_type(g.tc.parse_type(variant_name))
+								g.write('(${ct}){.typ = ${idx}, .${field} = (${inner_ct}*)memdup(&(${inner_ct}){')
+								if inner.kind == .struct_init {
+									for si in 0 .. inner.children_count {
+										sf := g.a.child_node(&inner, si)
+										if si > 0 {
+											g.write(', ')
+										}
+										g.write('.${c_name(sf.value)} = ')
+										g.gen_expr(g.a.child(sf, 0))
+									}
+								} else {
+									g.gen_expr(inner_id)
+								}
+								g.write('}, sizeof(${inner_ct}))}')
+							} else {
+								g.write('(${ct}){.typ = ${idx}, .${field} = ')
+								g.gen_expr(inner_id)
+								g.write('}')
+							}
+						} else {
+							g.write('(${ct})(')
+							for i in 1 .. node.children_count {
+								if i > 1 {
+									g.write(', ')
+								}
+								g.gen_expr(g.a.child(&node, i))
+							}
+							g.write(')')
 						}
-						g.write(')')
 						return
 					}
 					qfn := g.tc.qualify_fn_name(fn_ident.value)
@@ -3460,9 +3703,6 @@ fn (mut g FlatGen) struct_decls() {
 					if f.typ is types.Pointer {
 						continue
 					}
-					if f.typ is types.SumType && g.sum_type_contains_struct(f.typ.name, name) {
-						continue
-					}
 					ct := if f.typ is types.ArrayFixed {
 						g.tc.c_type(f.typ.elem_type)
 					} else {
@@ -3578,9 +3818,6 @@ fn (mut g FlatGen) write_struct_field(struct_name string, f types.StructField) {
 		}
 		params_str := if params.len > 0 { params.join(', ') } else { 'void' }
 		g.writeln('\t${ret} (*${c_name(f.name)})(${params_str});')
-	} else if f.typ is types.SumType && g.sum_type_contains_struct(f.typ.name, struct_name) {
-		ct := g.tc.c_type(f.typ)
-		g.writeln('\t${ct}* ${c_name(f.name)};')
 	} else if f.typ is types.ArrayFixed {
 		c_elem := g.tc.c_type(f.typ.elem_type)
 		g.writeln('\t${c_elem} ${c_name(f.name)}[${f.typ.len}];')
@@ -3857,7 +4094,7 @@ fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
 	}
 	node := g.a.nodes[int(id)]
 	return match node.kind {
-		.int_literal, .float_literal, .bool_literal, .char_literal {
+		.int_literal, .float_literal, .bool_literal, .char_literal, .enum_val {
 			true
 		}
 		.prefix {
@@ -3879,6 +4116,17 @@ fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
 			mut all_const := true
 			for ci in 0 .. node.children_count {
 				if !g.is_const_expr(g.a.child(&node, ci)) {
+					all_const = false
+					break
+				}
+			}
+			all_const
+		}
+		.struct_init {
+			mut all_const := true
+			for ci in 0 .. node.children_count {
+				child := g.a.child_node(&node, ci)
+				if child.children_count > 0 && !g.is_const_expr(g.a.child(child, 0)) {
 					all_const = false
 					break
 				}

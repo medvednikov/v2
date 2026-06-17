@@ -2,6 +2,22 @@ module types
 
 import v3.flat
 
+pub struct TypeError {
+pub:
+	msg  string
+	kind TypeErrorKind
+	node flat.NodeId
+}
+
+pub enum TypeErrorKind {
+	unknown_ident
+	unknown_fn
+	unknown_field
+	cannot_index
+	if_branch_mismatch
+	unhandled_node
+}
+
 @[heap]
 pub struct TypeChecker {
 pub mut:
@@ -20,6 +36,8 @@ pub mut:
 	cur_scope       &Scope = unsafe { nil }
 	has_builtins    bool
 	cur_module      string
+	errors          []TypeError
+	resolved_calls  map[int]string // node_id -> resolved function name
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -39,6 +57,14 @@ pub fn (mut tc TypeChecker) pop_scope() {
 	tc.cur_scope = tc.cur_scope.parent
 }
 
+fn (mut tc TypeChecker) record_error(kind TypeErrorKind, msg string, node flat.NodeId) {
+	tc.errors << TypeError{
+		msg:  msg
+		kind: kind
+		node: node
+	}
+}
+
 pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 	tc.a = a
 	tc.file_scope = new_scope(unsafe { nil })
@@ -52,6 +78,9 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 	// Pass 1: collect type-level names (aliases, enums, sum types)
 	for node in a.nodes {
 		match node.kind {
+			.file {
+				tc.cur_module = ''
+			}
 			.module_decl {
 				tc.cur_module = node.value
 			}
@@ -314,6 +343,147 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 	}
 }
 
+pub fn (mut tc TypeChecker) check_semantics() {
+	tc.cur_module = ''
+	for i, node in tc.a.nodes {
+		match node.kind {
+			.module_decl {
+				tc.cur_module = node.value
+			}
+			.fn_decl {
+				tc.push_scope()
+				for pi in 0 .. node.children_count {
+					p := tc.a.child_node(&node, pi)
+					if p.kind == .param && p.value.len > 0 {
+						tc.cur_scope.insert(p.value, tc.parse_type(p.typ))
+					}
+				}
+				tc.check_fn_body(node)
+				tc.pop_scope()
+			}
+			else {}
+		}
+		_ = i
+	}
+}
+
+fn (mut tc TypeChecker) check_fn_body(node flat.Node) {
+	for i in 0 .. node.children_count {
+		child_id := tc.a.child(&node, i)
+		child := tc.a.child_node(&node, i)
+		if child.kind == .param {
+			continue
+		}
+		tc.check_node(child_id)
+	}
+}
+
+fn (mut tc TypeChecker) check_node(id flat.NodeId) {
+	if int(id) < 0 {
+		return
+	}
+	node := tc.a.nodes[int(id)]
+	match node.kind {
+		.call {
+			tc.check_call(id, node)
+		}
+		.if_expr {
+			tc.check_if_expr(id, node)
+		}
+		else {}
+	}
+	for i in 0 .. node.children_count {
+		tc.check_node(tc.a.child(&node, i))
+	}
+}
+
+fn (mut tc TypeChecker) check_call(id flat.NodeId, node flat.Node) {
+	if node.children_count == 0 {
+		return
+	}
+	fn_node := tc.a.child_node(&node, 0)
+	mut resolved := ''
+	if fn_node.kind == .selector {
+		base_node := tc.a.child_node(fn_node, 0)
+		if base_node.kind == .ident {
+			resolved_mod := if base_node.value in tc.imports {
+				tc.imports[base_node.value]
+			} else {
+				base_node.value
+			}
+			mod_name := '${resolved_mod}.${fn_node.value}'
+			if mod_name in tc.fn_ret_types {
+				resolved = mod_name
+			} else {
+				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
+				clean := unwrap_pointer(base_type)
+				type_name := if clean is Struct {
+					clean.name
+				} else if clean is String {
+					'string'
+				} else if clean is Array {
+					'Array'
+				} else if clean is Map {
+					'map'
+				} else if clean is Primitive {
+					prim_c_type(clean)
+				} else {
+					''
+				}
+				if type_name.len > 0 {
+					mname := '${type_name}.${fn_node.value}'
+					if mname in tc.fn_ret_types {
+						resolved = mname
+					}
+				}
+			}
+		}
+	} else if fn_node.kind == .ident {
+		qfn := tc.qualify_fn_name(fn_node.value)
+		if qfn in tc.fn_ret_types {
+			resolved = qfn
+		} else if fn_node.value in tc.fn_ret_types {
+			resolved = fn_node.value
+		}
+	}
+	if resolved.len > 0 {
+		tc.resolved_calls[int(id)] = resolved
+	}
+}
+
+fn (mut tc TypeChecker) check_if_expr(id flat.NodeId, node flat.Node) {
+	if node.children_count < 3 {
+		return
+	}
+	then_block := tc.a.child_node(&node, 1)
+	mut then_type := Type(void_)
+	if then_block.children_count > 0 {
+		last := tc.a.child_node(then_block, then_block.children_count - 1)
+		then_type = if last.kind == .expr_stmt {
+			tc.resolve_type(tc.a.child(last, 0))
+		} else {
+			tc.resolve_type(tc.a.child(then_block, then_block.children_count - 1))
+		}
+	}
+	else_node := tc.a.child_node(&node, 2)
+	mut else_type := Type(void_)
+	if else_node.kind == .block && else_node.children_count > 0 {
+		last := tc.a.child_node(else_node, else_node.children_count - 1)
+		else_type = if last.kind == .expr_stmt {
+			tc.resolve_type(tc.a.child(last, 0))
+		} else {
+			tc.resolve_type(tc.a.child(else_node, else_node.children_count - 1))
+		}
+	} else if else_node.kind == .if_expr {
+		else_type = tc.resolve_type(tc.a.child(&node, 2))
+	}
+	if then_type !is Void && else_type !is Void {
+		if then_type.name() != else_type.name() {
+			tc.record_error(.if_branch_mismatch, 'if-expression branch type mismatch: then `${then_type.name()}` vs else `${else_type.name()}`', id)
+		}
+	}
+}
+
 // parse_type converts a V type string (from parser) to a structured Type.
 pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	if typ.len == 0 {
@@ -446,6 +616,11 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 			name: qtyp
 		})
 	}
+	if typ in tc.structs {
+		return Type(Struct{
+			name: typ
+		})
+	}
 	if qtyp != typ {
 		return Type(Struct{
 			name: qtyp
@@ -560,6 +735,15 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					if mod_name in tc.fn_ret_types {
 						return tc.fn_ret_types[mod_name]
 					}
+					if mod_name in tc.sum_types {
+						return Type(SumType{name: mod_name})
+					}
+					if mod_name in tc.structs {
+						return Type(Struct{name: mod_name})
+					}
+					if mod_name in tc.enum_names {
+						return Type(Enum{name: mod_name})
+					}
 					if base_node.value in tc.structs || base_node.value in tc.enum_names {
 						qname := tc.qualify_name(base_node.value)
 						sname := '${qname}.${fn_node.value}'
@@ -632,6 +816,12 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			}
 			if fn_node.value in tc.fn_ret_types {
 				return tc.fn_ret_types[fn_node.value]
+			}
+			for _, imp in tc.imports {
+				imp_name := '${imp}.${fn_node.value}'
+				if imp_name in tc.fn_ret_types {
+					return tc.fn_ret_types[imp_name]
+				}
 			}
 			$if debug {
 				eprintln('warning: unknown fn return type `${fn_node.value}`, recovering as int')
@@ -777,6 +967,12 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					}
 				} else if else_node.kind == .if_expr {
 					else_type = tc.resolve_type(tc.a.child(&node, 2))
+				}
+				if then_type !is Void && then_type !is Primitive {
+					return then_type
+				}
+				if else_type !is Void && else_type !is Primitive {
+					return else_type
 				}
 				if then_type !is Void {
 					return then_type

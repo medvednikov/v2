@@ -1,4 +1,44 @@
+module main
+
 import strings
+
+struct Cat {
+	name string
+	age  int
+}
+
+struct Dog {
+	name   string
+	tricks int
+}
+
+type Animal = Cat | Dog
+
+struct Holder {
+mut:
+	pet Animal
+}
+
+fn describe_holder(h Holder) string {
+	if h.pet is Cat {
+		return h.pet.name
+	} else if h.pet is Dog {
+		return h.pet.name
+	}
+	return 'unknown'
+}
+
+fn holder_detail(h Holder) int {
+	match h.pet {
+		Cat {
+			return h.pet.age
+		}
+		Dog {
+			return h.pet.tricks
+		}
+	}
+	return 0
+}
 
 struct Point {
 mut:
@@ -4022,5 +4062,40 @@ fn main() {
 
 	print_str('function pointers: ok')
 
-	print_str('=== ALL 100 TESTS PASSED ===')
+	// 101. Sum type smartcasting (ident and selector)
+	cat101 := Cat{ name: 'Whiskers', age: 5 }
+	dog101 := Dog{ name: 'Rex', tricks: 3 }
+	a101 := Animal(cat101)
+	if a101 is Cat {
+		assert a101.name == 'Whiskers'
+		assert a101.age == 5
+	}
+
+	h101 := Holder{ pet: Animal(cat101) }
+	assert describe_holder(h101) == 'Whiskers'
+	assert holder_detail(h101) == 5
+
+	h102 := Holder{ pet: Animal(dog101) }
+	assert describe_holder(h102) == 'Rex'
+	assert holder_detail(h102) == 3
+
+	// selector smartcast via if
+	if h101.pet is Cat {
+		assert h101.pet.name == 'Whiskers'
+		assert h101.pet.age == 5
+	}
+
+	// selector smartcast via match
+	match h102.pet {
+		Dog {
+			assert h102.pet.tricks == 3
+		}
+		Cat {
+			assert false
+		}
+	}
+
+	print_str('sum type smartcast: ok')
+
+	print_str('=== ALL 101 TESTS PASSED ===')
 }

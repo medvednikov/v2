@@ -24,6 +24,8 @@ fn main() {
 	mut output_file := ''
 	mut backend := 'c'
 	mut is_prod := false
+	mut is_selfhost := false
+	mut is_strict := false
 	mut i := 0
 	for i < args.len {
 		if args[i] == '-o' && i + 1 < args.len {
@@ -34,6 +36,12 @@ fn main() {
 			i += 2
 		} else if args[i] == '-prod' {
 			is_prod = true
+			i++
+		} else if args[i] == '-selfhost' {
+			is_selfhost = true
+			i++
+		} else if args[i] == '-strict' {
+			is_strict = true
 			i++
 		} else {
 			input_file = args[i]
@@ -99,6 +107,21 @@ fn main() {
 	tc.collect(a)
 	b.step('check')
 
+	tc.check_semantics()
+	if tc.errors.len > 0 {
+		if is_selfhost {
+			eprintln('type checker found ${tc.errors.len} error(s):')
+			max_errors := if tc.errors.len < 20 { tc.errors.len } else { 20 }
+			for ei in 0 .. max_errors {
+				eprintln('  ${tc.errors[ei].msg}')
+			}
+			if tc.errors.len > 20 {
+				eprintln('  ... and ${tc.errors.len - 20} more')
+			}
+			exit(1)
+		}
+	}
+
 	// Mark used functions (dead-code elimination)
 	used_fns := markused.mark_used(a, tc)
 	b.step('markused')
@@ -132,7 +155,12 @@ fn main() {
 		b.step('write')
 
 		opt_flag := if is_prod { '-O2 ' } else { '' }
-		cc_cmd := 'cc -std=gnu11 ${opt_flag}-w -Wno-int-conversion -o ${bin_file} ${output_file} -lm'
+		warn_flags := if is_strict {
+			'-Wall -Wextra -Werror=implicit-function-declaration -Wno-unused-variable -Wno-unused-parameter -Wno-int-conversion -Wno-missing-braces'
+		} else {
+			'-w -Wno-int-conversion'
+		}
+		cc_cmd := 'cc -std=gnu11 ${opt_flag}${warn_flags} -o ${bin_file} ${output_file} -lm'
 		result := os.execute(cc_cmd)
 		if result.exit_code != 0 {
 			eprintln('C compilation failed:')
