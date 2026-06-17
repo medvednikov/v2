@@ -56,7 +56,11 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				tc.cur_module = node.value
 			}
 			.import_decl {
-				mod := if node.value.contains('.') { node.value.all_after_last('.') } else { node.value }
+				mod := if node.value.contains('.') {
+					node.value.all_after_last('.')
+				} else {
+					node.value
+				}
 				tc.imports[node.typ] = mod
 			}
 			.enum_decl {
@@ -201,6 +205,7 @@ pub fn (tc &TypeChecker) qualify_name(name string) string {
 }
 
 fn (mut tc TypeChecker) register_runtime_methods() {
+	tc.type_aliases.delete('strings.Builder')
 	tc.fn_ret_types['strings.new_builder'] = tc.parse_type('strings.Builder')
 	tc.fn_param_types['strings.new_builder'] = [tc.parse_type('int')]
 	tc.fn_ret_types['strings.Builder.str'] = tc.parse_type('string')
@@ -213,6 +218,25 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 	tc.fn_ret_types['strings.Builder.writeln'] = tc.parse_type('void')
 	tc.fn_param_types['strings.Builder.writeln'] = [tc.parse_type('&strings.Builder'),
 		tc.parse_type('string')]
+	tc.fn_ret_types['strings.Builder.write_ptr'] = tc.parse_type('void')
+	tc.fn_param_types['strings.Builder.write_ptr'] = [
+		tc.parse_type('&strings.Builder'),
+		tc.parse_type('voidptr'),
+		tc.parse_type('int'),
+	]
+	tc.fn_ret_types['strings.Builder.write_u8'] = tc.parse_type('void')
+	tc.fn_param_types['strings.Builder.write_u8'] = [
+		tc.parse_type('&strings.Builder'),
+		tc.parse_type('u8'),
+	]
+	tc.fn_ret_types['strings.Builder.free'] = tc.parse_type('void')
+	tc.fn_param_types['strings.Builder.free'] = [tc.parse_type('&strings.Builder')]
+	tc.fn_ret_types['check_fwrite'] = tc.parse_type('!int')
+	tc.fn_param_types['check_fwrite'] = [tc.parse_type('int')]
+	tc.fn_ret_types['os.check_fwrite'] = tc.parse_type('!int')
+	tc.fn_ret_types['malloc_noscan'] = tc.parse_type('voidptr')
+	tc.fn_ret_types['u8.vstring'] = tc.parse_type('string')
+	tc.fn_ret_types['u8.vstring_with_len'] = tc.parse_type('string')
 	methods := {
 		'string.all_before':      ['string', 'string']
 		'string.all_before_last': ['string', 'string']
@@ -236,6 +260,8 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		'string.last_index_u8':   ['string', 'u8']
 		'string.contains_u8':     ['string', 'u8']
 		'string.int':             ['string']
+		'string.free':            ['&string']
+		'string.clone':           ['string']
 	}
 	ret_types := {
 		'string.all_before':      'string'
@@ -260,6 +286,8 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		'string.last_index_u8':   'int'
 		'string.contains_u8':     'bool'
 		'string.int':             'int'
+		'string.free':            'void'
+		'string.clone':           'string'
 	}
 	for name, params in methods {
 		if name !in tc.fn_param_types {
@@ -492,6 +520,13 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			if typ := tc.cur_scope.lookup(node.value) {
 				return typ
 			}
+			qname := tc.qualify_name(node.value)
+			if qname in tc.const_types {
+				return tc.const_types[qname]
+			}
+			if node.value in tc.const_types {
+				return tc.const_types[node.value]
+			}
 			return Type(int_)
 		}
 		.call {
@@ -596,6 +631,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			return tc.resolve_type(tc.a.child(&node, 0))
 		}
 		.paren {
+			return tc.resolve_type(tc.a.child(&node, 0))
+		}
+		.or_expr {
 			return tc.resolve_type(tc.a.child(&node, 0))
 		}
 		.struct_init {

@@ -6,25 +6,26 @@ import v3.types
 
 pub struct FlatGen {
 mut:
-	sb            strings.Builder
-	indent        int
-	a             &flat.FlatAst = unsafe { nil }
-	used_fns      map[string]bool
-	str_lits      []string
-	global_types  map[string]types.Type
-	enum_vals     map[string]int
-	defers        []flat.NodeId
-	interfaces    map[string][]string
-	const_vals    map[string]flat.NodeId
-	const_modules map[string]string
-	tc            types.TypeChecker
-	has_builtins  bool
-	tmp_count     int
-	modules       map[string]string // alias -> full module name
-	fn_ptr_types  map[string]string // fn_ptr:ret|params -> typedef name
-	smartcasts    map[string]string // var_name -> variant_name (active smartcasts)
-	runtime_inits  []string
-	cur_fn_ret     types.Type = types.Type(types.void_)
+	sb                    strings.Builder
+	indent                int
+	a                     &flat.FlatAst = unsafe { nil }
+	used_fns              map[string]bool
+	str_lits              []string
+	global_types          map[string]types.Type
+	enum_vals             map[string]int
+	defers                []flat.NodeId
+	interfaces            map[string][]string
+	const_vals            map[string]flat.NodeId
+	const_modules         map[string]string
+	tc                    types.TypeChecker
+	has_builtins          bool
+	tmp_count             int
+	modules               map[string]string // alias -> full module name
+	fn_ptr_types          map[string]string // fn_ptr:ret|params -> typedef name
+	smartcasts            map[string]string // var_name -> variant_name (active smartcasts)
+	runtime_inits         []string
+	cur_fn_ret            types.Type = types.Type(types.void_)
+	needed_optional_types map[string]string
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -63,6 +64,7 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, 
 	g.enum_decls()
 	g.type_alias_decls()
 	g.struct_decls()
+	g.optional_typedefs()
 	g.multi_return_typedefs()
 	g.runtime_fns()
 	g.global_decls()
@@ -218,7 +220,7 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 	} else {
 		ret_type := g.tc.parse_type(node.typ)
 		g.cur_fn_ret = ret_type
-		g.write(g.tc.c_type(ret_type))
+		g.write(g.optional_type_name(ret_type))
 		g.write(' ')
 		g.write(g.qualified_fn_name(node.value))
 		g.write('(')
@@ -339,18 +341,45 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 				ret_node := g.a.nodes[int(ret_id)]
 				if ret_node.kind == .call {
 					fn_n := g.a.child_node(&ret_node, 0)
-					if fn_n.value == 'error' {
-						g.write('return ')
-						g.gen_expr(ret_id)
-						g.writeln(';')
+					if fn_n.value == 'error' || fn_n.value == 'error_with_code' {
+						if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+							ct := g.optional_type_name(g.cur_fn_ret)
+							g.writeln('return (${ct}){.ok = false};')
+						} else {
+							g.write('return ')
+							g.gen_expr(ret_id)
+							g.writeln(';')
+						}
 						return
 					}
 				}
 				if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
-					ct := g.tc.c_type(g.cur_fn_ret)
-					g.write('return (${ct}){.ok = true, .value = ')
-					g.gen_expr(ret_id)
-					g.writeln('};')
+					ct := g.optional_type_name(g.cur_fn_ret)
+					base := if g.cur_fn_ret is types.OptionType {
+						g.cur_fn_ret.base_type
+					} else {
+						(g.cur_fn_ret as types.ResultType).base_type
+					}
+					if base is types.Void {
+						g.writeln('return (${ct}){.ok = false};')
+					} else {
+						expr_type := g.tc.resolve_type(ret_id)
+						if expr_type is types.OptionType || expr_type is types.ResultType {
+							g.write('return ')
+							g.gen_expr(ret_id)
+							g.writeln(';')
+						} else {
+							base_ct := g.tc.c_type(base)
+							expr_ct := g.tc.c_type(expr_type)
+							if expr_ct != base_ct && expr_type !is types.Primitive {
+								g.writeln('return (${ct}){.ok = false};')
+							} else {
+								g.write('return (${ct}){.ok = true, .value = ')
+								g.gen_expr(ret_id)
+								g.writeln('};')
+							}
+						}
+					}
 				} else if g.cur_fn_ret is types.MultiReturn {
 					expr_type := g.tc.resolve_type(ret_id)
 					if expr_type is types.MultiReturn {
@@ -364,12 +393,22 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						g.writeln('};')
 					}
 				} else {
-					g.write('return ')
-					g.gen_expr(ret_id)
-					g.writeln(';')
+					if g.cur_fn_ret is types.Struct && g.cur_fn_ret.name in g.tc.interface_names {
+						ct := g.tc.c_type(g.cur_fn_ret)
+						g.writeln('return (${ct}){0};')
+					} else {
+						g.write('return ')
+						g.gen_expr(ret_id)
+						g.writeln(';')
+					}
 				}
 			} else {
-				g.writeln('return;')
+				if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+					ct := g.optional_type_name(g.cur_fn_ret)
+					g.writeln('return (${ct}){.ok = true};')
+				} else {
+					g.writeln('return;')
+				}
 			}
 		}
 		.defer_stmt {
@@ -700,6 +739,11 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.gen_expr(g.a.child(&node, 1))
 			g.write(')')
 		}
+		'free' {
+			g.write('free(')
+			g.gen_expr(base_id)
+			g.write('.data)')
+		}
 		'join' {
 			g.write('array_string_join(')
 			g.gen_expr(base_id)
@@ -1024,24 +1068,30 @@ fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
 			g.writeln('${c_val_type} ${var_name} = *(${c_val_type}*)${tmp};')
 			g.tc.cur_scope.insert(lhs.value, base_type.value_type)
 		} else {
-			g.write('Optional ${tmp} = ')
+			rhs_type := g.tc.resolve_type(rhs_id)
+			opt_ct := g.optional_type_name(rhs_type)
+			val_ct, val_type := g.optional_value_ct(rhs_type)
+			g.write('${opt_ct} ${tmp} = ')
 			g.gen_expr(rhs_id)
 			g.writeln(';')
 			g.writeln('if (${tmp}.ok) {')
 			g.tc.push_scope()
 			g.indent++
-			g.writeln('int ${var_name} = ${tmp}.value;')
-			g.tc.cur_scope.insert(lhs.value, types.Type(types.int_))
+			g.writeln('${val_ct} ${var_name} = ${tmp}.value;')
+			g.tc.cur_scope.insert(lhs.value, val_type)
 		}
 	} else {
-		g.write('Optional ${tmp} = ')
+		rhs_type := g.tc.resolve_type(rhs_id)
+		opt_ct := g.optional_type_name(rhs_type)
+		val_ct, val_type := g.optional_value_ct(rhs_type)
+		g.write('${opt_ct} ${tmp} = ')
 		g.gen_expr(rhs_id)
 		g.writeln(';')
 		g.writeln('if (${tmp}.ok) {')
 		g.tc.push_scope()
 		g.indent++
-		g.writeln('int ${var_name} = ${tmp}.value;')
-		g.tc.cur_scope.insert(lhs.value, types.Type(types.int_))
+		g.writeln('${val_ct} ${var_name} = ${tmp}.value;')
+		g.tc.cur_scope.insert(lhs.value, val_type)
 	}
 	then_block := g.a.child_node(&node, 1)
 	for i in 0 .. then_block.children_count {
@@ -1226,7 +1276,12 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_string_interp(node)
 		}
 		.ident {
-			if node.value in g.const_vals {
+			is_local := if _ := g.tc.cur_scope.lookup(node.value) {
+				true
+			} else {
+				false
+			}
+			if !is_local && node.value in g.const_vals {
 				mod := if node.value in g.const_modules { g.const_modules[node.value] } else { '' }
 				if mod.len > 0 && mod != 'main' && mod != 'builtin' {
 					g.write(c_name('${mod}.${node.value}'))
@@ -1299,6 +1354,12 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			child := g.a.nodes[int(child_id)]
 			if node.op == .amp && child.kind == .struct_init {
 				g.gen_heap_struct_init(child)
+			} else if node.op == .amp && child.kind == .cast_expr {
+				target_type := g.tc.parse_type(child.value)
+				ct := g.tc.c_type(target_type)
+				g.write('(${ct}*)(')
+				g.gen_expr(g.a.child(&child, 0))
+				g.write(')')
 			} else {
 				g.write(g.op_str(node.op))
 				g.gen_expr(child_id)
@@ -1344,7 +1405,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		.selector {
 			base_id := g.a.child(&node, 0)
 			base := g.a.nodes[int(base_id)]
-			if base.kind == .ident && (base.value in g.tc.enum_names
+			if base.kind == .ident && base.value == 'C' {
+				g.write(node.value)
+			} else if base.kind == .ident && (base.value in g.tc.enum_names
 				|| g.tc.qualify_name(base.value) in g.tc.enum_names) {
 				qbase := if base.value in g.tc.enum_names {
 					base.value
@@ -1358,7 +1421,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					g.write('0')
 				}
 			} else if node.value == 'len' && base.kind == .ident {
-				base_type := g.tc.cur_scope.lookup(base.value) or { types.Type(types.void_) }
+				base_type := g.tc.resolve_type(base_id)
 				if base_type is types.ArrayFixed {
 					g.write('${base_type.len}')
 				} else {
@@ -1495,7 +1558,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write('NULL')
 		}
 		.none_expr {
-			g.write('(Optional){.ok = false}')
+			ct := g.optional_type_name(g.cur_fn_ret)
+			g.write('(${ct}){.ok = false}')
 		}
 		.or_expr {
 			g.gen_or_expr(node)
@@ -1567,10 +1631,14 @@ fn (mut g FlatGen) gen_decl_or_expr(lhs flat.Node, or_node flat.Node) {
 	or_body_id := g.a.child(&or_node, 1)
 	or_body := g.a.nodes[int(or_body_id)]
 	tmp := g.tmp_name()
-	g.write('Optional ${tmp} = ')
+	expr_type := g.tc.resolve_type(expr_id)
+	opt_ct := g.optional_type_name(expr_type)
+	val_ct, val_type := g.optional_value_ct(expr_type)
+	g.tc.cur_scope.insert(lhs.value, val_type)
+	g.write('${opt_ct} ${tmp} = ')
 	g.gen_expr(expr_id)
 	g.writeln(';')
-	g.writeln('int ${c_name(lhs.value)};')
+	g.writeln('${val_ct} ${c_name(lhs.value)};')
 	g.writeln('if (${tmp}.ok) {')
 	g.indent++
 	g.writeln('${c_name(lhs.value)} = ${tmp}.value;')
@@ -1624,7 +1692,9 @@ fn (mut g FlatGen) gen_or_expr(node flat.Node) {
 	or_body_id := g.a.child(&node, 1)
 	or_body := g.a.nodes[int(or_body_id)]
 	tmp := g.tmp_name()
-	g.write('({Optional ${tmp} = ')
+	expr_type := g.tc.resolve_type(expr_id)
+	opt_ct := g.optional_type_name(expr_type)
+	g.write('({${opt_ct} ${tmp} = ')
 	g.gen_expr(expr_id)
 	g.write('; ${tmp}.ok ? ${tmp}.value : ({string err = (string){0}; (void)err; ')
 	if or_body.children_count == 1 {
@@ -1657,7 +1727,9 @@ fn (mut g FlatGen) gen_or_expr_stmt(node flat.Node) {
 	or_body_id := g.a.child(&node, 1)
 	or_body := g.a.nodes[int(or_body_id)]
 	tmp := g.tmp_name()
-	g.writeln('Optional ${tmp} = ')
+	expr_type := g.tc.resolve_type(expr_id)
+	opt_ct := g.optional_type_name(expr_type)
+	g.writeln('${opt_ct} ${tmp} = ')
 	g.gen_expr(expr_id)
 	g.writeln(';')
 	g.writeln('if (!${tmp}.ok) {')
@@ -1725,7 +1797,13 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			return
 		}
 		'error' {
-			g.write('(Optional){.ok = false}')
+			ct := g.optional_type_name(g.cur_fn_ret)
+			g.write('(${ct}){.ok = false}')
+			return
+		}
+		'error_with_code' {
+			ct := g.optional_type_name(g.cur_fn_ret)
+			g.write('(${ct}){.ok = false}')
 			return
 		}
 		'println', 'print' {
@@ -1881,7 +1959,10 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				arg_node := g.a.nodes[int(arg_id)]
 				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer
 					&& !(arg_node.kind == .prefix && arg_node.op == .amp) {
-					g.write('&')
+					arg_type := g.tc.resolve_type(arg_id)
+					if arg_type !is types.Pointer {
+						g.write('&')
+					}
 				}
 				g.gen_expr(arg_id)
 			}
@@ -2050,6 +2131,52 @@ fn (g &FlatGen) has_generic_params(node flat.Node) bool {
 	return is_generic_type(node.typ)
 }
 
+fn (mut g FlatGen) optional_type_name(t types.Type) string {
+	base_type := match t {
+		types.OptionType { t.base_type }
+		types.ResultType { t.base_type }
+		else { return g.tc.c_type(t) }
+	}
+
+	if base_type is types.Void || base_type is types.Primitive || base_type is types.Enum {
+		return 'Optional'
+	}
+	inner_ct := g.tc.c_type(base_type)
+	safe_name := inner_ct.replace('*', 'ptr').replace(' ', '_')
+	opt_name := 'Optional_${safe_name}'
+	g.needed_optional_types[opt_name] = inner_ct
+	return opt_name
+}
+
+fn (mut g FlatGen) optional_value_ct(t types.Type) (string, types.Type) {
+	match t {
+		types.OptionType {
+			if t.base_type is types.Void {
+				return 'int', types.Type(types.int_)
+			}
+			return g.tc.c_type(t.base_type), t.base_type
+		}
+		types.ResultType {
+			if t.base_type is types.Void {
+				return 'int', types.Type(types.int_)
+			}
+			return g.tc.c_type(t.base_type), t.base_type
+		}
+		else {
+			return 'int', types.Type(types.int_)
+		}
+	}
+}
+
+fn (mut g FlatGen) optional_typedefs() {
+	for opt_name, val_type in g.needed_optional_types {
+		g.writeln('typedef struct { bool ok; ${val_type} value; } ${opt_name};')
+	}
+	if g.needed_optional_types.len > 0 {
+		g.writeln('')
+	}
+}
+
 fn (mut g FlatGen) forward_decls() {
 	for i, node in g.a.nodes {
 		if node.kind == .module_decl {
@@ -2075,7 +2202,7 @@ fn (mut g FlatGen) forward_decls() {
 				continue
 			}
 			ret_type := g.tc.parse_type(node.typ)
-			g.write(g.tc.c_type(ret_type))
+			g.write(g.optional_type_name(ret_type))
 			g.write(' ')
 			g.write(g.qualified_fn_name(node.value))
 			g.write('(')
@@ -2373,6 +2500,11 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\treturn memcmp(a.str, b.str, a.len) == 0;')
 	g.writeln('}')
 	g.writeln('string tos(u8* s, int len) { return (string){(char*)s, len, 0}; }')
+	g.writeln('string string__clone(string s) {')
+	g.writeln('\tchar* p = malloc(s.len + 1); memcpy(p, s.str, s.len); p[s.len] = 0;')
+	g.writeln('\treturn (string){p, s.len, 0};')
+	g.writeln('}')
+	g.writeln('void string__free(string* s) { if (s->str && !s->is_lit) free((void*)s->str); }')
 	g.writeln('string string_plus_many(int count, string* parts) {')
 	g.writeln('\tint len = 0;')
 	g.writeln('\tfor (int i = 0; i < count; i++) len += parts[i].len;')
@@ -2514,8 +2646,15 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('}')
 	g.writeln('Optional optional_ok(int v) { return (Optional){.ok = true, .value = v}; }')
 	g.writeln('Optional optional_none() { return (Optional){.ok = false}; }')
+	g.writeln('bool isnil(void* p) { return p == NULL; }')
+	g.writeln('Optional error_with_code(string msg, int code) { return (Optional){.ok = false}; }')
+	g.writeln('Optional check_fwrite(size_t n) { return (Optional){.ok = n > 0, .value = (int)n}; }')
+	g.writeln('void* malloc_noscan(size_t n) { return malloc(n); }')
+	g.writeln('string u8__vstring(u8* s) { return (string){(char*)s, (int)strlen((char*)s), 0}; }')
+	g.writeln('string u8__vstring_with_len(u8* s, int len) { return (string){(char*)s, len, 0}; }')
+	g.writeln('char v_char(char c) { return c; }')
 	g.writeln('')
-	if 'strings.new_builder' !in g.tc.fn_ret_types || !g.has_builtins {
+	{
 		g.writeln('typedef struct { char* buf; int len; int cap; } strings__Builder;')
 		g.writeln('strings__Builder strings__new_builder(int cap) {')
 		g.writeln('\tstrings__Builder b; b.cap = cap > 0 ? cap : 64; b.len = 0;')
@@ -2533,6 +2672,14 @@ fn (mut g FlatGen) runtime_fns() {
 		g.writeln('string strings__Builder__str(strings__Builder* b) {')
 		g.writeln('\tchar* s = (char*)malloc(b->len + 1); memcpy(s, b->buf, b->len); s[b->len] = 0;')
 		g.writeln('\tstring r = {s, b->len, 0}; b->len = 0; return r;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_ptr(strings__Builder* b, void* ptr, int len) {')
+		g.writeln('\twhile (b->len + len > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
+		g.writeln('\tmemcpy(b->buf + b->len, ptr, len); b->len += len;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_u8(strings__Builder* b, u8 c) {')
+		g.writeln('\twhile (b->len + 1 > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
+		g.writeln('\tb->buf[b->len++] = c;')
 		g.writeln('}')
 		g.writeln('')
 	}
@@ -2593,7 +2740,7 @@ fn (mut g FlatGen) struct_decls() {
 	for name, _ in g.interfaces {
 		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
 	}
-	g.writeln('typedef struct Optional { bool ok; i64 value; } Optional;')
+	g.writeln('typedef struct Optional { bool ok; int value; } Optional;')
 	g.writeln('')
 	for name, _ in g.interfaces {
 		g.writeln('struct ${c_name(name)} {')
@@ -3018,6 +3165,16 @@ fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
 		}
 		.ident {
 			node.value in g.const_vals
+		}
+		.array_literal {
+			mut all_const := true
+			for ci in 0 .. node.children_count {
+				if !g.is_const_expr(g.a.child(&node, ci)) {
+					all_const = false
+					break
+				}
+			}
+			all_const
 		}
 		else {
 			false
