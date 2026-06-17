@@ -7,10 +7,16 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	mut call_graph := map[string][]string{}
 	mut all_fns := map[string]bool{}
 	mut cur_module := ''
+	mut imports := map[string]string{}
 
 	for node in a.nodes {
 		if node.kind == .module_decl {
 			cur_module = node.value
+			continue
+		}
+		if node.kind == .import_decl {
+			mod := if node.value.contains('.') { node.value.all_after_last('.') } else { node.value }
+			imports[node.typ] = mod
 			continue
 		}
 		if node.kind == .fn_decl {
@@ -20,7 +26,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 				all_fns[qname] = true
 			}
 			mut callees := []string{}
-			collect_calls(a, tc, &node, cur_module, mut callees)
+			collect_calls(a, tc, &node, cur_module, imports, mut callees)
 			call_graph[node.value] = callees
 			if qname != node.value {
 				call_graph[qname] = callees
@@ -61,13 +67,10 @@ fn qualify_fn(mod string, name string) string {
 	if mod.len == 0 || mod == 'main' || mod == 'builtin' {
 		return name
 	}
-	if name.contains('.') {
-		return name
-	}
 	return '${mod}.${name}'
 }
 
-fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_module string, mut calls []string) {
+fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_module string, imports map[string]string, mut calls []string) {
 	for i in 0 .. node.children_count {
 		child_id := a.child(node, i)
 		if int(child_id) < 0 {
@@ -95,7 +98,25 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 								if int(base_id) >= 0 {
 									base := a.nodes[int(base_id)]
 									if base.kind == .ident && base.value.len > 0 {
-										calls << base.value + '.' + callee.value
+										mod_name := if base.value in imports {
+											imports[base.value]
+										} else {
+											base.value
+										}
+										calls << mod_name + '.' + callee.value
+									} else if base.kind == .selector && base.children_count > 0 {
+										inner_id := a.child(&base, 0)
+										if int(inner_id) >= 0 {
+											inner := a.nodes[int(inner_id)]
+											if inner.kind == .ident && inner.value.len > 0 {
+												mod_name := if inner.value in imports {
+													imports[inner.value]
+												} else {
+													inner.value
+												}
+												calls << mod_name + '.' + base.value + '.' + callee.value
+											}
+										}
 									}
 									base_type := tc.resolve_type(base_id)
 									type_name := resolve_type_name(base_type)
@@ -141,7 +162,7 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 			else {}
 		}
 
-		collect_calls(a, tc, child, cur_module, mut calls)
+		collect_calls(a, tc, child, cur_module, imports, mut calls)
 	}
 }
 

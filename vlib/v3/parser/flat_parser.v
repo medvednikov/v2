@@ -1870,6 +1870,20 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 			lhs = p.selector_or_method(lhs)
 			continue
 		}
+		// module-qualified struct init: module.Type{} or module.Type{field: val, ...}
+		if p.tok == .lcbr {
+			lhs_node := p.a.nodes[int(lhs)]
+			if lhs_node.kind == .selector && lhs_node.value.len > 0
+				&& lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`
+				&& (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
+				base := p.a.child_node(&lhs_node, 0)
+				if base.kind == .ident {
+					full_name := '${base.value}.${lhs_node.value}'
+					lhs = p.struct_init(full_name)
+					continue
+				}
+			}
+		}
 		// function call
 		if p.tok == .lpar {
 			lhs = p.call_args(lhs)
@@ -2203,7 +2217,7 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 		.minus, .not, .bit_not, .amp, .mul {
 			op := p.tok
 			p.next()
-			operand := p.prefix_expr()
+			operand := p.expr(.highest)
 			pstart := p.add_children([operand])
 			return p.a.add_node(flat.Node{
 				kind:           .prefix

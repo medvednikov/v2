@@ -14,6 +14,8 @@ pub mut:
 	enum_names      map[string]bool
 	flag_enums      map[string]bool
 	interface_names map[string]bool
+	const_types     map[string]Type
+	imports         map[string]string // alias -> short module name
 	file_scope      &Scope = unsafe { nil }
 	cur_scope       &Scope = unsafe { nil }
 	has_builtins    bool
@@ -52,6 +54,10 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 		match node.kind {
 			.module_decl {
 				tc.cur_module = node.value
+			}
+			.import_decl {
+				mod := if node.value.contains('.') { node.value.all_after_last('.') } else { node.value }
+				tc.imports[node.typ] = mod
 			}
 			.enum_decl {
 				qn := tc.qualify_name(node.value)
@@ -129,7 +135,21 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				for i in 0 .. node.children_count {
 					f := a.child_node(&node, i)
 					if f.value.len > 0 && !f.value.starts_with('C.') {
-						tc.file_scope.insert(f.value, tc.parse_type(f.typ))
+						mut ft := tc.parse_type(f.typ)
+						if ft is Void && f.children_count > 0 {
+							ft = tc.resolve_type(a.child(f, 0))
+						}
+						tc.file_scope.insert(f.value, ft)
+					}
+				}
+			}
+			.const_decl {
+				for i in 0 .. node.children_count {
+					f := a.child_node(&node, i)
+					if f.kind == .const_field && f.children_count > 0 {
+						val_type := tc.resolve_type(a.child(f, 0))
+						qname := tc.qualify_name(f.value)
+						tc.const_types[qname] = val_type
 					}
 				}
 			}
@@ -479,9 +499,27 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			if fn_node.kind == .selector {
 				base_node := tc.a.child_node(fn_node, 0)
 				if base_node.kind == .ident {
-					mod_name := '${base_node.value}.${fn_node.value}'
+					resolved := if base_node.value in tc.imports {
+						tc.imports[base_node.value]
+					} else {
+						base_node.value
+					}
+					mod_name := '${resolved}.${fn_node.value}'
 					if mod_name in tc.fn_ret_types {
 						return tc.fn_ret_types[mod_name]
+					}
+				} else if base_node.kind == .selector {
+					inner := tc.a.child_node(base_node, 0)
+					if inner.kind == .ident {
+						mod_name := if inner.value in tc.imports {
+							tc.imports[inner.value]
+						} else {
+							inner.value
+						}
+						full_name := '${mod_name}.${base_node.value}.${fn_node.value}'
+						if full_name in tc.fn_ret_types {
+							return tc.fn_ret_types[full_name]
+						}
 					}
 				}
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
@@ -571,6 +609,15 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			if base_node.kind == .ident {
 				if gt := tc.file_scope.lookup(node.value) {
 					return gt
+				}
+				resolved := if base_node.value in tc.imports {
+					tc.imports[base_node.value]
+				} else {
+					base_node.value
+				}
+				qname := '${resolved}.${node.value}'
+				if qname in tc.const_types {
+					return tc.const_types[qname]
 				}
 			}
 			base_type := tc.resolve_type(tc.a.child(&node, 0))
@@ -750,6 +797,9 @@ pub fn (tc &TypeChecker) c_type(t Type) string {
 			return 'Optional'
 		}
 		Struct {
+			if t.name.starts_with('C.') {
+				return c_name(t.name)
+			}
 			return c_name(t.name)
 		}
 		Enum {

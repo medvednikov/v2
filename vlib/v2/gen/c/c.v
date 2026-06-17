@@ -70,14 +70,14 @@ pub fn (mut g Gen) gen() string {
 	// wyhash implementation (used by map)
 	g.gen_wyhash()
 
-	// Struct declarations
-	g.gen_struct_decls()
-
 	// Runtime helpers (only when not linking against builtin.o)
 	if !g.link_builtin {
 		g.gen_runtime_helpers()
 		g.sb.writeln('')
 	}
+
+	// Struct declarations
+	g.gen_struct_decls()
 
 	// Global declarations
 	g.gen_globals()
