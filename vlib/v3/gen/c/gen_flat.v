@@ -333,29 +333,11 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					g.gen_expr(g.a.child(&child, 1))
 					g.writeln('});')
 				} else {
-					lhs_type_raw := g.tc.resolve_type(lhs_id)
-					lhs_type := types.unwrap_pointer(lhs_type_raw)
-					if lhs_type is types.Array {
-						rhs_id := g.a.child(&child, 1)
-						rhs_type := g.tc.resolve_type(rhs_id)
-						if rhs_type is types.Array {
-							g.write('array_push_many(&')
-							g.gen_expr(lhs_id)
-							g.write(', ')
-							g.gen_expr(rhs_id)
-							g.writeln(');')
-						} else {
-							c_elem := g.tc.c_type(lhs_type.elem_type)
-							g.write('array_push(&')
-							g.gen_expr(lhs_id)
-							g.write(', &(${c_elem}[]){')
-							g.gen_expr(rhs_id)
-							g.writeln('});')
-						}
-					} else {
-						g.gen_expr(child_id)
-						g.writeln(';')
-					}
+					// Array appends are annotated by the transformer (value =
+					// 'push'/'push_many'); an un-annotated `<<` here is the integer
+					// bit-shift operator.
+					g.gen_expr(child_id)
+					g.writeln(';')
 				}
 			} else {
 				g.gen_expr(child_id)
@@ -676,28 +658,14 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 				g.gen_expr(g.a.child(&node, i + 1))
 				g.writeln('});')
 			} else {
-				lhs_type := g.tc.cur_scope.lookup(lhs.value) or { types.Type(types.void_) }
-				if lhs_type is types.Array {
-					rhs_id := g.a.child(&node, i + 1)
-					rhs_type := g.tc.resolve_type(rhs_id)
-					if rhs_type is types.Array {
-						g.write('array_push_many(&${c_name(lhs.value)}, ')
-						g.gen_expr(rhs_id)
-						g.writeln(');')
-					} else {
-						c_elem := g.tc.c_type(lhs_type.elem_type)
-						g.write('array_push(&${c_name(lhs.value)}, &(${c_elem}[]){')
-						g.gen_expr(rhs_id)
-						g.writeln('});')
-					}
-				} else {
-					g.gen_expr(g.a.child(&node, i))
-					g.write(' <<= ')
-					g.gen_expr(g.a.child(&node, i + 1))
-					g.writeln(';')
-					}
-				}
-			} else {
+				// Array appends are annotated by the transformer; an un-annotated
+				// `<<=` here is the integer bit-shift-assign operator.
+				g.gen_expr(g.a.child(&node, i))
+				g.write(' <<= ')
+				g.gen_expr(g.a.child(&node, i + 1))
+				g.writeln(';')
+			}
+		} else {
 			rhs_id := g.a.child(&node, i + 1)
 			rhs_node := g.a.nodes[int(rhs_id)]
 			if rhs_node.kind == .array_literal && rhs_node.children_count > 0 {

@@ -1253,31 +1253,19 @@ fn (mut t Transformer) lower_array_appends() {
 			}
 		}
 		if node.kind == .assign && node.op == .left_shift_assign && node.children_count >= 2 {
-			lhs := t.a.child_node(&node, 0)
-			if lhs.kind == .ident && lhs.value.len > 0 {
-				lhs_type := t.var_types[lhs.value] or { '' }
-				if lhs_type.starts_with('[]') {
-					rhs_id := t.a.child(&node, 1)
-					rhs_type := t.resolve_expr_type(rhs_id)
-					if rhs_type.starts_with('[]') {
-						t.a.nodes[i] = flat.Node{
-							kind:           node.kind
-							op:             node.op
-							children_start: node.children_start
-							children_count: node.children_count
-							value:          'push_many'
-							typ:            lhs_type[2..]
-						}
-					} else {
-						t.a.nodes[i] = flat.Node{
-							kind:           node.kind
-							op:             node.op
-							children_start: node.children_start
-							children_count: node.children_count
-							value:          'push'
-							typ:            lhs_type[2..]
-						}
-					}
+			lhs_id := t.a.child(&node, 0)
+			lhs_type := t.lvalue_type(lhs_id)
+			if lhs_type.starts_with('[]') {
+				rhs_id := t.a.child(&node, 1)
+				rhs_type := t.lvalue_type(rhs_id)
+				val := if rhs_type.starts_with('[]') { 'push_many' } else { 'push' }
+				t.a.nodes[i] = flat.Node{
+					kind:           node.kind
+					op:             node.op
+					children_start: node.children_start
+					children_count: node.children_count
+					value:          val
+					typ:            lhs_type[2..]
 				}
 			}
 		}
@@ -1351,16 +1339,12 @@ fn (mut t Transformer) annotate_left_shift(node_id flat.NodeId) {
 		return
 	}
 	lhs_id := t.a.child(&node, 0)
-	lhs := t.a.nodes[int(lhs_id)]
-	if lhs.kind != .ident {
-		return
-	}
-	lhs_type := t.var_types[lhs.value] or { '' }
+	lhs_type := t.lvalue_type(lhs_id)
 	if !lhs_type.starts_with('[]') {
 		return
 	}
 	rhs_id := t.a.child(&node, 1)
-	rhs_type := t.resolve_expr_type(rhs_id)
+	rhs_type := t.lvalue_type(rhs_id)
 	if rhs_type.starts_with('[]') {
 		t.a.nodes[int(node_id)] = flat.Node{
 			kind:           .infix

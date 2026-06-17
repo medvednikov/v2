@@ -98,6 +98,28 @@ fn (t &Transformer) node_type(id flat.NodeId) string {
 	return t.resolve_expr_type(id)
 }
 
+// lvalue_type returns the v-type string for an assignable expression, handling
+// idents/calls (via node_type), selectors (struct field types) and index
+// expressions (array/map element types). Used by array-append lowering so that
+// `obj.field << x` and `m[k] << x` are typed, not just plain `arr << x`.
+fn (t &Transformer) lvalue_type(id flat.NodeId) string {
+	if int(id) < 0 {
+		return ''
+	}
+	nt := t.node_type(id)
+	if nt.len > 0 {
+		return nt
+	}
+	node := t.a.nodes[int(id)]
+	if node.kind == .selector {
+		return t.resolve_selector_type(node)
+	}
+	if node.kind == .index {
+		return t.resolve_index_elem_type(node)
+	}
+	return ''
+}
+
 // is_string_type checks if an expression resolves to string type.
 // Handles string literals, interpolations, and ident/call expressions typed as string.
 fn (t &Transformer) is_string_type(id flat.NodeId) bool {
