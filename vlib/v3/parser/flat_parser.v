@@ -54,11 +54,15 @@ pub fn (mut p FlatParser) parse_into(path string) {
 	p.next()
 
 	mut ids := []flat.NodeId{}
-	mut iter_count := 0
 	for p.tok != .eof {
 		if p.tok == .key_module {
 			p.next()
 			p.cur_module = p.lit
+			mod_id := p.a.add_node(flat.Node{
+				kind:  .module_decl
+				value: p.lit
+			})
+			ids << mod_id
 			p.next()
 			continue
 		}
@@ -70,6 +74,7 @@ pub fn (mut p FlatParser) parse_into(path string) {
 	start := p.add_children(ids)
 	p.a.add_node(flat.Node{
 		kind:           .file
+		value:          path
 		children_start: start
 		children_count: ids.len
 	})
@@ -1059,7 +1064,7 @@ fn (mut p FlatParser) parse_comptime_if() flat.NodeId {
 	}
 	p.next() // skip 'if'
 	cond := p.parse_comptime_cond()
-	taken := eval_comptime_cond(cond)
+	taken := eval_comptime_cond(p.prefs, cond)
 	if taken {
 		// Parse then block, skip else
 		result := p.block_stmt()
@@ -1135,15 +1140,15 @@ fn (mut p FlatParser) parse_comptime_else() flat.NodeId {
 	return flat.empty_node
 }
 
-fn eval_comptime_cond(cond string) bool {
+fn eval_comptime_cond(prefs &pref.Preferences, cond string) bool {
 	c := cond.trim_space()
 	if c.starts_with('!') {
-		return !eval_comptime_cond(c[1..])
+		return !eval_comptime_cond(prefs, c[1..])
 	}
 	if c.contains('&&') {
 		parts := c.split('&&')
 		for part in parts {
-			if !eval_comptime_cond(part) {
+			if !eval_comptime_cond(prefs, part) {
 				return false
 			}
 		}
@@ -1152,36 +1157,14 @@ fn eval_comptime_cond(cond string) bool {
 	if c.contains('||') {
 		parts := c.split('||')
 		for part in parts {
-			if eval_comptime_cond(part) {
+			if eval_comptime_cond(prefs, part) {
 				return true
 			}
 		}
 		return false
 	}
 	flag := c.trim_space().trim_right('? ')
-	return match flag {
-		'x64', 'amd64' { false }
-		'arm64', 'aarch64' { true }
-		'little_endian' { true }
-		'macos', 'darwin', 'mac' { true }
-		'posix' { true }
-		'unix' { true }
-		'bsd' { true }
-		'no_bounds_checking' { false }
-		'gcboehm_opt' { false }
-		'gcboehm' { false }
-		'new_int' { false }
-		'prealloc' { false }
-		'freestanding' { false }
-		'nofloat' { false }
-		'windows' { false }
-		'linux' { false }
-		'freebsd' { false }
-		'debug' { false }
-		'autofree' { false }
-		'custom_define' { false }
-		else { false }
-	}
+	return pref.comptime_flag_value(prefs, flag)
 }
 
 fn (mut p FlatParser) skip_block() {
@@ -1910,6 +1893,30 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 			})
 			continue
 		}
+		// postfix `!` error propagation: expr!
+		if p.tok == .not {
+			p.next()
+			ostart := p.add_children([lhs, p.a.add(flat.NodeKind.empty)])
+			lhs = p.a.add_node(flat.Node{
+				kind:           .or_expr
+				value:          '!'
+				children_start: ostart
+				children_count: 2
+			})
+			continue
+		}
+		// postfix `?` optional propagation: expr?
+		if p.tok == .question {
+			p.next()
+			ostart := p.add_children([lhs, p.a.add(flat.NodeKind.empty)])
+			lhs = p.a.add_node(flat.Node{
+				kind:           .or_expr
+				value:          '?'
+				children_start: ostart
+				children_count: 2
+			})
+			continue
+		}
 		// `as` cast: expr as Type
 		if p.tok == .key_as {
 			p.next()
@@ -2243,18 +2250,11 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 			return p.dump_expr()
 		}
 		.key_likely, .key_unlikely {
-			name := p.lit
 			p.next()
 			p.check(.lpar)
 			inner := p.expr(.lowest)
 			p.check(.rpar)
-			dstart := p.add_children([inner])
-			return p.a.add_node(flat.Node{
-				kind:           .call
-				value:          name
-				children_start: dstart
-				children_count: 1
-			})
+			return inner
 		}
 		.key_isreftype {
 			p.next()
@@ -2288,6 +2288,9 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 				children_start: pstart
 				children_count: 1
 			})
+		}
+		.dollar {
+			return p.parse_comptime_if()
 		}
 		else {
 			p.next()

@@ -128,6 +128,7 @@ pub fn get_v_files_from_dir(dir string, user_defines []string, target_os string)
 		}
 		v_files << os.join_path(dir, file)
 	}
+	v_files.sort()
 	return v_files
 }
 
@@ -170,6 +171,28 @@ pub fn comptime_flag_value(pref &Preferences, name string) bool {
 		'windows' {
 			return pref.normalized_target_os() == 'windows'
 		}
+		'freebsd' {
+			return pref.normalized_target_os() == 'freebsd'
+		}
+		'openbsd' {
+			return pref.normalized_target_os() == 'openbsd'
+		}
+		'netbsd' {
+			return pref.normalized_target_os() == 'netbsd'
+		}
+		'dragonfly' {
+			return pref.normalized_target_os() == 'dragonfly'
+		}
+		'android' {
+			return pref.normalized_target_os() == 'android'
+		}
+		'posix', 'unix' {
+			return pref.normalized_target_os() != 'windows'
+		}
+		'bsd' {
+			return pref.normalized_target_os() in ['macos', 'freebsd', 'openbsd', 'netbsd',
+				'dragonfly']
+		}
 		'x64', 'amd64' {
 			$if amd64 {
 				return true
@@ -199,6 +222,10 @@ pub fn comptime_flag_value(pref &Preferences, name string) bool {
 				return true
 			}
 			return false
+		}
+		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
+		'nofloat' {
+			return name in pref.user_defines
 		}
 		else {
 			return name in pref.user_defines
