@@ -3908,5 +3908,40 @@ fn main() {
 
 	print_str('map iteration, array init: ok')
 
-	print_str('=== ALL 94 TESTS PASSED ===')
+	print_str('--- 95. In Operator, Array Join ---')
+
+	// in operator for maps
+	mut m95 := map[string]int{}
+	m95['hello'] = 1
+	m95['world'] = 2
+	if 'hello' in m95 {
+		print_str('hello in map: yes')
+	}
+	if 'missing' !in m95 {
+		print_str('missing not in map: yes')
+	}
+
+	// in operator for arrays
+	mut a95 := []int{}
+	a95 << 10
+	a95 << 20
+	a95 << 30
+	if 20 in a95 {
+		print_str('20 in array: yes')
+	}
+	if 99 !in a95 {
+		print_str('99 not in array: yes')
+	}
+
+	// array join
+	mut words := []string{}
+	words << 'hello'
+	words << 'world'
+	words << 'v3'
+	print_str(words.join(', ')) // hello, world, v3
+	print_str(words.join(' ')) // hello world v3
+
+	print_str('in operator, array join: ok')
+
+	print_str('=== ALL 95 TESTS PASSED ===')
 }

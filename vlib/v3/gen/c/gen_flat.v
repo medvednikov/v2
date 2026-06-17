@@ -637,6 +637,13 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, bas
 			g.gen_expr(g.a.child(&node, 1))
 			g.write(')')
 		}
+		'join' {
+			g.write('array_string_join(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write(')')
+		}
 		'contains' {
 			contains_fn := if elem_type == 'string' {
 				'array_contains_string'
@@ -1172,6 +1179,36 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			} else {
 				g.write(g.op_str(node.op))
 				g.gen_expr(child_id)
+			}
+		}
+		.in_expr {
+			lhs_id := g.a.child(&node, 0)
+			rhs_id := g.a.child(&node, 1)
+			rhs_type := g.tc.resolve_type(rhs_id)
+			if rhs_type.starts_with('map[') {
+				key_type := rhs_type[4..rhs_type.index_u8(`]`)]
+				has_fn := if key_type == 'string' { 'hashmap_has_string' } else { 'hashmap_has_int' }
+				g.write('${has_fn}(&')
+				g.gen_expr(rhs_id)
+				g.write(', ')
+				g.gen_expr(lhs_id)
+				g.write(')')
+			} else if rhs_type.starts_with('[]') {
+				elem_type := rhs_type[2..]
+				contains_fn := if elem_type == 'string' {
+					'array_contains_string'
+				} else {
+					'array_contains_int'
+				}
+				g.write('${contains_fn}(')
+				g.gen_expr(rhs_id)
+				g.write(', ')
+				g.gen_expr(lhs_id)
+				g.write(')')
+			} else {
+				g.gen_expr(lhs_id)
+				g.write(' == ')
+				g.gen_expr(rhs_id)
 			}
 		}
 		.postfix {
@@ -2138,6 +2175,16 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\t\t} i++;')
 	g.writeln('\t}')
 	g.writeln('\tarray_push(&a, &s); return a;')
+	g.writeln('}')
+	g.writeln('string array_string_join(Array a, string sep) {')
+	g.writeln('\tif (a.len == 0) return (string){"", 0, 1};')
+	g.writeln('\tint total = 0;')
+	g.writeln('\tfor (int i = 0; i < a.len; i++) { total += (*(string*)array_get(a, i)).len; if (i > 0) total += sep.len; }')
+	g.writeln('\tchar* buf = malloc(total + 1); int pos = 0;')
+	g.writeln('\tfor (int i = 0; i < a.len; i++) {')
+	g.writeln('\t\tif (i > 0) { memcpy(buf + pos, sep.str, sep.len); pos += sep.len; }')
+	g.writeln('\t\tstring s = *(string*)array_get(a, i); memcpy(buf + pos, s.str, s.len); pos += s.len;')
+	g.writeln('\t} buf[total] = 0; return (string){buf, total, 0};')
 	g.writeln('}')
 	g.writeln('void v_panic(string s) {')
 	g.writeln('\tfwrite(s.str, 1, s.len, stderr);')

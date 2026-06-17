@@ -88,6 +88,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 						'last', 'first', 'pop' { clean_type[2..] }
 						'contains' { 'bool' }
 						'index' { 'int' }
+						'join' { 'string' }
 						else { 'int' }
 					}
 				}
@@ -218,6 +219,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 		}
 		.map_init {
 			return node.value
+		}
+		.in_expr {
+			return 'bool'
 		}
 		else {
 			return 'int'
