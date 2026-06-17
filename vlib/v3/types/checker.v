@@ -80,6 +80,13 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) string {
 		.call {
 			fn_node := tc.a.child_node(&node, 0)
 			if fn_node.kind == .selector {
+				base_node := tc.a.child_node(fn_node, 0)
+				if base_node.kind == .ident {
+					mod_name := '${base_node.value}.${fn_node.value}'
+					if ret := tc.fn_ret_types[mod_name] {
+						return ret
+					}
+				}
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
 				clean_type := base_type.trim_left('&').trim_right('*')
 				if clean_type.starts_with('[]') {

@@ -1,3 +1,5 @@
+import strings
+
 struct Point {
 mut:
 	x int
@@ -3943,5 +3945,21 @@ fn main() {
 
 	print_str('in operator, array join: ok')
 
-	print_str('=== ALL 95 TESTS PASSED ===')
+	// 96. strings.Builder
+	mut sb := strings.new_builder(100)
+	sb.write_string('hello')
+	sb.write_string(' ')
+	sb.write_string('world')
+	result96 := sb.str()
+	print_str(result96) // hello world
+
+	mut sb2 := strings.new_builder(50)
+	sb2.writeln('line1')
+	sb2.writeln('line2')
+	sb2.write_string('line3')
+	print_str(sb2.str()) // line1\nline2\nline3
+
+	print_str('strings.Builder: ok')
+
+	print_str('=== ALL 96 TESTS PASSED ===')
 }

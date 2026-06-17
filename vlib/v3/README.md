@@ -29,7 +29,7 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | Component      | Lines |
 |----------------|-------|
 | flat parser    | 3,034 |
-| C gen (flat)   | 1,900 |
+| C gen (flat)   | 2,572 |
 | type checker   | 290   |
 | scopes         | 32    |
 | C gen (AST)    | 656   |
@@ -69,21 +69,21 @@ Compiling `hello world` (`println('hello world')`) with full builtin import (38 
 | cc        | 37 ms    | 9,200 KB |
 | **total** | **~60 ms** | **9,200 KB** |
 
-Compiling `test.v` (3,947 lines, 95 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap, maps, string methods, dynamic arrays, array methods/slicing/split, map iteration/array init with len, in operator/array join):
+Compiling `test.v` (3,965 lines, 96 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap, maps, string methods, dynamic arrays, array methods/slicing/split, map iteration/array init with len, in operator/array join, strings.Builder):
 
 **C backend:**
 
 | Step      | Time     | RSS      |
 |-----------|----------|----------|
-| parse     | 11.49 ms | 10,688 KB |
-| transform | 0.68 ms  | 10,832 KB |
-| markused  | 26.59 ms | 31,568 KB |
-| gen C     | 3.32 ms  | 33,520 KB |
-| write     | 0.16 ms  | 33,536 KB |
-| cc        | 56 ms    | 33,552 KB |
-| **total** | **~116 ms** | **33,552 KB** |
+| parse     | 25.08 ms | 10,704 KB |
+| transform | 1.01 ms  | 10,912 KB |
+| markused  | 36.95 ms | 32,464 KB |
+| gen C     | 4.02 ms  | 34,528 KB |
+| write     | 0.15 ms  | 34,528 KB |
+| cc        | 57 ms    | 34,544 KB |
+| **total** | **~149 ms** | **34,544 KB** |
 
-All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~42 ms for test.v (3,879 lines) with C backend.
+All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~67 ms for test.v (3,965 lines) with C backend.
 
 Peak RSS: 9-20 MB.
 

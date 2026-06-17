@@ -19,6 +19,7 @@ mut:
 	tc           types.TypeChecker
 	has_builtins bool
 	tmp_count    int
+	modules      map[string]string // alias -> full module name
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -174,12 +175,24 @@ fn (mut g FlatGen) collect() {
 					}
 				}
 			}
+			.import_decl {
+				g.modules[node.typ] = node.value
+			}
 			else {}
 		}
 	}
+	g.modules['strings'] = 'strings'
 }
 
 fn (mut g FlatGen) register_runtime_methods() {
+	g.tc.fn_ret_types['strings.new_builder'] = 'strings.Builder'
+	g.tc.fn_param_types['strings.new_builder'] = ['int']
+	g.tc.fn_ret_types['strings.Builder.str'] = 'string'
+	g.tc.fn_param_types['strings.Builder.str'] = ['strings__Builder*']
+	g.tc.fn_ret_types['strings.Builder.write_string'] = 'void'
+	g.tc.fn_param_types['strings.Builder.write_string'] = ['strings__Builder*', 'string']
+	g.tc.fn_ret_types['strings.Builder.writeln'] = 'void'
+	g.tc.fn_param_types['strings.Builder.writeln'] = ['strings__Builder*', 'string']
 	methods := {
 		'string.all_before':      ['string', 'string']
 		'string.all_before_last': ['string', 'string']
@@ -528,7 +541,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			g.gen_expr(rhs_id)
 			g.writeln(';')
 			if lhs.kind == .ident {
-				if v_type.starts_with('[]') || v_type.starts_with('map[') {
+				if v_type.starts_with('[]') || v_type.starts_with('map[') || v_type.contains('.') {
 					g.tc.cur_scope.insert(lhs.value, v_type)
 				} else {
 					g.tc.cur_scope.insert(lhs.value, typ)
@@ -1516,6 +1529,18 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				} else if g.is_flag_enum_method(fn_node) {
 					g.gen_flag_enum_call(node)
 					return
+				} else if base.kind == .ident && base.value in g.modules {
+					full_name := '${g.modules[base.value]}.${fn_node.value}'
+					g.write(c_name(full_name))
+					g.write('(')
+					for i in 1 .. node.children_count {
+						if i > 1 {
+							g.write(', ')
+						}
+						g.gen_expr(g.a.child(&node, i))
+					}
+					g.write(')')
+					return
 				} else {
 					base_type := g.tc.resolve_type(g.a.child(fn_node, 0))
 					if base_type.starts_with('[]') {
@@ -2193,6 +2218,25 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('}')
 	g.writeln('Optional optional_ok(int v) { return (Optional){.ok = true, .value = v}; }')
 	g.writeln('Optional optional_none() { return (Optional){.ok = false}; }')
+	g.writeln('')
+	g.writeln('typedef struct { char* buf; int len; int cap; } strings__Builder;')
+	g.writeln('strings__Builder strings__new_builder(int cap) {')
+	g.writeln('\tstrings__Builder b; b.cap = cap > 0 ? cap : 64; b.len = 0;')
+	g.writeln('\tb.buf = (char*)malloc(b.cap); return b;')
+	g.writeln('}')
+	g.writeln('void strings__Builder__write_string(strings__Builder* b, string s) {')
+	g.writeln('\twhile (b->len + s.len > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
+	g.writeln('\tmemcpy(b->buf + b->len, s.str, s.len); b->len += s.len;')
+	g.writeln('}')
+	g.writeln('void strings__Builder__writeln(strings__Builder* b, string s) {')
+	g.writeln('\tstrings__Builder__write_string(b, s);')
+	g.writeln('\twhile (b->len + 1 > b->cap) { b->cap *= 2; b->buf = (char*)realloc(b->buf, b->cap); }')
+	g.writeln('\tb->buf[b->len++] = 10;')
+	g.writeln('}')
+	g.writeln('string strings__Builder__str(strings__Builder* b) {')
+	g.writeln('\tchar* s = (char*)malloc(b->len + 1); memcpy(s, b->buf, b->len); s[b->len] = 0;')
+	g.writeln('\tstring r = {s, b->len, 0}; b->len = 0; return r;')
+	g.writeln('}')
 	g.writeln('')
 }
 
