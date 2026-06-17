@@ -154,6 +154,10 @@ pub fn (mut s Scanner) scan() token.Token {
 			break
 		}
 		s.lit = s.src[s.pos..s.offset]
+		if s.lit == 'c' && s.offset < s.src.len && s.src[s.offset] == `'` {
+			s.pos = s.offset
+			return s.scan_char_literal(`'`)
+		}
 		tok := token.Token.from_string_tinyv(s.lit)
 		if tok in [.key_break, .key_continue, .key_none, .key_return, .key_false, .key_true, .name] {
 			s.insert_semi = true
@@ -338,6 +342,13 @@ pub fn (mut s Scanner) scan() token.Token {
 			return .gt
 		}
 		`#` {
+			s.offset++
+			start := s.offset
+			for s.offset < s.src.len && s.src[s.offset] != `\n` {
+				s.offset++
+			}
+			s.lit = s.src[start..s.offset].trim_space()
+			s.insert_semi = true
 			return .hash
 		}
 		`~` {

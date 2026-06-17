@@ -144,6 +144,10 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 							ft = tc.resolve_type(a.child(f, 0))
 						}
 						tc.file_scope.insert(f.value, ft)
+						qname := tc.qualify_name(f.value)
+						if qname != f.value {
+							tc.file_scope.insert(qname, ft)
+						}
 					}
 				}
 			}
@@ -205,7 +209,6 @@ pub fn (tc &TypeChecker) qualify_name(name string) string {
 }
 
 fn (mut tc TypeChecker) register_runtime_methods() {
-	tc.type_aliases.delete('strings.Builder')
 	tc.fn_ret_types['strings.new_builder'] = tc.parse_type('strings.Builder')
 	tc.fn_param_types['strings.new_builder'] = [tc.parse_type('int')]
 	tc.fn_ret_types['strings.Builder.str'] = tc.parse_type('string')
@@ -237,6 +240,10 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 	tc.fn_ret_types['malloc_noscan'] = tc.parse_type('voidptr')
 	tc.fn_ret_types['u8.vstring'] = tc.parse_type('string')
 	tc.fn_ret_types['u8.vstring_with_len'] = tc.parse_type('string')
+	tc.fn_ret_types['IError.msg'] = tc.parse_type('string')
+	tc.fn_ret_types['IError.code'] = tc.parse_type('int')
+	tc.fn_param_types['IError.msg'] = [tc.parse_type('&IError')]
+	tc.fn_param_types['IError.code'] = [tc.parse_type('&IError')]
 	methods := {
 		'string.all_before':      ['string', 'string']
 		'string.all_before_last': ['string', 'string']
@@ -249,8 +256,8 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		'string.trim_right':      ['string', 'string']
 		'string.trim_space':      ['string']
 		'string.count':           ['string', 'string']
-		'string.index_':          ['string', 'string']
-		'string.last_index_':     ['string', 'string']
+		'string.index':           ['string', 'string']
+		'string.last_index':      ['string', 'string']
 		'string.replace':         ['string', 'string', 'string']
 		'string.contains':        ['string', 'string']
 		'string.split':           ['string', 'string']
@@ -275,8 +282,8 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		'string.trim_right':      'string'
 		'string.trim_space':      'string'
 		'string.count':           'int'
-		'string.index_':          'int'
-		'string.last_index_':     'int'
+		'string.index':           '?int'
+		'string.last_index':      '?int'
 		'string.replace':         'string'
 		'string.contains':        'bool'
 		'string.split':           '[]string'
@@ -533,6 +540,14 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			fn_node := tc.a.child_node(&node, 0)
 			if fn_node.kind == .selector {
 				base_node := tc.a.child_node(fn_node, 0)
+				if base_node.kind == .ident && base_node.value == 'C' {
+					if fn_node.value in tc.fn_ret_types {
+						return tc.fn_ret_types[fn_node.value]
+					}
+					return Type(Struct{
+						name: 'C.${fn_node.value}'
+					})
+				}
 				if base_node.kind == .ident {
 					resolved := if base_node.value in tc.imports {
 						tc.imports[base_node.value]
@@ -565,7 +580,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						'last', 'first', 'pop' { clean_type.elem_type }
 						'contains' { Type(bool_) }
 						'index' { Type(int_) }
-						'join' { Type(string_) }
+						'join', 'str' { Type(string_) }
 						else { Type(int_) }
 					}
 				}
@@ -587,13 +602,22 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						return tc.fn_ret_types[mname]
 					}
 				}
-			}
-			if fn_node.value in tc.fn_ret_types {
-				return tc.fn_ret_types[fn_node.value]
+				if clean_type is Primitive {
+					mname := '${prim_c_type(clean_type)}.${fn_node.value}'
+					if mname in tc.fn_ret_types {
+						return tc.fn_ret_types[mname]
+					}
+				}
 			}
 			qfn := tc.qualify_fn_name(fn_node.value)
 			if qfn in tc.fn_ret_types {
 				return tc.fn_ret_types[qfn]
+			}
+			if fn_node.value in tc.fn_ret_types {
+				return tc.fn_ret_types[fn_node.value]
+			}
+			$if debug {
+				eprintln('warning: unknown fn return type `${fn_node.value}`, recovering as int')
 			}
 			return Type(int_)
 		}
@@ -771,6 +795,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			return Type(bool_)
 		}
 		else {
+			$if debug {
+				eprintln('warning: unhandled node kind .${node.kind} in resolve_type, recovering as int')
+			}
 			return Type(int_)
 		}
 	}
@@ -836,7 +863,11 @@ pub fn (tc &TypeChecker) c_type(t Type) string {
 		}
 		Struct {
 			if t.name.starts_with('C.') {
-				return c_name(t.name)
+				raw := t.name[2..]
+				if raw.len > 0 && raw[0] >= `a` && raw[0] <= `z` && !raw.ends_with('_t') {
+					return 'struct ${raw}'
+				}
+				return raw
 			}
 			return c_name(t.name)
 		}

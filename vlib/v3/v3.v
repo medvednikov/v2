@@ -132,7 +132,7 @@ fn main() {
 		b.step('write')
 
 		opt_flag := if is_prod { '-O2 ' } else { '' }
-		cc_cmd := 'cc -std=gnu11 ${opt_flag}-w -o ${bin_file} ${output_file} -lm'
+		cc_cmd := 'cc -std=gnu11 ${opt_flag}-w -Wno-int-conversion -o ${bin_file} ${output_file} -lm'
 		result := os.execute(cc_cmd)
 		if result.exit_code != 0 {
 			eprintln('C compilation failed:')

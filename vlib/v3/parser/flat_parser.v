@@ -44,6 +44,11 @@ pub fn (mut p FlatParser) parse_files(paths []string) &flat.FlatAst {
 
 pub fn (mut p FlatParser) parse_into(path string) {
 	p.cur_file = path
+	// File marker before content so import resolver can track source files
+	p.a.add_node(flat.Node{
+		kind:  .file
+		value: path
+	})
 	src := os.read_file(path) or {
 		eprintln('error reading ${path}: ${err}')
 		return
@@ -1002,21 +1007,14 @@ fn (mut p FlatParser) module_stmt() flat.NodeId {
 }
 
 fn (mut p FlatParser) directive() flat.NodeId {
-	p.next() // skip '#'
-	mut name := ''
-	if p.tok == .name {
-		name = p.lit
-		p.next()
-	}
-	// consume rest of directive until end of logical line
+	full := p.lit
+	p.next() // skip '#' (lit already contains the full line)
+	mut name := full
 	mut value := ''
-	mut parts := []string{}
-	for p.tok != .semicolon && p.tok != .eof {
-		parts << p.lit
-		p.next()
-	}
-	if parts.len > 0 {
-		value = parts.join(' ')
+	space_idx := full.index_u8(` `)
+	if space_idx > 0 {
+		name = full[..space_idx]
+		value = full[space_idx + 1..].trim_space()
 	}
 	if p.tok == .semicolon {
 		p.next()
@@ -1066,12 +1064,10 @@ fn (mut p FlatParser) parse_comptime_if() flat.NodeId {
 	cond := p.parse_comptime_cond()
 	taken := eval_comptime_cond(p.prefs, cond)
 	if taken {
-		// Parse then block, skip else
 		result := p.block_stmt()
 		p.skip_comptime_else()
 		return result
 	} else {
-		// Skip then block, parse else (or return empty)
 		p.skip_block()
 		return p.parse_comptime_else()
 	}
@@ -1091,53 +1087,57 @@ fn (mut p FlatParser) parse_comptime_cond() string {
 }
 
 fn (mut p FlatParser) skip_comptime_else() {
-	if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
+	if p.tok == .semicolon && p.peek() == .dollar {
+		p.next()
+	}
+	if p.tok != .dollar {
+		return
+	}
+	if p.peek() != .key_else {
+		return
+	}
+	p.next() // skip $
+	p.next() // skip else
+	if p.tok == .dollar || (p.tok == .semicolon && p.peek() == .dollar) {
 		if p.tok == .semicolon {
 			p.next()
 		}
+		// $else $if — skip nested
 		p.next() // skip $
-		if p.tok == .key_else {
+		if p.tok == .key_if {
 			p.next()
-			if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
-				if p.tok == .semicolon {
-					p.next()
-				}
-				// $else $if — skip nested
-				p.next() // skip $
-				if p.tok == .key_if {
-					p.next()
-					for p.tok != .lcbr && p.tok != .eof {
-						p.next()
-					}
-				}
-				p.skip_block()
-				p.skip_comptime_else()
-			} else {
-				p.skip_block()
+			for p.tok != .lcbr && p.tok != .eof {
+				p.next()
 			}
 		}
+		p.skip_block()
+		p.skip_comptime_else()
+	} else {
+		p.skip_block()
 	}
 }
 
 fn (mut p FlatParser) parse_comptime_else() flat.NodeId {
-	if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
+	// Skip auto-semicolons before $else
+	if p.tok == .semicolon && p.peek() == .dollar {
+		p.next()
+	}
+	if p.tok != .dollar {
+		return flat.empty_node
+	}
+	if p.peek() != .key_else {
+		return flat.empty_node
+	}
+	p.next() // skip $
+	p.next() // skip else
+	// $else $if — recurse
+	if p.tok == .dollar || (p.tok == .semicolon && p.peek() == .dollar) {
 		if p.tok == .semicolon {
 			p.next()
 		}
-		p.next() // skip $
-		if p.tok == .key_else {
-			p.next()
-			// $else $if — recurse
-			if (p.tok == .semicolon && p.peek() == .dollar) || p.tok == .dollar {
-				if p.tok == .semicolon {
-					p.next()
-				}
-				return p.parse_comptime_if()
-			}
-			return p.block_stmt()
-		}
+		return p.parse_comptime_if()
 	}
-	return flat.empty_node
+	return p.block_stmt()
 }
 
 fn eval_comptime_cond(prefs &pref.Preferences, cond string) bool {
@@ -1264,6 +1264,9 @@ fn (mut p FlatParser) stmt() flat.NodeId {
 		}
 		.dollar {
 			return p.parse_comptime_if()
+		}
+		.hash {
+			return p.directive()
 		}
 		.lcbr {
 			return p.block_stmt()
@@ -1874,10 +1877,10 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 		if p.tok == .lcbr {
 			lhs_node := p.a.nodes[int(lhs)]
 			if lhs_node.kind == .selector && lhs_node.value.len > 0
-				&& lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`
 				&& (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
 				base := p.a.child_node(&lhs_node, 0)
-				if base.kind == .ident {
+				if base.kind == .ident
+					&& (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
 					full_name := '${base.value}.${lhs_node.value}'
 					lhs = p.struct_init(full_name)
 					continue
@@ -1973,12 +1976,12 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 		}
 		// `is` / `!is` / `not_is` type check
 		if p.tok == .key_is || p.tok == .not_is {
-			is_negated := p.tok == .not_is
-			p.next()
 			bp := token.Token.key_is.left_binding_power()
 			if int(bp) < int(min_bp) {
 				break
 			}
+			is_negated := p.tok == .not_is
+			p.next()
 			type_name := p.parse_type_name()
 			istart := p.add_children([lhs])
 			is_node := p.a.add_node(flat.Node{
@@ -3082,7 +3085,7 @@ fn strip_quotes(s string) string {
 
 fn is_builtin_type(name string) bool {
 	return name in ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64',
-		'byte', 'bool', 'string', 'rune', 'voidptr', 'charptr', 'usize', 'isize']
+		'byte', 'bool', 'string', 'rune', 'char', 'voidptr', 'charptr', 'usize', 'isize']
 }
 
 fn token_to_op(tok token.Token) flat.Op {

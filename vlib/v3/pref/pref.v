@@ -99,6 +99,10 @@ pub fn file_has_incompatible_os_suffix(file string, current_os string) bool {
 	if os_name != 'solaris' && file.contains('_solaris.') {
 		return true
 	}
+	if file.contains('.amd64.') || file.contains('_amd64.') || file.contains('.arm64.')
+		|| file.contains('_arm64.') {
+		return true
+	}
 	return false
 }
 
