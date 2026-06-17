@@ -3875,5 +3875,38 @@ fn main() {
 
 	print_str('array methods, slicing, split: ok')
 
-	print_str('=== ALL 93 TESTS PASSED ===')
+	print_str('--- 94. Map Iteration, Array Init with len ---')
+
+	// for k, v in map
+	mut m94 := map[string]int{}
+	m94['a'] = 1
+	m94['b'] = 2
+	m94['c'] = 3
+	mut sum94 := 0
+	for _, v in m94 {
+		sum94 = sum94 + v
+	}
+	print_int(sum94) // 6
+
+	// for v in map (value only)
+	mut count94 := 0
+	for v in m94 {
+		count94 = count94 + v
+	}
+	print_int(count94) // 6
+
+	// array init with len
+	a94 := []int{len: 5}
+	print_int(a94.len) // 5
+	print_int(a94[0]) // 0 (zero-initialized)
+
+	// array init with len and init
+	a94b := []int{len: 3, init: 42}
+	print_int(a94b.len) // 3
+	print_int(a94b[0]) // 42
+	print_int(a94b[2]) // 42
+
+	print_str('map iteration, array init: ok')
+
+	print_str('=== ALL 94 TESTS PASSED ===')
 }

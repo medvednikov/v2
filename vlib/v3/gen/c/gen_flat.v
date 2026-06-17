@@ -469,6 +469,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			c_elem := g.tc.c_type(elem_type)
 			mut init_len := '0'
 			mut init_cap := '0'
+			mut init_val := ''
 			for j in 0 .. rhs.children_count {
 				child := g.a.child_node(&rhs, j)
 				if child.kind == .field_init {
@@ -476,12 +477,16 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 						init_len = g.expr_to_string(g.a.child(child, 0))
 					} else if child.value == 'cap' {
 						init_cap = g.expr_to_string(g.a.child(child, 0))
+					} else if child.value == 'init' {
+						init_val = g.expr_to_string(g.a.child(child, 0))
 					}
 				}
 			}
-			g.write('Array ')
-			g.gen_expr(lhs_id)
-			g.writeln(' = array_new(sizeof(${c_elem}), ${init_len}, ${init_cap});')
+			lhs_str := g.expr_to_string(lhs_id)
+			g.writeln('Array ${lhs_str} = array_new(sizeof(${c_elem}), ${init_len}, ${init_cap});')
+			if init_val.len > 0 {
+				g.writeln('for (int _ai = 0; _ai < ${lhs_str}.len; _ai++) ((${c_elem}*)${lhs_str}.data)[_ai] = ${init_val};')
+			}
 			if lhs.kind == .ident {
 				g.tc.cur_scope.insert(lhs.value, '[]${elem_type}')
 			}
@@ -780,7 +785,26 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			} else {
 				var_name
 			}
-			if container_type.starts_with('[]') {
+			if container_type.starts_with('map[') {
+				key_type_v := container_type[4..container_type.index_u8(`]`)]
+				val_type_v := container_type[container_type.index_u8(`]`) + 1..]
+				c_key := g.tc.c_type(key_type_v)
+				c_val := g.tc.c_type(val_type_v)
+				container_str := g.expr_to_string(g.a.child(&node, 2))
+				iter_var := '__mi_${g.tmp_count}'
+				g.tmp_count++
+				key_var := if has_index { idx_var } else { '__mk_${g.tmp_count}' }
+				val_var_ := if has_index { elem_var } else { var_name }
+				g.writeln('for (int ${iter_var} = 0; ${iter_var} < ${container_str}.cap; ${iter_var}++) {')
+				g.indent++
+				g.writeln('if (!${container_str}.slots[${iter_var}].used) continue;')
+				g.writeln('${c_key} ${key_var} = *(${c_key}*)(${container_str}.keys + ${iter_var} * ${container_str}.key_size);')
+				g.writeln('${c_val} ${val_var_} = *(${c_val}*)(${container_str}.vals + ${iter_var} * ${container_str}.val_size);')
+				if has_index {
+					g.tc.cur_scope.insert(key_var, key_type_v)
+				}
+				g.tc.cur_scope.insert(val_var_, val_type_v)
+			} else if container_type.starts_with('[]') {
 				elem_type := g.tc.c_type(container_type[2..])
 				container_str := g.expr_to_string(g.a.child(&node, 2))
 				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${container_str}.len; ${idx_var}++) {')
