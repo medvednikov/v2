@@ -2297,14 +2297,14 @@ fn (mut g FlatGen) emit_struct(name string) {
 			g.writeln('\tint _dummy;')
 		}
 		for f in fields {
-			g.write_struct_field(f)
+			g.write_struct_field(name, f)
 		}
 		g.writeln('};')
 		g.writeln('')
 	}
 }
 
-fn (mut g FlatGen) write_struct_field(f types.StructField) {
+fn (mut g FlatGen) write_struct_field(struct_name string, f types.StructField) {
 	if f.typ is types.FnType {
 		ret := if r := f.typ.return_type { g.tc.c_type(r) } else { 'void' }
 		mut params := []string{}
@@ -2313,10 +2313,31 @@ fn (mut g FlatGen) write_struct_field(f types.StructField) {
 		}
 		params_str := if params.len > 0 { params.join(', ') } else { 'void' }
 		g.writeln('\t${ret} (*${c_name(f.name)})(${params_str});')
+	} else if f.typ is types.SumType && g.sum_type_contains_struct(f.typ.name, struct_name) {
+		ct := g.tc.c_type(f.typ)
+		g.writeln('\t${ct}* ${c_name(f.name)};')
 	} else {
 		ct := g.tc.c_type(f.typ)
 		g.writeln('\t${ct} ${c_name(f.name)};')
 	}
+}
+
+fn (g &FlatGen) sum_type_contains_struct(sum_name string, struct_name string) bool {
+	if sum_name in g.tc.sum_types {
+		for v in g.tc.sum_types[sum_name] {
+			if v == struct_name {
+				return true
+			}
+			if v in g.tc.structs {
+				for f in g.tc.structs[v] {
+					if f.typ is types.SumType && f.typ.name == sum_name {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }
 
 fn (mut g FlatGen) fn_ptr_typedefs() {

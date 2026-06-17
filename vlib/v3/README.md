@@ -6,6 +6,8 @@ Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop 
 
 The type system (`types/`) uses a `Type` sum type with 20 variants (Primitive, Array, Map, Pointer, FnType, Struct, Enum, etc.) instead of string-based type checks. Primitive types use a `Properties` flag enum with `boolean`, `float`, `integer`, `unsigned` flags and a `size` field. The parser produces string type names; `parse_type()` bridges them to structured `Type` values. `resolve_type()` infers types from AST nodes, and `c_type()` lowers to C type strings only at emission sites. Lexical scopes store `Type` values with parent-chain lookups.
 
+Sum types are compiled to tagged unions in C: `struct Type { int typ; union { Variant1 _v1; ... }; };`. Sum type construction (`Type(Variant{...})`), `is` checks, `as` casts, and match-based smartcasting are all supported. The transformer lowers sum type match branches to `is_expr` nodes, enabling smartcast field access through union variants in both `if` and `match` blocks.
+
 Type checking runs as a shared pipeline phase before backend selection: `TypeChecker.collect()` walks the flat AST to extract function signatures, struct fields, enum names, type aliases, sum types, and C function declarations, then registers runtime method signatures. Both the C backend and future backends receive the pre-populated `TypeChecker`.
 
 Imports are resolved recursively: after parsing the input file, the driver collects `import_decl` nodes, resolves module paths (relative to importing file, then vlib), parses module files, and repeats until no new imports are found.
@@ -47,9 +49,9 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | Component      | Lines |
 |----------------|-------|
 | flat parser    | 3,109 |
-| C gen (flat)   | 2,429 |
+| C gen (flat)   | 2,560 |
 | type system    | 286   |
-| type checker   | 709   |
+| type checker   | 717   |
 | universe       | 97    |
 | scopes         | 34    |
 | C gen (AST)    | 656   |
@@ -62,7 +64,7 @@ The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machin
 | flat AST       | 231   |
 | AST            | 866   |
 | flatten        | 532   |
-| transformer    | 243   |
+| transformer    | 289   |
 | markused       | 131   |
 | driver         | 182   |
 | builtins       | 89    |
