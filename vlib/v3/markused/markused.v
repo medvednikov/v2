@@ -78,6 +78,15 @@ fn collect_calls(a &flat.FlatAst, node &flat.Node, mut calls []string) {
 						}
 					}
 				}
+				for ci in 1 .. child.children_count {
+					arg_id := a.child(child, ci)
+					if int(arg_id) >= 0 {
+						arg := a.nodes[int(arg_id)]
+						if arg.kind == .ident && arg.value.len > 0 {
+							calls << arg.value
+						}
+					}
+				}
 			}
 			.prefix {
 				if child.op == .amp && child.children_count > 0 {

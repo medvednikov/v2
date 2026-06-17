@@ -68,6 +68,14 @@ fn Foo97.with_name(name string, val int) Foo97 {
 	return Foo97{name: name, val: val}
 }
 
+fn multiply(a int, b int) int {
+	return a * b
+}
+
+fn apply_op(f fn (int, int) int, x int, y int) int {
+	return f(x, y)
+}
+
 fn gcd(a int, b int) int {
 	if b == 0 {
 		return a
@@ -4005,5 +4013,14 @@ fn main() {
 
 	print_str('unsafe blocks: ok')
 
-	print_str('=== ALL 99 TESTS PASSED ===')
+	// 100. Function pointers
+	r100 := apply_op(add, 3, 4)
+	assert r100 == 7
+
+	r100b := apply_op(multiply, 5, 6)
+	assert r100b == 30
+
+	print_str('function pointers: ok')
+
+	print_str('=== ALL 100 TESTS PASSED ===')
 }

@@ -20,6 +20,7 @@ mut:
 	has_builtins bool
 	tmp_count    int
 	modules      map[string]string // alias -> full module name
+	fn_ptr_types map[string]string // fn_ptr:ret|params -> typedef name
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -64,6 +65,7 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) 
 	g.struct_decls()
 	g.runtime_fns()
 	g.global_decls()
+	g.fn_ptr_typedefs()
 	g.forward_decls()
 	const_code := g.precompute_consts()
 	g.string_literals()
@@ -81,7 +83,11 @@ fn (mut g FlatGen) collect() {
 				for i in 0 .. node.children_count {
 					child := g.a.child_node(&node, i)
 					if child.kind == .param {
-						ptypes << g.tc.c_type(child.typ)
+						ct := g.tc.c_type(child.typ)
+						if ct.starts_with('fn_ptr:') {
+							g.resolve_fn_ptr_type(ct)
+						}
+						ptypes << ct
 					}
 				}
 				g.tc.fn_param_types[node.value] = ptypes
@@ -535,13 +541,20 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		} else {
 			v_type := g.tc.resolve_type(rhs_id)
 			typ := g.tc.c_type(v_type)
-			g.write('${typ} ')
+			if typ.starts_with('fn_ptr:') {
+				fp_name := g.resolve_fn_ptr_type(typ)
+				g.write('${fp_name} ')
+			} else {
+				g.write('${typ} ')
+			}
 			g.gen_expr(lhs_id)
 			g.write(' = ')
 			g.gen_expr(rhs_id)
 			g.writeln(';')
 			if lhs.kind == .ident {
 				if v_type.starts_with('[]') || v_type.starts_with('map[') || v_type.contains('.') {
+					g.tc.cur_scope.insert(lhs.value, v_type)
+				} else if typ.starts_with('fn_ptr:') {
 					g.tc.cur_scope.insert(lhs.value, v_type)
 				} else {
 					g.tc.cur_scope.insert(lhs.value, typ)
@@ -1747,7 +1760,12 @@ fn (mut g FlatGen) write_fn_params(params []flat.Node) {
 		return
 	}
 	for i, p in params {
-		g.write(g.tc.c_type(p.typ))
+		ct := g.tc.c_type(p.typ)
+		if ct.starts_with('fn_ptr:') {
+			g.write(g.resolve_fn_ptr_type(ct))
+		} else {
+			g.write(ct)
+		}
 		if p.value.len > 0 {
 			g.write(' ')
 			g.write(c_name(p.value))
@@ -2399,6 +2417,27 @@ fn (mut g FlatGen) write_struct_field(f types.StructField) {
 	} else {
 		g.writeln('\t${f.typ} ${c_name(f.name)};')
 	}
+}
+
+fn (mut g FlatGen) fn_ptr_typedefs() {
+	for encoded, name in g.fn_ptr_types {
+		parts := encoded['fn_ptr:'.len..].split('|')
+		ret := parts[0]
+		params := if parts.len > 1 { parts[1] } else { 'void' }
+		g.writeln('typedef ${ret} (*${name})(${params});')
+	}
+	if g.fn_ptr_types.len > 0 {
+		g.writeln('')
+	}
+}
+
+fn (mut g FlatGen) resolve_fn_ptr_type(typ string) string {
+	if typ in g.fn_ptr_types {
+		return g.fn_ptr_types[typ]
+	}
+	name := '_fn_ptr_${g.fn_ptr_types.len}'
+	g.fn_ptr_types[typ] = name
+	return name
 }
 
 fn (g &FlatGen) variant_references_sum(variant string, sum_name string) bool {
