@@ -3713,5 +3713,44 @@ fn main() {
 	print_int(ml['y']) // 20
 	print_str('maps: ok')
 
-	print_str('=== ALL 90 TESTS PASSED ===')
+	// ==================== 91. STRING METHODS ====================
+	print_str('--- 91. String Methods ---')
+
+	s91 := 'hello world'
+	if s91.starts_with('hello') {
+		print_int(1) // 1
+	}
+	if s91.starts_with('world') == false {
+		print_int(2) // 2
+	}
+	if s91.ends_with('world') {
+		print_int(3) // 3
+	}
+	if s91.ends_with('hello') == false {
+		print_int(4) // 4
+	}
+	if s91.contains('lo wo') {
+		print_int(5) // 5
+	}
+	if s91.contains('xyz') == false {
+		print_int(6) // 6
+	}
+	print_int(s91.index_u8(111)) // 4 (111 = 'o')
+	print_int(s91.last_index_u8(111)) // 7
+	print_str(s91.substr(0, 5)) // hello
+	print_str(s91.substr(6, 11)) // world
+	print_str(s91.all_before(' ')) // hello
+	print_str(s91.all_after(' ')) // world
+	path91 := '/Users/test/file.v'
+	print_str(path91.all_before_last('/')) // /Users/test
+	print_str(path91.all_after_last('/')) // file.v
+	spaced := '  hello  '
+	print_str(spaced.trim_space()) // hello
+	print_str('  abc'.trim_left(' ')) // abc
+	print_str('abc  '.trim_right(' ')) // abc
+	numstr := '42'
+	print_int(numstr.int()) // 42
+	print_str('string methods: ok')
+
+	print_str('=== ALL 91 TESTS PASSED ===')
 }

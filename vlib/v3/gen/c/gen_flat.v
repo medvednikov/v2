@@ -45,6 +45,7 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool) 
 		}
 	}
 	g.collect()
+	g.register_runtime_methods()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
 	g.gen_fns()
@@ -167,6 +168,49 @@ fn (mut g FlatGen) collect() {
 				}
 			}
 			else {}
+		}
+	}
+}
+
+fn (mut g FlatGen) register_runtime_methods() {
+	methods := {
+		'string.all_before':      ['string', 'string']
+		'string.all_before_last': ['string', 'string']
+		'string.all_after':       ['string', 'string']
+		'string.all_after_last':  ['string', 'string']
+		'string.before':          ['string', 'string']
+		'string.after':           ['string', 'string']
+		'string.substr':          ['string', 'int', 'int']
+		'string.trim_left':       ['string', 'string']
+		'string.trim_right':      ['string', 'string']
+		'string.trim_space':      ['string']
+		'string.count':           ['string', 'string']
+		'string.index_':          ['string', 'string']
+		'string.last_index_':     ['string', 'string']
+	}
+	ret_types := {
+		'string.all_before':      'string'
+		'string.all_before_last': 'string'
+		'string.all_after':       'string'
+		'string.all_after_last':  'string'
+		'string.before':          'string'
+		'string.after':           'string'
+		'string.substr':          'string'
+		'string.trim_left':       'string'
+		'string.trim_right':      'string'
+		'string.trim_space':      'string'
+		'string.count':           'int'
+		'string.index_':          'int'
+		'string.last_index_':     'int'
+	}
+	for name, params in methods {
+		if name !in g.tc.fn_param_types {
+			g.tc.fn_param_types[name] = params
+		}
+	}
+	for name, ret in ret_types {
+		if name !in g.tc.fn_ret_types {
+			g.tc.fn_ret_types[name] = ret
 		}
 	}
 }
@@ -1672,6 +1716,77 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\t\telse { buf[pos++] = s.str[i++]; }')
 	g.writeln('\t} buf[new_len] = 0; return (string){buf, new_len, 0};')
 	g.writeln('}')
+	g.writeln('bool string__starts_with(string s, string p) {')
+	g.writeln('\tif (p.len > s.len) return 0;')
+	g.writeln('\treturn memcmp(s.str, p.str, p.len) == 0;')
+	g.writeln('}')
+	g.writeln('bool string__ends_with(string s, string p) {')
+	g.writeln('\tif (p.len > s.len) return 0;')
+	g.writeln('\treturn memcmp(s.str + s.len - p.len, p.str, p.len) == 0;')
+	g.writeln('}')
+	g.writeln('int string__index_u8(string s, u8 c) {')
+	g.writeln('\tfor (int i = 0; i < s.len; i++) if (((u8*)s.str)[i] == c) return i;')
+	g.writeln('\treturn -1;')
+	g.writeln('}')
+	g.writeln('int string__last_index_u8(string s, u8 c) {')
+	g.writeln('\tfor (int i = s.len - 1; i >= 0; i--) if (((u8*)s.str)[i] == c) return i;')
+	g.writeln('\treturn -1;')
+	g.writeln('}')
+	g.writeln('int string__index_(string s, string p) {')
+	g.writeln('\tif (p.len > s.len) return -1;')
+	g.writeln('\tfor (int i = 0; i <= s.len - p.len; i++) if (memcmp(s.str + i, p.str, p.len) == 0) return i;')
+	g.writeln('\treturn -1;')
+	g.writeln('}')
+	g.writeln('int string__last_index_(string s, string p) {')
+	g.writeln('\tif (p.len > s.len) return -1;')
+	g.writeln('\tfor (int i = s.len - p.len; i >= 0; i--) if (memcmp(s.str + i, p.str, p.len) == 0) return i;')
+	g.writeln('\treturn -1;')
+	g.writeln('}')
+	g.writeln('string string__substr(string s, int start, int end) {')
+	g.writeln('\tint slen = end - start; if (slen <= 0) return (string){"", 0, 1};')
+	g.writeln('\tchar* buf = malloc(slen + 1); memcpy(buf, s.str + start, slen); buf[slen] = 0;')
+	g.writeln('\treturn (string){buf, slen, 0};')
+	g.writeln('}')
+	g.writeln('string string__all_before(string s, string sub) {')
+	g.writeln('\tint idx = string__index_(s, sub); if (idx < 0) return s;')
+	g.writeln('\treturn string__substr(s, 0, idx);')
+	g.writeln('}')
+	g.writeln('string string__all_before_last(string s, string sub) {')
+	g.writeln('\tint idx = string__last_index_(s, sub); if (idx < 0) return s;')
+	g.writeln('\treturn string__substr(s, 0, idx);')
+	g.writeln('}')
+	g.writeln('string string__all_after(string s, string sub) {')
+	g.writeln('\tint idx = string__index_(s, sub); if (idx < 0) return s;')
+	g.writeln('\treturn string__substr(s, idx + sub.len, s.len);')
+	g.writeln('}')
+	g.writeln('string string__all_after_last(string s, string sub) {')
+	g.writeln('\tint idx = string__last_index_(s, sub); if (idx < 0) return s;')
+	g.writeln('\treturn string__substr(s, idx + sub.len, s.len);')
+	g.writeln('}')
+	g.writeln('string string__trim_left(string s, string cutset) {')
+	g.writeln('\tint i = 0; while (i < s.len) { bool found = 0;')
+	g.writeln('\t\tfor (int j = 0; j < cutset.len; j++) if (s.str[i] == cutset.str[j]) { found = 1; break; }')
+	g.writeln('\t\tif (!found) break; i++; }')
+	g.writeln('\treturn string__substr(s, i, s.len);')
+	g.writeln('}')
+	g.writeln('string string__trim_right(string s, string cutset) {')
+	g.writeln('\tint i = s.len - 1; while (i >= 0) { bool found = 0;')
+	g.writeln('\t\tfor (int j = 0; j < cutset.len; j++) if (s.str[i] == cutset.str[j]) { found = 1; break; }')
+	g.writeln('\t\tif (!found) break; i--; }')
+	g.writeln('\treturn string__substr(s, 0, i + 1);')
+	g.writeln('}')
+	g.writeln('string string__trim_space(string s) {')
+	g.writeln('\treturn string__trim_right(string__trim_left(s, (string){" \\t\\n\\r", 4, 1}), (string){" \\t\\n\\r", 4, 1});')
+	g.writeln('}')
+	g.writeln('bool string__contains_u8(string s, u8 x) { return string__index_u8(s, x) >= 0; }')
+	g.writeln('int string__count(string s, string sub) {')
+	g.writeln('\tif (sub.len == 0 || sub.len > s.len) return 0; int c = 0;')
+	g.writeln('\tfor (int i = 0; i <= s.len - sub.len; i++) if (memcmp(s.str+i, sub.str, sub.len)==0) { c++; i += sub.len-1; }')
+	g.writeln('\treturn c;')
+	g.writeln('}')
+	g.writeln('string string__after(string s, string sub) { return string__all_after(s, sub); }')
+	g.writeln('string string__before(string s, string sub) { return string__all_before(s, sub); }')
+	g.writeln('int string__int(string s) { return (int)strtol(s.str, NULL, 10); }')
 	g.writeln('void v_panic(string s) {')
 	g.writeln('\tfwrite(s.str, 1, s.len, stderr);')
 	g.writeln('\tputc(10, stderr);')
