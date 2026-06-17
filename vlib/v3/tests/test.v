@@ -3987,5 +3987,11 @@ fn main() {
 
 	print_str('static methods: ok')
 
-	print_str('=== ALL 97 TESTS PASSED ===')
+	// 98. @FILE compile-time constant
+	file_path := @FILE
+	assert file_path.len > 0
+	assert file_path.contains('test.v')
+	print_str('@FILE: ok')
+
+	print_str('=== ALL 98 TESTS PASSED ===')
 }

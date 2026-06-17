@@ -18,6 +18,7 @@ mut:
 	peek_lit string
 	has_peek bool
 	a        flat.FlatAst
+	cur_file string
 }
 
 pub fn FlatParser.new(prefs &pref.Preferences) FlatParser {
@@ -41,6 +42,7 @@ pub fn (mut p FlatParser) parse_files(paths []string) &flat.FlatAst {
 }
 
 pub fn (mut p FlatParser) parse_into(path string) {
+	p.cur_file = path
 	src := os.read_file(path) or {
 		eprintln('error reading ${path}: ${err}')
 		return
@@ -2092,6 +2094,15 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 		.name {
 			name := p.lit
 			p.next()
+			if name == '@FILE' {
+				return p.a.add_val(.string_literal, p.cur_file)
+			}
+			if name == '@LINE' {
+				return p.a.add_val(.int_literal, '0')
+			}
+			if name == '@FN' {
+				return p.a.add_val(.string_literal, '')
+			}
 			// map init: map[K]V{} or map[K]V{k1: v1, ...}
 			if name == 'map' && p.tok == .lsbr {
 				p.next() // skip [

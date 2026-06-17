@@ -69,21 +69,21 @@ Compiling `hello world` (`println('hello world')`) with full builtin import (38 
 | cc        | 37 ms    | 9,200 KB |
 | **total** | **~60 ms** | **9,200 KB** |
 
-Compiling `test.v` (3,991 lines, 97 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap, maps, string methods, dynamic arrays, array methods/slicing/split, map iteration/array init with len, in operator/array join, strings.Builder, static methods):
+Compiling `test.v` (3,997 lines, 98 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap, maps, string methods, dynamic arrays, array methods/slicing/split, map iteration/array init with len, in operator/array join, strings.Builder, static methods, @FILE):
 
 **C backend:**
 
 | Step      | Time     | RSS      |
 |-----------|----------|----------|
-| parse     | 22.55 ms | 10,720 KB |
-| transform | 0.85 ms  | 10,784 KB |
-| markused  | 29.25 ms | 32,464 KB |
-| gen C     | 3.66 ms  | 34,656 KB |
-| write     | 0.14 ms  | 34,656 KB |
-| cc        | 60 ms    | 34,672 KB |
-| **total** | **~139 ms** | **34,672 KB** |
+| parse     | 23.11 ms | 10,736 KB |
+| transform | 1.01 ms  | 10,928 KB |
+| markused  | 35.18 ms | 32,592 KB |
+| gen C     | 3.99 ms  | 34,704 KB |
+| write     | 0.15 ms  | 34,704 KB |
+| cc        | 58 ms    | 34,720 KB |
+| **total** | **~145 ms** | **34,720 KB** |
 
-All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~56 ms for test.v (3,991 lines) with C backend.
+All v3 steps (parse + transform + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~63 ms for test.v (3,997 lines) with C backend.
 
 Peak RSS: 9-20 MB.
 
