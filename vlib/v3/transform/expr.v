@@ -6,6 +6,13 @@ fn (mut t Transformer) transform_infix_string_ops(_id flat.NodeId, node flat.Nod
 	if node.children_count < 2 {
 		return none
 	}
+	match node.op {
+		.plus, .eq, .ne, .lt, .gt, .le, .ge {}
+		else {
+			return none
+		}
+	}
+
 	lhs_id := t.a.child(&node, 0)
 	rhs_id := t.a.child(&node, 1)
 
