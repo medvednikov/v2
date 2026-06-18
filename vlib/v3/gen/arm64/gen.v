@@ -307,7 +307,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.emit32(asm_add_reg(Reg(8), Reg(base_reg), Reg(off_reg)))
 			g.store_val(8, val_id)
 		}
-		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr {
+		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr {
 			lhs_reg := g.load_val(instr.operands[0], 8)
 			rhs_reg := g.load_val(instr.operands[1], 9)
 			match instr.op {
@@ -342,6 +342,9 @@ fn (mut g Gen) gen_instr(val_id int) {
 				.ashr {
 					g.emit32(asm_asrv(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
 				}
+				.lshr {
+					g.emit32(asm_lsrv(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
 				else {}
 			}
 
@@ -367,6 +370,24 @@ fn (mut g Gen) gen_instr(val_id int) {
 			src_reg := g.load_val(instr.operands[0], 8)
 			g.emit32(asm_sub_reg(Reg(8), xzr, Reg(src_reg)))
 			g.store_val(8, val_id)
+		}
+		.zext {
+			if instr.operands.len > 0 {
+				src_id := instr.operands[0]
+				src_reg := g.load_val(src_id, 8)
+				src_typ := g.m.values[src_id].typ
+				src_width := if src_typ > 0 && src_typ < g.m.type_store.types.len {
+					g.m.type_store.types[src_typ].width
+				} else {
+					64
+				}
+				if src_width > 0 && src_width < 64 {
+					g.emit32(asm_ubfx_lower(Reg(8), Reg(src_reg), u32(src_width)))
+				} else if src_reg != 8 {
+					g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
+				}
+				g.store_val(8, val_id)
+			}
 		}
 		.bitcast {
 			if instr.operands.len > 0 {

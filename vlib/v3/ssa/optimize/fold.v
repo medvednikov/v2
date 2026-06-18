@@ -26,34 +26,84 @@ fn constant_fold(mut m ssa.Module) bool {
 				mut folded := false
 
 				match instr.op {
-					.add { result = l_int + r_int; folded = true }
-					.sub { result = l_int - r_int; folded = true }
-					.mul { result = l_int * r_int; folded = true }
+					.add {
+						result = l_int + r_int
+						folded = true
+					}
+					.sub {
+						result = l_int - r_int
+						folded = true
+					}
+					.mul {
+						result = l_int * r_int
+						folded = true
+					}
 					.sdiv {
-						if r_int != 0 { result = l_int / r_int; folded = true }
+						if r_int != 0 {
+							result = l_int / r_int
+							folded = true
+						}
 					}
 					.srem {
-						if r_int != 0 { result = l_int % r_int; folded = true }
+						if r_int != 0 {
+							result = l_int % r_int
+							folded = true
+						}
 					}
-					.and_ { result = l_int & r_int; folded = true }
-					.or_ { result = l_int | r_int; folded = true }
-					.xor { result = l_int ^ r_int; folded = true }
+					.and_ {
+						result = l_int & r_int
+						folded = true
+					}
+					.or_ {
+						result = l_int | r_int
+						folded = true
+					}
+					.xor {
+						result = l_int ^ r_int
+						folded = true
+					}
 					.shl {
 						if r_int >= 0 && r_int < 64 {
-							result = i64(u64(l_int) << u64(r_int)); folded = true
+							result = i64(u64(l_int) << u64(r_int))
+							folded = true
 						}
 					}
 					.ashr {
 						if r_int >= 0 && r_int < 64 {
-							result = l_int >> u64(r_int); folded = true
+							result = l_int >> u64(r_int)
+							folded = true
 						}
 					}
-					.eq { result = if l_int == r_int { 1 } else { 0 }; folded = true }
-					.ne { result = if l_int != r_int { 1 } else { 0 }; folded = true }
-					.lt { result = if l_int < r_int { 1 } else { 0 }; folded = true }
-					.gt { result = if l_int > r_int { 1 } else { 0 }; folded = true }
-					.le { result = if l_int <= r_int { 1 } else { 0 }; folded = true }
-					.ge { result = if l_int >= r_int { 1 } else { 0 }; folded = true }
+					.lshr {
+						if r_int >= 0 && r_int < 64 {
+							result = i64(u64(l_int) >> u64(r_int))
+							folded = true
+						}
+					}
+					.eq {
+						result = if l_int == r_int { 1 } else { 0 }
+						folded = true
+					}
+					.ne {
+						result = if l_int != r_int { 1 } else { 0 }
+						folded = true
+					}
+					.lt {
+						result = if l_int < r_int { 1 } else { 0 }
+						folded = true
+					}
+					.gt {
+						result = if l_int > r_int { 1 } else { 0 }
+						folded = true
+					}
+					.le {
+						result = if l_int <= r_int { 1 } else { 0 }
+						folded = true
+					}
+					.ge {
+						result = if l_int >= r_int { 1 } else { 0 }
+						folded = true
+					}
 					else {}
 				}
 

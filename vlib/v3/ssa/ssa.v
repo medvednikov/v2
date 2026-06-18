@@ -18,6 +18,7 @@ pub enum OpCode {
 	// Bitwise
 	shl
 	ashr
+	lshr
 	and_
 	or_
 	xor
@@ -36,6 +37,7 @@ pub enum OpCode {
 	// Other
 	call
 	neg
+	zext
 	bitcast
 	struct_init
 }
