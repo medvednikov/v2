@@ -292,6 +292,7 @@ fn (g &FlatGen) new_parallel_worker(worker_id int) &FlatGen {
 		cur_fn_ret:             g.cur_fn_ret
 		cur_fn_ret_is_optional: g.cur_fn_ret_is_optional
 		cur_fn_ret_base:        g.cur_fn_ret_base
+		expected_expr_type:     g.expected_expr_type
 		expected_enum:          g.expected_enum
 		needed_optional_types:  g.needed_optional_types.clone()
 		emitted_fns:            g.emitted_fns.clone()

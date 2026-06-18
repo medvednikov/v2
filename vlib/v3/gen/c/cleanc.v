@@ -28,6 +28,7 @@ mut:
 	cur_fn_ret             types.Type = types.Type(types.void_)
 	cur_fn_ret_is_optional bool
 	cur_fn_ret_base        types.Type = types.Type(types.void_)
+	expected_expr_type     types.Type = types.Type(types.void_)
 	expected_enum          string
 	needed_optional_types  map[string]string
 	emitted_fns            map[string]bool
@@ -44,7 +45,8 @@ pub fn FlatGen.new() FlatGen {
 }
 
 pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
-	return g.gen_with_used(a, map[string]bool{}, types.TypeChecker{})
+	tc := types.TypeChecker.new(a)
+	return g.gen_with_used(a, map[string]bool{}, tc)
 }
 
 pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, tc types.TypeChecker) string {
@@ -185,6 +187,30 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	result := g.sb.str()
 	g.sb = orig
 	return result
+}
+
+fn (mut g FlatGen) gen_expr_with_expected_type(id flat.NodeId, expected types.Type) {
+	old_expected := g.expected_expr_type
+	g.expected_expr_type = expected
+	g.gen_expr(id)
+	g.expected_expr_type = old_expected
+}
+
+fn (mut g FlatGen) optional_none_type(id flat.NodeId) types.Type {
+	if typ := g.tc.expr_type(id) {
+		if typ is types.OptionType || typ is types.ResultType {
+			return typ
+		}
+	}
+	if g.expected_expr_type is types.OptionType || g.expected_expr_type is types.ResultType {
+		return g.expected_expr_type
+	}
+	if g.cur_fn_ret_is_optional {
+		return g.cur_fn_ret
+	}
+	return types.Type(types.OptionType{
+		base_type: types.Type(types.void_)
+	})
 }
 
 fn array_index_info(t types.Type) (bool, bool, types.Array) {
@@ -428,7 +454,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write('0')
 		}
 		.call {
-			g.gen_call(node)
+			g.gen_call(id, node)
 		}
 		.infix {
 			lhs_id := g.a.child(&node, 0)
@@ -780,7 +806,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write('NULL')
 		}
 		.none_expr {
-			ct := g.optional_type_name(g.cur_fn_ret)
+			ct := g.optional_type_name(g.optional_none_type(id))
 			g.write('(${ct}){.ok = false}')
 		}
 		.or_expr {
@@ -1024,6 +1050,7 @@ fn (mut g FlatGen) builtin_compat_decls() {
 	g.writeln('static inline bool array_contains_string(Array a, string val) { return array_index_string(a, val) >= 0; }')
 	g.writeln('static inline bool fixed_array_contains_string(const string* a, int len, string val) { for (int i = 0; i < len; i++) if (a[i].len == val.len && memcmp(a[i].str, val.str, val.len) == 0) return true; return false; }')
 	g.writeln('static inline bool fixed_array_contains_int(const int* a, int len, int val) { for (int i = 0; i < len; i++) if (a[i] == val) return true; return false; }')
+	g.writeln('static inline string Array_str(Array a) { (void)a; return (string){(u8*)"[]", 2, 1}; }')
 	g.writeln('static inline string Array_string__join(Array a, string sep) {')
 	g.writeln('\tif (a.len == 0) return (string){(u8*)"", 0, 1};')
 	g.writeln('\tstring* data = (string*)a.data; int len = 0;')

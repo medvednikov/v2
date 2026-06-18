@@ -169,7 +169,7 @@ fn (g &FlatGen) fn_body_ids(node flat.Node) []flat.NodeId {
 	return ids
 }
 
-fn (mut g FlatGen) gen_call(node flat.Node) {
+fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 	fn_node := g.a.child_node(&node, 0)
 	fn_name := fn_node.value
 	match fn_name {
@@ -649,9 +649,9 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						}
 						return
 					}
-					qfn := g.tc.qualify_fn_name(fn_ident.value)
-					if qfn in g.tc.fn_ret_types || qfn in g.tc.fn_param_types {
-						g.write(g.direct_call_name(qfn))
+					call_key := g.call_key(id, fn_ident.value)
+					if call_key in g.tc.fn_ret_types || call_key in g.tc.fn_param_types {
+						g.write(g.direct_call_name(call_key))
 					} else {
 						g.write(g.direct_call_name(fn_ident.value))
 					}
@@ -663,15 +663,9 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			actual_fn := if is_method {
 				method_name
 			} else {
-				g.tc.qualify_fn_name(fn_name)
+				g.call_key(id, fn_name)
 			}
-			param_types := if actual_fn in g.tc.fn_param_types {
-				g.tc.fn_param_types[actual_fn]
-			} else if fn_name in g.tc.fn_param_types {
-				g.tc.fn_param_types[fn_name]
-			} else {
-				[]types.Type{}
-			}
+			param_types := g.param_types_for(actual_fn, fn_name)
 			mut arg_start := 1
 			if is_method {
 				base_type := g.tc.resolve_type(base_id)
@@ -709,7 +703,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					pt := param_types[arg_idx]
 					ct := g.tc.c_type(types.unwrap_pointer(pt))
 					g.write('({${ct} _t${g.tmp_count} = ')
-					g.gen_expr(arg_id)
+					g.gen_expr_with_expected_type(arg_id, types.unwrap_pointer(pt))
 					g.write('; &_t${g.tmp_count};})')
 					g.tmp_count++
 				} else {
@@ -719,7 +713,14 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					emitted_variant := !needs_addr && !is_c_call && arg_idx < param_types.len
 						&& g.gen_sum_variant_arg(arg_id, param_types[arg_idx])
 					if !emitted_variant {
-						g.gen_expr(arg_id)
+						if !is_c_call && arg_idx < param_types.len
+							&& g.gen_optional_arg(arg_id, param_types[arg_idx]) {
+							// handled
+						} else if !is_c_call && arg_idx < param_types.len {
+							g.gen_expr_with_expected_type(arg_id, param_types[arg_idx])
+						} else {
+							g.gen_expr(arg_id)
+						}
 					}
 				}
 				g.expected_enum = ''
@@ -780,6 +781,107 @@ fn (mut g FlatGen) gen_fn_field_call(node flat.Node, fn_node &flat.Node, base_ty
 	return true
 }
 
+fn (g &FlatGen) call_key(id flat.NodeId, name string) string {
+	if resolved := g.tc.resolved_calls[int(id)] {
+		return g.normalize_call_key(resolved)
+	}
+	return g.normalize_call_key(name)
+}
+
+fn (g &FlatGen) normalize_call_key(name string) string {
+	if name.starts_with('main.') {
+		short_name := name.all_after_last('.')
+		if short_name in g.tc.fn_param_types || short_name in g.tc.fn_ret_types {
+			return short_name
+		}
+	}
+	if !name.contains('.') && g.tc.cur_module.len > 0 && g.tc.cur_module != 'main'
+		&& g.tc.cur_module != 'builtin' {
+		local := '${g.tc.cur_module}.${name}'
+		if local in g.tc.fn_param_types || local in g.tc.fn_ret_types {
+			return local
+		}
+	}
+	if name in g.tc.fn_param_types || name in g.tc.fn_ret_types {
+		return name
+	}
+	qname := g.tc.qualify_fn_name(name)
+	if qname in g.tc.fn_param_types || qname in g.tc.fn_ret_types {
+		return qname
+	}
+	for _, mod_name in g.tc.imports {
+		imported := '${mod_name}.${name}'
+		if imported in g.tc.fn_param_types || imported in g.tc.fn_ret_types {
+			return imported
+		}
+	}
+	return qname
+}
+
+fn (mut g FlatGen) param_types_for(name string, fallback string) []types.Type {
+	decl_types := g.param_types_from_decl(name, fallback)
+	if decl_types.len > 0 {
+		return decl_types
+	}
+	for candidate in [name, fallback] {
+		if candidate in g.tc.fn_param_types {
+			return g.tc.fn_param_types[candidate]
+		}
+		if candidate.starts_with('main.') {
+			short_name := candidate.all_after_last('.')
+			if short_name in g.tc.fn_param_types {
+				return g.tc.fn_param_types[short_name]
+			}
+		}
+	}
+	return []types.Type{}
+}
+
+fn (mut g FlatGen) param_types_from_decl(name string, fallback string) []types.Type {
+	mut cur_module := ''
+	for node in g.a.nodes {
+		match node.kind {
+			.file {
+				cur_module = ''
+			}
+			.module_decl {
+				cur_module = node.value
+			}
+			.fn_decl {
+				full_name := if cur_module.len > 0 && cur_module != 'main'
+					&& cur_module != 'builtin' {
+					'${cur_module}.${node.value}'
+				} else {
+					node.value
+				}
+				if name.contains('.') {
+					if node.value != name && full_name != name {
+						continue
+					}
+				} else {
+					if node.value != fallback && node.value != name && full_name != name
+						&& full_name != fallback {
+						continue
+					}
+				}
+				old_module := g.tc.cur_module
+				g.tc.cur_module = cur_module
+				mut ptypes := []types.Type{}
+				for i in 0 .. node.children_count {
+					child := g.a.child_node(&node, i)
+					if child.kind == .param {
+						ptypes << g.tc.parse_type(child.typ)
+					}
+				}
+				g.tc.cur_module = old_module
+				return ptypes
+			}
+			else {}
+		}
+	}
+	return []types.Type{}
+}
+
 fn (mut g FlatGen) gen_arg_for_expected_type(arg_id flat.NodeId, expected types.Type) {
 	arg_node := g.a.nodes[int(arg_id)]
 	mut needs_addr := false
@@ -795,7 +897,37 @@ fn (mut g FlatGen) gen_arg_for_expected_type(arg_id flat.NodeId, expected types.
 	if !needs_addr && g.gen_sum_variant_arg(arg_id, expected) {
 		return
 	}
-	g.gen_expr(arg_id)
+	if !needs_addr && g.gen_optional_arg(arg_id, expected) {
+		return
+	}
+	g.gen_expr_with_expected_type(arg_id, expected)
+}
+
+fn (mut g FlatGen) gen_optional_arg(arg_id flat.NodeId, expected types.Type) bool {
+	base_type := if expected is types.OptionType {
+		expected.base_type
+	} else if expected is types.ResultType {
+		expected.base_type
+	} else {
+		return false
+	}
+	arg_type := g.usable_expr_type(arg_id)
+	if arg_type is types.OptionType || arg_type is types.ResultType {
+		arg_node := g.a.nodes[int(arg_id)]
+		if arg_node.kind == .none_expr || g.expr_really_returns_optional(arg_id) {
+			g.gen_expr_with_expected_type(arg_id, expected)
+			return true
+		}
+	}
+	ct := g.optional_type_name(expected)
+	if base_type is types.Void {
+		g.write('(${ct}){.ok = true}')
+		return true
+	}
+	g.write('(${ct}){.ok = true, .value = ')
+	g.gen_expr_with_expected_type(arg_id, base_type)
+	g.write('}')
+	return true
 }
 
 fn (g &FlatGen) fn_field_type(base_type types.Type, field_name string) ?types.FnType {
@@ -873,7 +1005,7 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 					if j > i {
 						g.write(', ')
 					}
-					g.gen_expr(g.a.child(&node, j))
+					g.gen_expr_with_expected_type(g.a.child(&node, j), variadic_type.elem_type)
 				}
 				g.write('})')
 			}
@@ -886,7 +1018,7 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 				if variadic_type is types.Array {
 					c_elem := g.tc.c_type(variadic_type.elem_type)
 					g.write('new_array_from_c_array(1, 1, sizeof(${c_elem}), (${c_elem}[]){')
-					g.gen_expr(arg_id)
+					g.gen_expr_with_expected_type(arg_id, variadic_type.elem_type)
 					g.write('})')
 					continue
 				}
@@ -906,7 +1038,7 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			pt := param_types[arg_idx]
 			ct := g.tc.c_type(types.unwrap_pointer(pt))
 			g.write('({${ct} _t${g.tmp_count} = ')
-			g.gen_expr(arg_id)
+			g.gen_expr_with_expected_type(arg_id, types.unwrap_pointer(pt))
 			g.write('; &_t${g.tmp_count};})')
 			g.tmp_count++
 		} else {
@@ -916,7 +1048,13 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			emitted_variant := !needs_addr && arg_idx < param_types.len
 				&& g.gen_sum_variant_arg(arg_id, param_types[arg_idx])
 			if !emitted_variant {
-				g.gen_expr(arg_id)
+				if arg_idx < param_types.len && g.gen_optional_arg(arg_id, param_types[arg_idx]) {
+					// handled
+				} else if arg_idx < param_types.len {
+					g.gen_expr_with_expected_type(arg_id, param_types[arg_idx])
+				} else {
+					g.gen_expr(arg_id)
+				}
 			}
 		}
 		if variadic_idx >= 0 && num_args == variadic_idx {
@@ -1159,7 +1297,11 @@ fn (mut g FlatGen) write_fn_params(params []flat.Node) {
 	}
 	for i, p in params {
 		pt := g.tc.parse_type(p.typ)
-		ct := g.tc.c_type(pt)
+		ct := if pt is types.OptionType || pt is types.ResultType {
+			g.optional_type_name(pt)
+		} else {
+			g.tc.c_type(pt)
+		}
 		if ct.starts_with('fn_ptr:') {
 			g.write(g.resolve_fn_ptr_type(ct))
 		} else {
