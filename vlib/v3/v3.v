@@ -110,9 +110,8 @@ fn main() {
 		pre_tc.diagnostic_files[uf] = true
 	}
 	pre_tc.check_semantics()
-	unknown_call_errors := errors_by_kind(pre_tc.errors, .unknown_fn)
-	if unknown_call_errors.len > 0 {
-		print_type_errors(unknown_call_errors)
+	if pre_tc.errors.len > 0 {
+		print_type_errors(pre_tc.errors)
 		exit(1)
 	}
 
@@ -123,6 +122,7 @@ fn main() {
 	// Type check — shared phase before backend selection
 	mut tc := types.TypeChecker.new(a)
 	tc.collect(a)
+	tc.annotate_types()
 	b.step('check')
 
 	tc.check_semantics()
@@ -198,16 +198,6 @@ fn main() {
 	}
 
 	b.print_report()
-}
-
-fn errors_by_kind(errors []types.TypeError, kind types.TypeErrorKind) []types.TypeError {
-	mut found := []types.TypeError{}
-	for err in errors {
-		if err.kind == kind {
-			found << err
-		}
-	}
-	return found
 }
 
 fn print_type_errors(errors []types.TypeError) {
