@@ -48,6 +48,10 @@ pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
 }
 
 pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, tc types.TypeChecker) string {
+	return g.gen_with_used_options(a, used_fns, tc, false)
+}
+
+pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[string]bool, tc types.TypeChecker, no_parallel bool) string {
 	g.a = a
 	g.used_fns = used_fns.clone()
 	if tc.a != unsafe { nil } {
@@ -60,7 +64,7 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, 
 	const_code := g.precompute_consts()
 	orig_sb := g.sb
 	g.sb = strings.new_builder(4096)
-	g.gen_fns()
+	g.gen_fns_dispatch(no_parallel)
 	fn_code := g.sb.str()
 	g.sb = orig_sb
 	g.preamble()
@@ -191,17 +195,81 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	return result
 }
 
+fn array_index_info(t types.Type) (bool, bool, types.Array) {
+	if t is types.Array {
+		return true, false, t
+	}
+	if t is types.Alias && t.base_type is types.Array {
+		return true, false, t.base_type as types.Array
+	}
+	if t is types.Pointer {
+		if t.base_type is types.Array {
+			return true, true, t.base_type as types.Array
+		}
+		if t.base_type is types.Alias && (t.base_type as types.Alias).base_type is types.Array {
+			return true, true, (t.base_type as types.Alias).base_type as types.Array
+		}
+	}
+	return false, false, types.Array{}
+}
+
+fn (g &FlatGen) const_ref_name(name string) string {
+	if name in g.const_vals {
+		return name
+	}
+	if name.contains('.') {
+		cname := c_name(name)
+		if cname in g.const_vals {
+			return cname
+		}
+	}
+	sep := if name.contains('.') {
+		'.'
+	} else if name.contains('__') {
+		'__'
+	} else {
+		return ''
+	}
+	short_name := name.all_after_last(sep)
+	if short_name !in g.const_vals {
+		return ''
+	}
+	mod := if short_name in g.const_modules { g.const_modules[short_name] } else { '' }
+	if mod.len == 0 {
+		return short_name
+	}
+	ref_mod := name.all_before_last(sep)
+	if ref_mod == mod || ref_mod == mod.all_after_last('.') {
+		return short_name
+	}
+	return ''
+}
+
+fn (g &FlatGen) const_ref_name_from_node(node flat.Node) string {
+	if node.kind == .ident {
+		return g.const_ref_name(node.value)
+	}
+	if node.kind == .selector && node.children_count > 0 {
+		base := g.a.child_node(&node, 0)
+		if base.kind == .ident {
+			return g.const_ref_name('${base.value}.${node.value}')
+		}
+	}
+	return ''
+}
+
 fn (mut g FlatGen) const_expr_to_string(id flat.NodeId, seen []string) string {
 	if int(id) < 0 || int(id) >= g.a.nodes.len {
 		return ''
 	}
 	node := g.a.nodes[int(id)]
 	return match node.kind {
-		.ident {
-			if node.value in g.const_vals && node.value !in seen {
+		.ident, .selector {
+			const_name := g.const_ref_name_from_node(node)
+			if const_name.len > 0 && const_name !in seen {
 				mut next_seen := seen.clone()
-				next_seen << node.value
-				dep_expr := g.const_expr_to_string(g.const_vals[node.value], next_seen)
+				next_seen << const_name
+				dep_expr := g.const_expr_to_string(g.const_vals[const_name], next_seen)
 				if dep_expr.trim_space().len > 0 {
 					return dep_expr
 				}
@@ -610,41 +678,36 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write('}, &(${c_val}[]){0}))')
-			} else if base_type is types.Array || (base_type is types.Pointer
-				&& (base_type as types.Pointer).base_type is types.Array) {
-				arr_type := if base_type is types.Array {
-					base_type as types.Array
-				} else if base_type is types.Pointer {
-					(base_type as types.Pointer).base_type as types.Array
-				} else {
-					types.Array{}
-				}
-				c_elem := g.tc.c_type(arr_type.elem_type)
-				g.write('(*(${c_elem}*)array_get(')
-				if base_type is types.Pointer {
-					g.write('*')
-				}
-				g.gen_expr(base_id)
-				g.write(', ')
-				g.gen_expr(g.a.child(&node, 1))
-				g.write('))')
-			} else if base_type is types.String {
-				g.gen_expr(base_id)
-				g.write('.str[')
-				g.gen_expr(g.a.child(&node, 1))
-				g.write(']')
-			} else if base_type is types.Pointer
-				&& (base_type as types.Pointer).base_type is types.Void {
-				g.write('((u8*)')
-				g.gen_expr(base_id)
-				g.write(')[')
-				g.gen_expr(g.a.child(&node, 1))
-				g.write(']')
 			} else {
-				g.gen_expr(base_id)
-				g.write('[')
-				g.gen_expr(g.a.child(&node, 1))
-				g.write(']')
+				is_array_index, is_ptr, arr_type := array_index_info(base_type)
+				if is_array_index {
+					c_elem := g.tc.c_type(arr_type.elem_type)
+					g.write('(*(${c_elem}*)array_get(')
+					if is_ptr {
+						g.write('*')
+					}
+					g.gen_expr(base_id)
+					g.write(', ')
+					g.gen_expr(g.a.child(&node, 1))
+					g.write('))')
+				} else if base_type is types.String {
+					g.gen_expr(base_id)
+					g.write('.str[')
+					g.gen_expr(g.a.child(&node, 1))
+					g.write(']')
+				} else if base_type is types.Pointer
+					&& (base_type as types.Pointer).base_type is types.Void {
+					g.write('((u8*)')
+					g.gen_expr(base_id)
+					g.write(')[')
+					g.gen_expr(g.a.child(&node, 1))
+					g.write(']')
+				} else {
+					g.gen_expr(base_id)
+					g.write('[')
+					g.gen_expr(g.a.child(&node, 1))
+					g.write(']')
+				}
 			}
 		}
 		.array_init {
@@ -822,63 +885,28 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 	}
 }
 
-fn (mut g FlatGen) gen_string_infix_fallback(node flat.Node, lhs_id flat.NodeId, rhs_id flat.NodeId) bool {
+fn (mut g FlatGen) gen_string_infix_fallback(node flat.Node, _lhs_id flat.NodeId, _rhs_id flat.NodeId) bool {
 	match node.op {
 		.plus {
-			g.write('string__plus(')
-			g.gen_expr(lhs_id)
-			g.write(', ')
-			g.gen_expr(rhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string plus reached C backend after transform')
 		}
 		.eq {
-			g.write('string__eq(')
-			g.gen_expr(lhs_id)
-			g.write(', ')
-			g.gen_expr(rhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string equality reached C backend after transform')
 		}
 		.ne {
-			g.write('!string__eq(')
-			g.gen_expr(lhs_id)
-			g.write(', ')
-			g.gen_expr(rhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string inequality reached C backend after transform')
 		}
 		.lt {
-			g.write('string__lt(')
-			g.gen_expr(lhs_id)
-			g.write(', ')
-			g.gen_expr(rhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string comparison reached C backend after transform')
 		}
 		.gt {
-			g.write('string__lt(')
-			g.gen_expr(rhs_id)
-			g.write(', ')
-			g.gen_expr(lhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string comparison reached C backend after transform')
 		}
 		.le {
-			g.write('!string__lt(')
-			g.gen_expr(rhs_id)
-			g.write(', ')
-			g.gen_expr(lhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string comparison reached C backend after transform')
 		}
 		.ge {
-			g.write('!string__lt(')
-			g.gen_expr(lhs_id)
-			g.write(', ')
-			g.gen_expr(rhs_id)
-			g.write(')')
-			return true
+			panic('internal error: string comparison reached C backend after transform')
 		}
 		else {
 			return false
@@ -1422,6 +1450,121 @@ fn (mut g FlatGen) runtime_fns() {
 		g.writeln('}')
 		g.writeln('#define vmemcpy memcpy')
 		g.writeln('#define vmemset memset')
+		g.writeln('Array strings__new_builder(int initial_size) {')
+		g.writeln('\treturn array_new(sizeof(u8), 0, initial_size > 0 ? initial_size : 64);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_ptr(Array* b, void* ptr, int len) {')
+		g.writeln('\tarray_push_many_ptr(b, ptr, len);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_string(Array* b, string s) {')
+		g.writeln('\tstrings__Builder__write_ptr(b, s.str, s.len);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_string2(Array* b, string s1, string s2) {')
+		g.writeln('\tstrings__Builder__write_string(b, s1);')
+		g.writeln('\tstrings__Builder__write_string(b, s2);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_u8(Array* b, u8 c) {')
+		g.writeln('\tarray_push(b, &c);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_byte(Array* b, u8 c) {')
+		g.writeln('\tstrings__Builder__write_u8(b, c);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_decimal(Array* b, i64 n) {')
+		g.writeln('\tchar buf[32]; int len = snprintf(buf, sizeof(buf), "%lld", (long long)n);')
+		g.writeln('\tstrings__Builder__write_ptr(b, buf, len);')
+		g.writeln('}')
+		g.writeln('Optional strings__Builder__write(Array* b, Array data) {')
+		g.writeln('\tif (data.len > 0) array_push_many(b, data);')
+		g.writeln('\treturn (Optional){.ok = true, .value = data.len};')
+		g.writeln('}')
+		g.writeln('void strings__Builder__writeln(Array* b, string s) {')
+		g.writeln('\tstrings__Builder__write_string(b, s);')
+		g.writeln('\tstrings__Builder__write_u8(b, 10);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__writeln2(Array* b, string s1, string s2) {')
+		g.writeln('\tstrings__Builder__writeln(b, s1);')
+		g.writeln('\tstrings__Builder__writeln(b, s2);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_rune(Array* b, i32 r) {')
+		g.writeln('\tu8 buffer[5] = {0};')
+		g.writeln('\tstring res = utf32_to_str_no_malloc((u32)r, buffer);')
+		g.writeln('\tif (res.len > 0) strings__Builder__write_string(b, res);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_runes(Array* b, Array runes) {')
+		g.writeln('\tu8 buffer[5] = {0};')
+		g.writeln('\tfor (int i = 0; i < runes.len; i++) {')
+		g.writeln('\t\ti32 r = *(i32*)array_get(runes, i);')
+		g.writeln('\t\tstring res = utf32_to_str_no_malloc((u32)r, buffer);')
+		g.writeln('\t\tif (res.len > 0) strings__Builder__write_string(b, res);')
+		g.writeln('\t}')
+		g.writeln('}')
+		g.writeln('void strings__Builder__write_repeated_rune(Array* b, i32 r, int count) {')
+		g.writeln('\tfor (int i = 0; i < count; i++) strings__Builder__write_rune(b, r);')
+		g.writeln('}')
+		g.writeln('u8 strings__Builder__byte_at(Array* b, int n) {')
+		g.writeln('\treturn n >= 0 && n < b->len ? ((u8*)b->data)[n] : 0;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__ensure_cap(Array* b, int n) {')
+		g.writeln('\tarray_ensure_cap(b, n);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__grow_len(Array* b, int n) {')
+		g.writeln('\tif (n <= 0) return;')
+		g.writeln('\tarray_ensure_cap(b, b->len + n);')
+		g.writeln('\tb->len += n;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__go_back(Array* b, int n) {')
+		g.writeln('\tif (n <= 0) return;')
+		g.writeln('\tb->len = n > b->len ? 0 : b->len - n;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__go_back_to(Array* b, int pos) {')
+		g.writeln('\tb->len = pos < 0 ? 0 : (pos < b->len ? pos : b->len);')
+		g.writeln('}')
+		g.writeln('string strings__Builder__spart(Array* b, int start_pos, int n) {')
+		g.writeln('\tif (start_pos < 0) start_pos = 0;')
+		g.writeln('\tif (n < 0) n = 0;')
+		g.writeln('\tif (start_pos > b->len) start_pos = b->len;')
+		g.writeln('\tif (start_pos + n > b->len) n = b->len - start_pos;')
+		g.writeln('\tchar* s = (char*)malloc(n + 1);')
+		g.writeln('\tif (n > 0) memcpy(s, (char*)b->data + start_pos, n);')
+		g.writeln('\ts[n] = 0;')
+		g.writeln('\treturn (string){s, n, 0};')
+		g.writeln('}')
+		g.writeln('string strings__Builder__cut_last(Array* b, int n) {')
+		g.writeln('\tif (n > b->len) n = b->len;')
+		g.writeln('\tstring s = strings__Builder__spart(b, b->len - n, n);')
+		g.writeln('\tb->len -= n;')
+		g.writeln('\treturn s;')
+		g.writeln('}')
+		g.writeln('string strings__Builder__cut_to(Array* b, int pos) {')
+		g.writeln('\tif (pos > b->len) return (string){"", 0, 1};')
+		g.writeln('\treturn strings__Builder__cut_last(b, b->len - pos);')
+		g.writeln('}')
+		g.writeln('string strings__Builder__last_n(Array* b, int n) {')
+		g.writeln('\tif (n > b->len) return (string){"", 0, 1};')
+		g.writeln('\treturn strings__Builder__spart(b, b->len - n, n);')
+		g.writeln('}')
+		g.writeln('string strings__Builder__after(Array* b, int n) {')
+		g.writeln('\tif (n >= b->len) return (string){"", 0, 1};')
+		g.writeln('\treturn strings__Builder__spart(b, n, b->len - n);')
+		g.writeln('}')
+		g.writeln('Array strings__Builder__reuse_as_plain_u8_array(Array* b) {')
+		g.writeln('\treturn *b;')
+		g.writeln('}')
+		g.writeln('void strings__Builder__drain_builder(Array* b, Array* other, int other_new_cap) {')
+		g.writeln('\tif (other->len > 0) array_push_many(b, *other);')
+		g.writeln('\tfree(other->data);')
+		g.writeln('\t*other = strings__new_builder(other_new_cap);')
+		g.writeln('}')
+		g.writeln('void strings__Builder__free(Array* b) {')
+		g.writeln('\tif (b->data) free(b->data);')
+		g.writeln('\tb->data = 0; b->len = 0; b->cap = 0;')
+		g.writeln('}')
+		g.writeln('string strings__Builder__str(Array* b) {')
+		g.writeln('\tchar* s = (char*)malloc(b->len + 1);')
+		g.writeln('\tif (b->len > 0) memcpy(s, b->data, b->len);')
+		g.writeln('\ts[b->len] = 0;')
+		g.writeln('\tstring r = {s, b->len, 0}; b->len = 0; return r;')
+		g.writeln('}')
 		g.writeln('')
 	} else {
 		g.writeln('typedef struct { char* buf; int len; int cap; } strings__Builder;')
@@ -1512,8 +1655,11 @@ fn (g &FlatGen) const_collect_deps(val_id flat.NodeId, mut deps []string) {
 		return
 	}
 	node := g.a.nodes[int(val_id)]
-	if node.kind == .ident && node.value in g.const_vals {
-		deps << node.value
+	if node.kind == .ident || node.kind == .selector {
+		const_name := g.const_ref_name_from_node(node)
+		if const_name.len > 0 {
+			deps << const_name
+		}
 	}
 	for i in 0 .. node.children_count {
 		g.const_collect_deps(g.a.child(&node, i), mut deps)
@@ -1525,8 +1671,8 @@ fn (g &FlatGen) const_refs_other_const(val_id flat.NodeId) bool {
 		return false
 	}
 	node := g.a.nodes[int(val_id)]
-	if node.kind == .ident && node.value in g.const_vals {
-		return true
+	if node.kind == .ident || node.kind == .selector {
+		return g.const_ref_name_from_node(node).len > 0
 	}
 	for i in 0 .. node.children_count {
 		if g.const_refs_other_const(g.a.child(&node, i)) {
@@ -1584,6 +1730,10 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 	} else if v_type is types.ArrayFixed {
 		c_elem := g.tc.c_type(v_type.elem_type)
 		g.writeln('const ${c_elem} ${qname}[] = ${expr_str};')
+	} else if v_type is types.Primitive || v_type is types.Char || v_type is types.Rune
+		|| v_type is types.ISize || v_type is types.USize || v_type is types.Enum
+		|| ct in ['bool', 'char', 'i8', 'i16', 'i32', 'int', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64', 'float', 'double', 'isize', 'usize'] {
+		g.writeln('#define ${qname} (${expr_str})')
 	} else {
 		g.writeln('const ${ct} ${qname} = ${expr_str};')
 	}

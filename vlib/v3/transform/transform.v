@@ -216,7 +216,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 	t.var_types = map[string]string{}
 	// Collect param types
 	for i in 0 .. fn_node.children_count {
-		child_id := t.a.child(&fn_node, i)
+		child_id := t.a.children[fn_node.children_start + i]
 		if int(child_id) < 0 {
 			continue
 		}
@@ -226,9 +226,9 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 		}
 	}
 	// Collect body statement ids (non-param children)
-	mut body_ids := []flat.NodeId{}
+	mut body_ids := []flat.NodeId{cap: fn_node.children_count}
 	for i in 0 .. fn_node.children_count {
-		child_id := t.a.child(&fn_node, i)
+		child_id := t.a.children[fn_node.children_start + i]
 		if int(child_id) < 0 {
 			continue
 		}
@@ -241,7 +241,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 	// Rebuild function children: params then new body
 	start := t.a.children.len
 	for i in 0 .. fn_node.children_count {
-		child_id := t.a.child(&fn_node, i)
+		child_id := t.a.children[fn_node.children_start + i]
 		if int(child_id) < 0 {
 			continue
 		}
@@ -268,7 +268,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 // --- statement list driver ---
 
 pub fn (mut t Transformer) transform_stmts(ids []flat.NodeId) []flat.NodeId {
-	mut result := []flat.NodeId{}
+	mut result := []flat.NodeId{cap: ids.len}
 	for id in ids {
 		expanded := t.transform_stmt(id)
 		t.drain_pending(mut result)
@@ -544,7 +544,7 @@ fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []fla
 	if node.children_count == 0 {
 		return arr1(id)
 	}
-	child_id := t.a.child(&node, 0)
+	child_id := t.a.children[node.children_start]
 	if lowered := t.try_lower_flag_enum_stmt(child_id) {
 		return arr1(lowered)
 	}
@@ -572,9 +572,9 @@ fn (mut t Transformer) transform_for_in_stmt(id flat.NodeId, node flat.Node) []f
 }
 
 fn (mut t Transformer) transform_block_stmt(_id flat.NodeId, node flat.Node) []flat.NodeId {
-	mut child_ids := []flat.NodeId{}
+	mut child_ids := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
-		child_ids << t.a.child(&node, i)
+		child_ids << t.a.children[node.children_start + i]
 	}
 	new_children := t.transform_stmts(child_ids)
 	new_block := t.make_block(new_children)
@@ -631,8 +631,8 @@ fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat
 		return id
 	}
 	if node.op == .left_shift {
-		lhs_id := t.a.child(&node, 0)
-		rhs_id := t.a.child(&node, 1)
+		lhs_id := t.a.children[node.children_start]
+		rhs_id := t.a.children[node.children_start + 1]
 		new_rhs := t.transform_expr(rhs_id)
 		start := t.a.children.len
 		t.a.children << lhs_id
@@ -655,8 +655,8 @@ fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat
 	if struct_result := t.transform_infix_struct_ops(id, node) {
 		return struct_result
 	}
-	lhs_id := t.a.child(&node, 0)
-	rhs_id := t.a.child(&node, 1)
+	lhs_id := t.a.children[node.children_start]
+	rhs_id := t.a.children[node.children_start + 1]
 	new_lhs := t.transform_expr(lhs_id)
 	new_rhs := t.transform_expr(rhs_id)
 	start := t.a.children.len

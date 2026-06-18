@@ -934,7 +934,7 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 		if p.tok == .lpar {
 			// method: name(params) ret_type
 			p.next() // skip (
-			mut ptypes := []string{}
+			mut params := []flat.NodeId{}
 			for p.tok != .rpar && p.tok != .eof {
 				if p.tok == .key_mut {
 					p.next()
@@ -943,9 +943,15 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 				if p.tok == .name {
 					// param has a name before type, consume the actual type
 					ptype2 := p.parse_type_name()
-					ptypes << ptype2
+					params << p.a.add_node(flat.Node{
+						kind: .param
+						typ:  ptype2
+					})
 				} else {
-					ptypes << ptype
+					params << p.a.add_node(flat.Node{
+						kind: .param
+						typ:  ptype
+					})
 				}
 				if p.tok == .comma {
 					p.next()
@@ -956,10 +962,13 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 			if p.tok != .semicolon && p.tok != .rcbr && p.tok != .eof {
 				ret_type = p.parse_type_name()
 			}
+			start := p.add_children(params)
 			ids << p.a.add_node(flat.Node{
-				kind:  .interface_field
-				value: field_name
-				typ:   ret_type
+				kind:           .interface_field
+				value:          field_name
+				typ:            ret_type
+				children_start: start
+				children_count: params.len
 			})
 		} else if p.tok == .semicolon || p.tok == .rcbr {
 			// embedded type or field without explicit type

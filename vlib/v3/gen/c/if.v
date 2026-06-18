@@ -18,6 +18,9 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	}
 	g.tc.push_scope()
 	g.indent++
+	if cond.kind == .is_expr {
+		g.smartcast_is_expr(cond)
+	}
 	then_block := g.a.child_node(&node, 1)
 	for i in 0 .. then_block.children_count {
 		g.gen_node(g.a.child(then_block, i))
@@ -32,15 +35,19 @@ fn (mut g FlatGen) smartcast_is_expr(cond &flat.Node) {
 	expr_node := g.a.nodes[int(expr_id)]
 	if expr_node.kind == .ident {
 		sum_type := g.tc.resolve_type(expr_id)
-		clean_sum := types.unwrap_pointer(sum_type)
+		mut clean_sum := types.unwrap_pointer(sum_type)
+		if clean_sum is types.Alias {
+			clean_sum = clean_sum.base_type
+		}
 		if clean_sum is types.SumType {
-			variant_type := g.tc.parse_type(cond.value)
+			variant_name := g.resolve_variant(clean_sum.name, cond.value)
+			variant_type := g.tc.parse_type(variant_name)
 			if variant_type is types.Void {
 				return
 			}
 			variant_ct := g.tc.c_type(variant_type)
-			field_name := g.sum_field_name(cond.value)
-			is_ptr_variant := g.variant_references_sum(cond.value, clean_sum.name)
+			field_name := g.sum_field_name(variant_name)
+			is_ptr_variant := g.variant_references_sum(variant_name, clean_sum.name)
 			var_name := c_name(expr_node.value)
 			tmp := g.tmp_name()
 			if is_ptr_variant {
@@ -219,41 +226,65 @@ fn (mut g FlatGen) gen_if_expr_block(block &flat.Node) {
 	}
 }
 
-fn (mut g FlatGen) gen_if_expr_stmt(node flat.Node) {
-	then_block := g.a.child_node(&node, 1)
-	last := g.a.child_node(then_block, then_block.children_count - 1)
-	mut ret_type := if last.kind == .expr_stmt {
+fn (mut g FlatGen) seed_scope_from_decl(node flat.Node) {
+	if node.kind != .decl_assign || node.children_count < 2 {
+		return
+	}
+	lhs := g.a.child_node(&node, 0)
+	if lhs.kind != .ident || lhs.value.len == 0 {
+		return
+	}
+	rhs_id := g.a.child(&node, 1)
+	g.tc.cur_scope.insert(lhs.value, g.tc.resolve_type(rhs_id))
+}
+
+fn (mut g FlatGen) if_expr_block_tail_type(block &flat.Node) types.Type {
+	if block.children_count == 0 {
+		return types.Type(types.void_)
+	}
+	g.tc.push_scope()
+	for i in 0 .. block.children_count - 1 {
+		g.seed_scope_from_decl(*g.a.child_node(block, i))
+	}
+	last := g.a.child_node(block, block.children_count - 1)
+	ret := if last.kind == .expr_stmt {
 		g.tc.resolve_type(g.a.child(last, 0))
 	} else {
-		g.tc.resolve_type(g.a.child(then_block, then_block.children_count - 1))
+		g.tc.resolve_type(g.a.child(block, block.children_count - 1))
 	}
+	g.tc.pop_scope()
+	return ret
+}
+
+fn (mut g FlatGen) if_expr_type(node &flat.Node) types.Type {
+	if node.children_count < 2 {
+		return types.Type(types.void_)
+	}
+	then_block := g.a.child_node(node, 1)
+	mut ret_type := g.if_expr_block_tail_type(then_block)
 	if ret_type is types.Primitive && node.children_count > 2 {
-		else_node := g.a.child_node(&node, 2)
+		else_node := g.a.child_node(node, 2)
 		if else_node.kind == .block && else_node.children_count > 0 {
-			el := g.a.child_node(else_node, else_node.children_count - 1)
-			et := if el.kind == .expr_stmt {
-				g.tc.resolve_type(g.a.child(el, 0))
-			} else {
-				g.tc.resolve_type(g.a.child(else_node, else_node.children_count - 1))
-			}
+			et := g.if_expr_block_tail_type(else_node)
 			if et !is types.Primitive {
 				ret_type = et
 			}
 		} else if else_node.kind == .if_expr && else_node.children_count > 2 {
 			inner_else := g.a.child_node(else_node, 2)
 			if inner_else.kind == .block && inner_else.children_count > 0 {
-				el := g.a.child_node(inner_else, inner_else.children_count - 1)
-				et := if el.kind == .expr_stmt {
-					g.tc.resolve_type(g.a.child(el, 0))
-				} else {
-					g.tc.resolve_type(g.a.child(inner_else, inner_else.children_count - 1))
-				}
+				et := g.if_expr_block_tail_type(inner_else)
 				if et !is types.Primitive {
 					ret_type = et
 				}
 			}
 		}
 	}
+	return ret_type
+}
+
+fn (mut g FlatGen) gen_if_expr_stmt(node flat.Node) {
+	ret_type := g.if_expr_type(&node)
+	then_block := g.a.child_node(&node, 1)
 	ct := g.tc.c_type(ret_type)
 	g.writeln('({${ct} _ifexpr;')
 	g.write('if (')

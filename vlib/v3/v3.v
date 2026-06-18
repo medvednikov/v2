@@ -26,6 +26,7 @@ fn main() {
 	mut is_prod := false
 	mut is_selfhost := false
 	mut is_strict := false
+	mut no_parallel := false
 	mut i := 0
 	for i < args.len {
 		if args[i] == '-o' && i + 1 < args.len {
@@ -42,6 +43,9 @@ fn main() {
 			i++
 		} else if args[i] == '-strict' {
 			is_strict = true
+			i++
+		} else if args[i] == '-no-parallel' || args[i] == '--no-parallel' {
+			no_parallel = true
 			i++
 		} else {
 			input_file = args[i]
@@ -127,7 +131,7 @@ fn main() {
 
 	tc.check_semantics()
 	if tc.errors.len > 0 {
-		if is_selfhost {
+		if is_selfhost || is_strict {
 			print_type_errors(tc.errors)
 			exit(1)
 		}
@@ -156,7 +160,7 @@ fn main() {
 	} else {
 		// C backend (default)
 		mut g := cgen.FlatGen.new()
-		c_code := g.gen_with_used(a, used_fns, tc)
+		c_code := g.gen_with_used_options(a, used_fns, tc, no_parallel)
 		b.step('gen C')
 
 		os.write_file(output_file, c_code) or {

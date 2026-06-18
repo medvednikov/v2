@@ -1,6 +1,7 @@
 module types
 
 pub type Type = Void
+	| Unknown
 	| Primitive
 	| String
 	| Char
@@ -17,6 +18,7 @@ pub type Type = Void
 	| OptionType
 	| ResultType
 	| Struct
+	| Interface
 	| Enum
 	| SumType
 	| Alias
@@ -24,6 +26,11 @@ pub type Type = Void
 
 pub struct Void {
 	dummy_ u8
+}
+
+pub struct Unknown {
+pub:
+	reason string
 }
 
 pub struct String {
@@ -112,6 +119,11 @@ pub:
 	name string
 }
 
+pub struct Interface {
+pub:
+	name string
+}
+
 pub struct Enum {
 pub:
 	name    string
@@ -173,6 +185,9 @@ pub fn (t Type) name() string {
 	if t is Void {
 		return 'void'
 	}
+	if t is Unknown {
+		return 'unknown'
+	}
 	if t is Nil {
 		return 'nil'
 	}
@@ -230,6 +245,9 @@ pub fn (t Type) name() string {
 		return '!${t.base_type.name()}'
 	}
 	if t is Struct {
+		return t.name
+	}
+	if t is Interface {
 		return t.name
 	}
 	if t is Enum {

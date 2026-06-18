@@ -10,24 +10,7 @@ fn (mut g FlatGen) gen_fns() {
 			continue
 		}
 		if node.kind == .fn_decl {
-			if g.has_builtins && i < g.a.user_code_start {
-				continue
-			}
-			dfn := g.dotted_fn_name(node.value)
-			if g.used_fns.len > 0 && node.value !in g.used_fns && dfn !in g.used_fns {
-				continue
-			}
-			if g.has_generic_params(node) {
-				continue
-			}
-			if g.tc.cur_module == 'strings'
-				&& node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
-				continue
-			}
-			if g.is_runtime_provided_fn(node.value) {
-				continue
-			}
-			if node.value.starts_with('Gen.') && g.tc.cur_module == 'c' {
+			if !g.should_emit_fn_node(node, i) {
 				continue
 			}
 			qfn := g.qualified_fn_name(node.value)
@@ -38,6 +21,29 @@ fn (mut g FlatGen) gen_fns() {
 			g.gen_fn(node)
 		}
 	}
+}
+
+fn (mut g FlatGen) should_emit_fn_node(node flat.Node, node_index int) bool {
+	if g.has_builtins && node_index < g.a.user_code_start {
+		return false
+	}
+	dfn := g.dotted_fn_name(node.value)
+	if g.used_fns.len > 0 && node.value !in g.used_fns && dfn !in g.used_fns {
+		return false
+	}
+	if g.has_generic_params(node) {
+		return false
+	}
+	if g.is_runtime_provided_strings_fn(node.value) {
+		return false
+	}
+	if g.is_runtime_provided_fn(node.value) {
+		return false
+	}
+	if node.value.starts_with('Gen.') && g.tc.cur_module == 'c' {
+		return false
+	}
+	return true
 }
 
 fn (g &FlatGen) qualified_fn_name(name string) string {
@@ -57,6 +63,19 @@ fn (g &FlatGen) dotted_fn_name(name string) string {
 fn (g &FlatGen) is_runtime_provided_fn(name string) bool {
 	return g.has_builtins && ((g.tc.cur_module == 'os' && name == 'getwd')
 		|| (g.tc.cur_module == 'strconv' && name in ['f32_to_str_l', 'f64_to_str_l']))
+}
+
+fn (g &FlatGen) is_runtime_provided_strings_fn(name string) bool {
+	if g.tc.cur_module != 'strings' {
+		return false
+	}
+	if g.has_builtins && (name == 'new_builder' || name.starts_with('Builder.')) {
+		return true
+	}
+	return name in ['new_builder', 'Builder.write_string', 'Builder.writeln', 'Builder.str',
+		'Builder.write_ptr', 'Builder.write_u8', 'Builder.write_runes', 'Builder.ensure_cap',
+		'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at',
+		'Builder.drain_builder', 'Builder.indent']
 }
 
 fn (mut g FlatGen) gen_fn(node flat.Node) {
@@ -674,7 +693,11 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					if needs_addr {
 						g.write('&')
 					}
-					g.gen_expr(arg_id)
+					emitted_variant := !needs_addr && !is_c_call && arg_idx < param_types.len
+						&& g.gen_sum_variant_arg(arg_id, param_types[arg_idx])
+					if !emitted_variant {
+						g.gen_expr(arg_id)
+					}
 				}
 				g.expected_enum = ''
 			}
@@ -771,7 +794,11 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			if needs_addr {
 				g.write('&')
 			}
-			g.gen_expr(arg_id)
+			emitted_variant := !needs_addr && arg_idx < param_types.len
+				&& g.gen_sum_variant_arg(arg_id, param_types[arg_idx])
+			if !emitted_variant {
+				g.gen_expr(arg_id)
+			}
 		}
 		if variadic_idx >= 0 && num_args == variadic_idx {
 			if node.children_count > start {
@@ -901,6 +928,12 @@ fn (g &FlatGen) find_alias_method(target string, method string) ?string {
 		}
 		alias_method := '${alias}.${method}'
 		if alias_method !in g.tc.fn_param_types {
+			if alias.contains('.') {
+				short_method := '${alias.all_after_last('.')}.${method}'
+				if short_method in g.tc.fn_param_types {
+					return alias_method
+				}
+			}
 			continue
 		}
 		if alias.contains('.') {
@@ -914,6 +947,43 @@ fn (g &FlatGen) find_alias_method(target string, method string) ?string {
 		return fallback
 	}
 	return none
+}
+
+fn (mut g FlatGen) gen_sum_variant_arg(arg_id flat.NodeId, expected types.Type) bool {
+	mut actual := types.unwrap_pointer(g.tc.resolve_type(arg_id))
+	if actual is types.Alias {
+		actual = actual.base_type
+	}
+	mut expected_type := expected
+	if expected_type is types.Alias {
+		expected_type = expected_type.base_type
+	}
+	if actual !is types.SumType || expected_type is types.SumType {
+		return false
+	}
+	sum_type := actual as types.SumType
+	sum_name := sum_type.name
+	variant := g.resolve_variant(sum_name, expected_type.name())
+	variants := g.tc.sum_types[sum_name] or { return false }
+	if variant !in variants {
+		return false
+	}
+	is_ptr_arg := g.tc.resolve_type(arg_id) is types.Pointer
+	is_ref_variant := g.variant_references_sum(variant, sum_name)
+	if is_ref_variant {
+		g.write('(*')
+	}
+	g.gen_expr(arg_id)
+	if is_ptr_arg {
+		g.write('->')
+	} else {
+		g.write('.')
+	}
+	g.write(g.sum_field_name(variant))
+	if is_ref_variant {
+		g.write(')')
+	}
+	return true
 }
 
 fn (mut g FlatGen) forward_decls() {
@@ -933,8 +1003,7 @@ fn (mut g FlatGen) forward_decls() {
 			if g.has_generic_params(node) {
 				continue
 			}
-			if g.tc.cur_module == 'strings'
-				&& node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
+			if g.is_runtime_provided_strings_fn(node.value) {
 				continue
 			}
 			if g.is_runtime_provided_fn(node.value) {

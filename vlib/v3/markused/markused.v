@@ -84,6 +84,9 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	mut queue := []string{}
 	queue << 'main'
 	used['main'] = true
+	queue << 'time.Time.new'
+	used['time.Time.new'] = true
+	used['Time.new'] = true
 
 	if trace_markused {
 		eprintln('markused: fn_count:')
@@ -251,7 +254,8 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 			.call {
 				if resolved := c.tc.resolved_calls[int(child_id)] {
 					calls << resolved
-				} else if child.children_count > 0 {
+				}
+				if child.children_count > 0 {
 					callee_id := c.a.child(child, 0)
 					if int(callee_id) >= 0 {
 						callee := c.a.nodes[int(callee_id)]
@@ -281,6 +285,16 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 											base.value
 										}
 										calls << mod_name + '.' + callee.value
+										calls << qualify_fn(cur_module, base.value + '.' +
+											callee.value)
+										if base.value.len > 0 && base.value[0] >= `A`
+											&& base.value[0] <= `Z` {
+											named_type := c.tc.parse_type(base.value)
+											named_type_name := resolve_type_name(named_type)
+											if named_type_name.len > 0 {
+												calls << named_type_name + '.' + callee.value
+											}
+										}
 									} else if base.kind == .selector && base.children_count > 0 {
 										inner_id := c.a.child(&base, 0)
 										if int(inner_id) >= 0 {
@@ -400,6 +414,8 @@ fn resolve_type_name(t types.Type) string {
 	if t is types.Alias {
 		return t.name
 	} else if t is types.Struct {
+		return t.name
+	} else if t is types.Interface {
 		return t.name
 	} else if t is types.String {
 		return 'string'

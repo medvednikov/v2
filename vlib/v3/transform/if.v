@@ -61,7 +61,10 @@ fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]f
 			t.make_block(t.transform_stmt(else_id))
 		}
 	}
-	return [tmp_decl, t.make_if(ok_cond, then_block, else_block)]
+	mut expanded := []flat.NodeId{cap: 2}
+	expanded << tmp_decl
+	expanded << t.make_if(ok_cond, then_block, else_block)
+	return expanded
 }
 
 // try_expand_if_expr_value detects an if-expression used as a value and

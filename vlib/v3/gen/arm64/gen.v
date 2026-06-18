@@ -65,11 +65,11 @@ fn (mut g Gen) gen_post_pass() {
 
 	cstring_base := u64(g.macho.text_data.len)
 	data_base := (cstring_base + u64(g.macho.str_data.len) + 7) & ~u64(7)
-	for mut sym in g.macho.symbols {
-		if sym.sect == 2 {
-			sym.value += cstring_base
-		} else if sym.sect == 3 {
-			sym.value += data_base
+	for i in 0 .. g.macho.symbols.len {
+		if g.macho.symbols[i].sect == 2 {
+			g.macho.symbols[i].value += cstring_base
+		} else if g.macho.symbols[i].sect == 3 {
+			g.macho.symbols[i].value += data_base
 		}
 	}
 }
@@ -144,7 +144,8 @@ fn (mut g Gen) gen_func(func_idx int) {
 			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp {
 				g.stack_map[val_id] = -slot_offset
 				result_size := g.m.type_size(val.typ)
-				if result_size > 8 && val.typ > 0 && val.typ < g.m.type_store.types.len && g.m.type_store.types[val.typ].kind == .struct_t {
+				if result_size > 8 && val.typ > 0 && val.typ < g.m.type_store.types.len
+					&& g.m.type_store.types[val.typ].kind == .struct_t {
 					slot_offset += (result_size + 7) & ~7
 				} else {
 					slot_offset += 8
@@ -237,7 +238,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.emit32(asm_str_imm(Reg(10), Reg(ptr_reg), 1))
 			} else {
 				src_size := g.m.type_size(src_val.typ)
-				if src_size > 8 && src_val.typ > 0 && src_val.typ < g.m.type_store.types.len && g.m.type_store.types[src_val.typ].kind == .struct_t {
+				if src_size > 8 && src_val.typ > 0 && src_val.typ < g.m.type_store.types.len
+					&& g.m.type_store.types[src_val.typ].kind == .struct_t {
 					if src_off := g.stack_map[src_id] {
 						ptr_reg := g.load_val(ptr_id, 9)
 						n_words := (src_size + 7) / 8
@@ -387,7 +389,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 					g.emit32(asm_mov_reg(Reg(1), Reg(10)))
 				} else {
 					ret_size := g.m.type_size(ret_val.typ)
-					if ret_size > 8 && ret_val.typ > 0 && ret_val.typ < g.m.type_store.types.len && g.m.type_store.types[ret_val.typ].kind == .struct_t {
+					if ret_size > 8 && ret_val.typ > 0 && ret_val.typ < g.m.type_store.types.len
+						&& g.m.type_store.types[ret_val.typ].kind == .struct_t {
 						if off := g.stack_map[ret_id] {
 							n_words := (ret_size + 7) / 8
 							for wi in 0 .. n_words {
@@ -669,7 +672,8 @@ fn (mut g Gen) resolve_pending_jmps(blk_id int) {
 
 fn (mut g Gen) resolve_all_pending() {
 	for pj in g.pending_jmps {
-		if pj.block_id >= 0 && pj.block_id < g.block_offsets.len && g.block_offsets[pj.block_id] >= 0 {
+		if pj.block_id >= 0 && pj.block_id < g.block_offsets.len
+			&& g.block_offsets[pj.block_id] >= 0 {
 			offset := (g.block_offsets[pj.block_id] - pj.text_pos) / 4
 			g.patch_branch(pj.text_pos, offset)
 		}
@@ -681,23 +685,20 @@ fn (mut g Gen) patch_branch(text_pos int, offset int) {
 	existing := binary.little_endian_u32(g.macho.text_data[text_pos..text_pos + 4])
 	opcode := existing & 0xFC000000
 	imm26 := u32(offset) & 0x03FFFFFF
-	mut bytes := [u8(0), 0, 0, 0]
-	binary.little_endian_put_u32(mut bytes, opcode | imm26)
-	g.macho.text_data[text_pos] = bytes[0]
-	g.macho.text_data[text_pos + 1] = bytes[1]
-	g.macho.text_data[text_pos + 2] = bytes[2]
-	g.macho.text_data[text_pos + 3] = bytes[3]
+	patched := opcode | imm26
+	g.macho.text_data[text_pos] = u8(patched)
+	g.macho.text_data[text_pos + 1] = u8(patched >> 8)
+	g.macho.text_data[text_pos + 2] = u8(patched >> 16)
+	g.macho.text_data[text_pos + 3] = u8(patched >> 24)
 }
 
 // ==================== Low-level emission helpers ====================
 
 fn (mut g Gen) emit32(instr u32) {
-	mut bytes := [u8(0), 0, 0, 0]
-	binary.little_endian_put_u32(mut bytes, instr)
-	g.macho.text_data << bytes[0]
-	g.macho.text_data << bytes[1]
-	g.macho.text_data << bytes[2]
-	g.macho.text_data << bytes[3]
+	g.macho.text_data << u8(instr)
+	g.macho.text_data << u8(instr >> 8)
+	g.macho.text_data << u8(instr >> 16)
+	g.macho.text_data << u8(instr >> 24)
 }
 
 fn (mut g Gen) emit_mov_imm(reg int, val i64) {

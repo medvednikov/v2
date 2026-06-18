@@ -9,7 +9,7 @@ fn (t &Transformer) resolve_call_name(node flat.Node) string {
 	if node.children_count == 0 {
 		return ''
 	}
-	fn_id := t.a.child(&node, 0)
+	fn_id := t.a.children[node.children_start]
 	if int(fn_id) < 0 {
 		return ''
 	}
@@ -32,7 +32,7 @@ fn (t &Transformer) resolve_call_name(node flat.Node) string {
 		}
 		.selector {
 			if fn_node.children_count > 0 {
-				base_id := t.a.child(&fn_node, 0)
+				base_id := t.a.children[fn_node.children_start]
 				base := t.a.nodes[int(base_id)]
 				if base.kind == .ident {
 					full := '${base.value}.${fn_node.value}'
@@ -101,7 +101,7 @@ fn (t &Transformer) resolve_method_receiver_type(call_node flat.Node) string {
 	if call_node.children_count == 0 {
 		return ''
 	}
-	fn_id := t.a.child(&call_node, 0)
+	fn_id := t.a.children[call_node.children_start]
 	if int(fn_id) < 0 {
 		return ''
 	}
@@ -109,7 +109,7 @@ fn (t &Transformer) resolve_method_receiver_type(call_node flat.Node) string {
 	if fn_node.kind != .selector || fn_node.children_count == 0 {
 		return ''
 	}
-	base_id := t.a.child(&fn_node, 0)
+	base_id := t.a.children[fn_node.children_start]
 	return t.resolve_expr_type(base_id)
 }
 
@@ -129,7 +129,7 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 	param_types := t.fn_param_types[call_name] or { []string{} }
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
-		child_id := t.a.child(&node, i)
+		child_id := t.a.children[node.children_start + i]
 		if i > 0 && i - 1 < param_types.len {
 			mut child := &t.a.nodes[int(child_id)]
 			if child.kind == .array_literal && child.typ.len == 0
@@ -383,13 +383,13 @@ fn (mut t Transformer) try_lower_flag_enum_stmt(call_id flat.NodeId) ?flat.NodeI
 	if call.kind != .call || call.children_count < 2 {
 		return none
 	}
-	fn_id := t.a.child(&call, 0)
+	fn_id := t.a.children[call.children_start]
 	fn_node := t.a.nodes[int(fn_id)]
 	if fn_node.kind != .selector || fn_node.children_count == 0
 		|| fn_node.value !in ['set', 'clear'] {
 		return none
 	}
-	base_id := t.a.child(&fn_node, 0)
+	base_id := t.a.children[fn_node.children_start]
 	if t.is_runtime_array_flags_selector(base_id) {
 		return none
 	}
@@ -398,7 +398,7 @@ fn (mut t Transformer) try_lower_flag_enum_stmt(call_id flat.NodeId) ?flat.NodeI
 		return none
 	}
 	base := t.transform_expr(base_id)
-	arg := t.transform_expr(t.a.child(&call, 1))
+	arg := t.transform_expr(t.a.children[call.children_start + 1])
 	if fn_node.value == 'set' {
 		return t.make_assign_op(base, arg, .pipe_assign)
 	}
@@ -409,12 +409,12 @@ fn (mut t Transformer) try_lower_flag_enum_call(node flat.Node) ?flat.NodeId {
 	if node.children_count < 2 {
 		return none
 	}
-	fn_id := t.a.child(&node, 0)
+	fn_id := t.a.children[node.children_start]
 	fn_node := t.a.nodes[int(fn_id)]
 	if fn_node.kind != .selector || fn_node.children_count == 0 || fn_node.value !in ['has', 'all'] {
 		return none
 	}
-	base_id := t.a.child(&fn_node, 0)
+	base_id := t.a.children[fn_node.children_start]
 	if t.is_runtime_array_flags_selector(base_id) {
 		return none
 	}
@@ -423,7 +423,7 @@ fn (mut t Transformer) try_lower_flag_enum_call(node flat.Node) ?flat.NodeId {
 		return none
 	}
 	base := t.transform_expr(base_id)
-	arg_id := t.a.child(&node, 1)
+	arg_id := t.a.children[node.children_start + 1]
 	arg := t.transform_expr(arg_id)
 	masked := t.make_infix(.amp, base, arg)
 	if fn_node.value == 'has' {
@@ -437,12 +437,15 @@ fn (mut t Transformer) try_lower_array_method_call(node flat.Node) ?flat.NodeId 
 	if node.children_count == 0 {
 		return none
 	}
-	fn_id := t.a.child(&node, 0)
+	fn_id := t.a.children[node.children_start]
 	fn_node := t.a.nodes[int(fn_id)]
 	if fn_node.kind != .selector || fn_node.children_count == 0 {
 		return none
 	}
-	base_id := t.a.child(&fn_node, 0)
+	if fn_node.value !in ['clone', 'contains', 'index', 'join'] {
+		return none
+	}
+	base_id := t.a.children[fn_node.children_start]
 	base_type := t.node_type(base_id)
 	if !base_type.starts_with('[]') {
 		return none
@@ -457,7 +460,7 @@ fn (mut t Transformer) try_lower_array_method_call(node flat.Node) ?flat.NodeId 
 			if node.children_count < 2 {
 				return none
 			}
-			arg := t.transform_expr(t.a.child(&node, 1))
+			arg := t.transform_expr(t.a.children[node.children_start + 1])
 			fn_name := if elem_type == 'string' {
 				'array_contains_string'
 			} else {
@@ -469,7 +472,7 @@ fn (mut t Transformer) try_lower_array_method_call(node flat.Node) ?flat.NodeId 
 			if node.children_count < 2 {
 				return none
 			}
-			arg := t.transform_expr(t.a.child(&node, 1))
+			arg := t.transform_expr(t.a.children[node.children_start + 1])
 			fn_name := if elem_type == 'string' { 'array_index_string' } else { 'array_index_int' }
 			return t.make_call_typed(fn_name, arr2(receiver, arg), 'int')
 		}
@@ -477,7 +480,7 @@ fn (mut t Transformer) try_lower_array_method_call(node flat.Node) ?flat.NodeId 
 			if node.children_count < 2 {
 				return none
 			}
-			arg := t.transform_expr(t.a.child(&node, 1))
+			arg := t.transform_expr(t.a.children[node.children_start + 1])
 			return t.make_call_typed('array_string_join', arr2(receiver, arg), 'string')
 		}
 		else {
@@ -489,8 +492,7 @@ fn (mut t Transformer) try_lower_array_method_call(node flat.Node) ?flat.NodeId 
 // try_lower_builtin_call checks if a call is to a builtin that needs special lowering.
 // Returns none for most calls so the caller falls through to generic call transform.
 fn (mut t Transformer) try_lower_builtin_call(_id flat.NodeId, node flat.Node) ?flat.NodeId {
-	name := t.resolve_call_name(node)
-	if name.len == 0 {
+	if node.children_count == 0 {
 		return none
 	}
 	if flag_call := t.try_lower_flag_enum_call(node) {
@@ -499,6 +501,15 @@ fn (mut t Transformer) try_lower_builtin_call(_id flat.NodeId, node flat.Node) ?
 	if array_call := t.try_lower_array_method_call(node) {
 		return array_call
 	}
+	fn_id := t.a.children[node.children_start]
+	if int(fn_id) < 0 {
+		return none
+	}
+	fn_node := t.a.nodes[int(fn_id)]
+	if fn_node.kind != .ident {
+		return none
+	}
+	name := fn_node.value
 	match name {
 		'println', 'eprintln', 'print' {
 			if node.children_count < 2 {
@@ -525,7 +536,7 @@ fn (mut t Transformer) is_method_call(node flat.Node) bool {
 	if node.children_count == 0 {
 		return false
 	}
-	fn_id := t.a.child(&node, 0)
+	fn_id := t.a.children[node.children_start]
 	if int(fn_id) < 0 {
 		return false
 	}

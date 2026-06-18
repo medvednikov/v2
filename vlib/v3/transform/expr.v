@@ -13,8 +13,8 @@ fn (mut t Transformer) transform_infix_string_ops(_id flat.NodeId, node flat.Nod
 		}
 	}
 
-	lhs_id := t.a.child(&node, 0)
-	rhs_id := t.a.child(&node, 1)
+	lhs_id := t.a.children[node.children_start]
+	rhs_id := t.a.children[node.children_start + 1]
 
 	is_string := t.is_string_type(lhs_id) || t.is_string_type(rhs_id)
 
@@ -96,7 +96,7 @@ fn (mut t Transformer) transform_infix_struct_ops(_id flat.NodeId, node flat.Nod
 	if op_name.len == 0 || node.children_count < 2 {
 		return none
 	}
-	lhs_id := t.a.child(&node, 0)
+	lhs_id := t.a.children[node.children_start]
 	mut lhs_type := t.node_type(lhs_id)
 	if lhs_type.starts_with('&') {
 		return none
@@ -111,13 +111,13 @@ fn (mut t Transformer) transform_infix_struct_ops(_id flat.NodeId, node flat.Nod
 			return none
 		}
 		lhs := t.stable_expr_for_reuse(lhs_id)
-		rhs := t.stable_expr_for_reuse(t.a.child(&node, 1))
+		rhs := t.stable_expr_for_reuse(t.a.children[node.children_start + 1])
 		cmp := t.make_call_typed('memcmp', arr3(t.make_prefix(.amp, lhs), t.make_prefix(.amp, rhs),
 			t.make_sizeof_type(struct_type)), 'int')
 		return t.make_infix(node.op, cmp, t.make_int_literal(0))
 	}
 	new_lhs := t.transform_expr(lhs_id)
-	new_rhs := t.transform_expr(t.a.child(&node, 1))
+	new_rhs := t.transform_expr(t.a.children[node.children_start + 1])
 	return t.make_call(method_name, arr2(new_lhs, new_rhs))
 }
 
@@ -148,8 +148,8 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 	if node.children_count < 2 {
 		return id
 	}
-	lhs_id := t.a.child(&node, 0)
-	rhs_id := t.a.child(&node, 1)
+	lhs_id := t.a.children[node.children_start]
+	rhs_id := t.a.children[node.children_start + 1]
 	rhs := t.a.nodes[int(rhs_id)]
 
 	is_not_in := node.value == '!in'
@@ -158,8 +158,8 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 		// x in low..high  ->  x >= low && x < high
 		if rhs.children_count >= 2 {
 			new_lhs := t.stable_expr_for_reuse(lhs_id)
-			low_id := t.a.child(&rhs, 0)
-			high_id := t.a.child(&rhs, 1)
+			low_id := t.a.children[rhs.children_start]
+			high_id := t.a.children[rhs.children_start + 1]
 			new_low := t.transform_expr(low_id)
 			new_high := t.transform_expr(high_id)
 
@@ -178,7 +178,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			is_str := t.is_string_type(lhs_id)
 			mut or_chain := flat.empty_node
 			for i in 0 .. rhs.children_count {
-				elem_id := t.a.child(&rhs, i)
+				elem_id := t.a.children[rhs.children_start + i]
 				new_elem := t.transform_expr(elem_id)
 				eq_cmp := if is_str {
 					t.make_call('string__eq', arr2(new_lhs, new_elem))
@@ -277,11 +277,12 @@ fn (t &Transformer) is_stable_expr_for_reuse(id flat.NodeId) bool {
 			true
 		}
 		.selector {
-			node.children_count > 0 && t.is_stable_expr_for_reuse(t.a.child(&node, 0))
+			node.children_count > 0 && t.is_stable_expr_for_reuse(t.a.children[node.children_start])
 		}
 		.index {
-			node.children_count >= 2 && t.is_stable_expr_for_reuse(t.a.child(&node, 0))
-				&& t.is_stable_expr_for_reuse(t.a.child(&node, 1))
+			node.children_count >= 2
+				&& t.is_stable_expr_for_reuse(t.a.children[node.children_start])
+				&& t.is_stable_expr_for_reuse(t.a.children[node.children_start + 1])
 		}
 		else {
 			false
@@ -293,7 +294,7 @@ fn (mut t Transformer) transform_fixed_array_len(_id flat.NodeId, node flat.Node
 	if node.value != 'len' || node.children_count == 0 {
 		return none
 	}
-	base_id := t.a.child(&node, 0)
+	base_id := t.a.children[node.children_start]
 	base_type := t.node_type(base_id)
 	if !is_fixed_array_type(base_type) {
 		return none
