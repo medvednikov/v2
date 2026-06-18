@@ -16,7 +16,8 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 				return
 			}
 			if child.kind == .or_expr {
-				panic('internal error: or expression statement reached C backend after transform')
+				g.gen_or_expr_stmt(child)
+				return
 			} else if child.kind == .infix && child.op == .left_shift {
 				lhs_id := g.a.child(&child, 0)
 				lhs_is_ptr := g.tc.resolve_type(lhs_id) is types.Pointer
@@ -309,7 +310,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 				}))
 			}
 		} else if rhs.kind == .or_expr {
-			panic('internal error: or declaration reached C backend after transform')
+			g.gen_decl_or_expr(lhs, rhs)
 		} else if rhs.kind == .array_init {
 			init_type := g.tc.parse_type(rhs.value)
 			if init_type is types.ArrayFixed {
@@ -375,7 +376,12 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			}
 		} else {
 			v_type := g.tc.resolve_type(rhs_id)
-			ct := g.tc.c_type(v_type)
+			ct0 := g.tc.c_type(v_type)
+			ct := if v_type is types.OptionType || v_type is types.ResultType {
+				g.optional_type_name(v_type)
+			} else {
+				ct0
+			}
 			if ct.starts_with('fn_ptr:') {
 				fp_name := g.resolve_fn_ptr_type(ct)
 				g.write('${fp_name} ')
@@ -462,7 +468,9 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 			rhs_id := g.a.child(&node, i + 1)
 			rhs_node := g.a.nodes[int(rhs_id)]
 			if rhs_node.kind == .or_expr {
-				panic('internal error: or assignment reached C backend after transform')
+				g.gen_assign_or_expr(node, i, rhs_node)
+				i += 2
+				continue
 			}
 			if rhs_node.kind == .array_literal && rhs_node.children_count > 0 {
 				elem_type := g.tc.resolve_type(g.a.child(&rhs_node, 0))

@@ -190,11 +190,14 @@ fn (mut t Transformer) lower_range_for_in(id flat.NodeId, node flat.Node, key_id
 	t.var_types[key.value] = 'int'
 	low := t.transform_expr(low_id)
 	high := t.stable_expr_for_reuse(high_id)
+	mut prefix := []flat.NodeId{}
+	t.drain_pending(mut prefix)
 	init := t.make_decl_assign_typed(key.value, low, 'int')
 	cond := t.make_infix(.lt, t.make_ident(key.value), high)
 	post := t.make_expr_stmt(t.make_postfix(t.make_ident(key.value), .inc))
 	new_body := t.transform_stmts(body_ids)
-	return arr1(t.make_for_stmt(init, cond, post, new_body, node))
+	prefix << t.make_for_stmt(init, cond, post, new_body, node)
+	return prefix
 }
 
 fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_id flat.NodeId, val_id flat.NodeId, container_id flat.NodeId, iter_type string, has_index bool, body_ids []flat.NodeId) []flat.NodeId {
@@ -229,6 +232,8 @@ fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_
 	t.var_types[idx_name] = 'int'
 	t.var_types[elem_name] = elem_type
 	container := t.stable_expr_for_reuse(container_id)
+	mut prefix := []flat.NodeId{}
+	t.drain_pending(mut prefix)
 	len_expr := if is_fixed_array_type(iter_type) {
 		t.make_int_literal(fixed_array_len(iter_type))
 	} else {
@@ -242,7 +247,8 @@ fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_
 	mut new_body := []flat.NodeId{}
 	new_body << elem_decl
 	new_body << t.transform_stmts(body_ids)
-	return arr1(t.make_for_stmt(init, cond, post, new_body, node))
+	prefix << t.make_for_stmt(init, cond, post, new_body, node)
+	return prefix
 }
 
 fn (mut t Transformer) make_for_stmt(init flat.NodeId, cond flat.NodeId, post flat.NodeId, body []flat.NodeId, src flat.Node) flat.NodeId {

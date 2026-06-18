@@ -3,11 +3,8 @@ module transform
 import v3.flat
 
 fn (mut t Transformer) make_array_new_call(elem_type string, len_expr flat.NodeId, cap_expr flat.NodeId) flat.NodeId {
-	return t.make_call_typed('array_new', [
-		t.make_sizeof_type(elem_type),
-		len_expr,
-		cap_expr,
-	], '[]${elem_type}')
+	return t.make_call_typed('array_new', arr3(t.make_sizeof_type(elem_type), len_expr, cap_expr),
+		'[]${elem_type}')
 }
 
 fn (mut t Transformer) lower_array_init_to_runtime(id flat.NodeId, node flat.Node) flat.NodeId {
@@ -61,10 +58,8 @@ fn (mut t Transformer) lower_array_literal_to_runtime(id flat.NodeId, node flat.
 		value_name := t.new_temp('arr_val')
 		t.pending_stmts << t.make_decl_assign_typed(value_name,
 			t.transform_expr(t.a.child(&node, i)), elem_type)
-		call := t.make_call_typed('array_push', [
-			t.make_prefix(.amp, t.make_ident(tmp_name)),
-			t.make_prefix(.amp, t.make_ident(value_name)),
-		], 'void')
+		call := t.make_call_typed('array_push', arr2(t.make_prefix(.amp, t.make_ident(tmp_name)), t.make_prefix(.amp,
+			t.make_ident(value_name))), 'void')
 		t.pending_stmts << t.make_expr_stmt(call)
 	}
 	return t.make_ident(tmp_name)

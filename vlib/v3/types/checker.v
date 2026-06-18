@@ -135,6 +135,9 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 					tc.sum_types[tc.qualify_name(node.value)] = variants
 				} else if node.typ.len > 0 {
 					tc.type_aliases[tc.qualify_name(node.value)] = node.typ
+					if node.value !in tc.type_aliases {
+						tc.type_aliases[node.value] = node.typ
+					}
 				}
 			}
 			.interface_decl {
@@ -1059,11 +1062,15 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			if fn_node.kind == .selector {
 				base_node := tc.a.child_node(fn_node, 0)
 				if base_node.kind == .ident && base_node.value == 'C' {
+					c_fn_name := 'C.${fn_node.value}'
+					if c_fn_name in tc.fn_ret_types {
+						return tc.fn_ret_types[c_fn_name] or { Type(int_) }
+					}
 					if fn_node.value in tc.fn_ret_types {
 						return tc.fn_ret_types[fn_node.value] or { Type(int_) }
 					}
 					return Type(Struct{
-						name: 'C.${fn_node.value}'
+						name: c_fn_name
 					})
 				}
 				if base_node.kind == .ident {
@@ -1436,6 +1443,25 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		}
 		.is_expr {
 			return Type(bool_)
+		}
+		.match_stmt {
+			for i in 0 .. node.children_count {
+				branch_id := tc.a.child(&node, i)
+				branch := tc.a.nodes[int(branch_id)]
+				if branch.kind == .match_branch && branch.children_count > 0 {
+					last_id := tc.a.child(&branch, branch.children_count - 1)
+					last := tc.a.nodes[int(last_id)]
+					t := if last.kind == .expr_stmt {
+						tc.resolve_type(tc.a.child(&last, 0))
+					} else {
+						tc.resolve_type(last_id)
+					}
+					if t !is Void {
+						return t
+					}
+				}
+			}
+			return Type(int_)
 		}
 		else {
 			$if debug {

@@ -306,12 +306,14 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				}
 
 				if op_name.len > 0 {
-					panic('internal error: struct operator overload reached C backend after transform')
-				} else {
-					g.gen_expr(lhs_id)
-					g.write(' ${g.op_str(node.op)} ')
-					g.gen_expr(rhs_id)
+					method_name := '${lhs_type.name}${op_name}'
+					if method_name in g.tc.fn_param_types {
+						panic('internal error: struct operator overload reached C backend after transform: ${lhs_type.name} op=${node.op}')
+					}
 				}
+				g.gen_expr(lhs_id)
+				g.write(' ${g.op_str(node.op)} ')
+				g.gen_expr(rhs_id)
 			} else {
 				lhs_node := g.a.nodes[int(lhs_id)]
 				rhs_node := g.a.nodes[int(rhs_id)]
@@ -472,7 +474,14 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					g.write(c_name('${qname}.${node.value}'))
 				}
 			} else {
+				needs_paren := base.kind !in [.ident, .selector, .call]
+				if needs_paren {
+					g.write('(')
+				}
 				g.gen_expr(base_id)
+				if needs_paren {
+					g.write(')')
+				}
 				if node.op == .arrow {
 					g.write('->')
 				} else if node.op == .dot {
@@ -628,7 +637,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write('(${ct}){.ok = false}')
 		}
 		.or_expr {
-			panic('internal error: or expression reached C backend after transform')
+			g.gen_or_expr(node)
 		}
 		.block {
 			if node.children_count > 1 {
@@ -657,10 +666,52 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.is_expr {
-			panic('internal error: is expression reached C backend after transform')
+			expr_id := g.a.child(&node, 0)
+			expr_type := g.tc.resolve_type(expr_id)
+			clean := types.unwrap_pointer(expr_type)
+			if clean is types.SumType {
+				idx := g.sum_type_index(clean.name, node.value)
+				g.write('(')
+				if expr_type.is_pointer() {
+					g.gen_expr(expr_id)
+					g.write('->typ == ${idx}')
+				} else {
+					g.gen_expr(expr_id)
+					g.write('.typ == ${idx}')
+				}
+				g.write(')')
+			} else {
+				g.write('1')
+			}
 		}
 		.as_expr {
-			panic('internal error: as expression reached C backend after transform')
+			expr_id := g.a.child(&node, 0)
+			expr_type := g.tc.resolve_type(expr_id)
+			clean := types.unwrap_pointer(expr_type)
+			if clean is types.SumType {
+				qv := g.resolve_variant(clean.name, node.value)
+				field := g.sum_field_name(qv)
+				if g.variant_references_sum(qv, clean.name) {
+					g.write('(*')
+					if expr_type.is_pointer() {
+						g.gen_expr(expr_id)
+						g.write('->${field})')
+					} else {
+						g.gen_expr(expr_id)
+						g.write('.${field})')
+					}
+				} else {
+					if expr_type.is_pointer() {
+						g.gen_expr(expr_id)
+						g.write('->${field}')
+					} else {
+						g.gen_expr(expr_id)
+						g.write('.${field}')
+					}
+				}
+			} else {
+				g.gen_expr(expr_id)
+			}
 		}
 		.sizeof_expr {
 			if _ := g.tc.cur_scope.lookup(node.value) {

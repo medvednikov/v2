@@ -40,15 +40,51 @@ fn (t &Transformer) resolve_selector_type(node flat.Node) string {
 	if field_name.len == 0 {
 		return ''
 	}
+	base_key := t.expr_key(base_id)
+	if base_key.len > 0 {
+		if sc := t.find_smartcast(base_key) {
+			variant_type := t.qualify_variant(sc.variant_name, sc.sum_type_name)
+			if ftyp := t.lookup_struct_field_type(variant_type, field_name) {
+				return ftyp
+			}
+			if ftyp := t.lookup_struct_field_type(sc.variant_name, field_name) {
+				return ftyp
+			}
+		}
+	}
 	// Strip pointer prefix if present (e.g. "&MyStruct" -> "MyStruct")
 	lookup_type := if base_type.starts_with('&') { base_type[1..] } else { base_type }
-	info := t.structs[lookup_type] or { return '' }
+	if ftyp := t.lookup_struct_field_type(lookup_type, field_name) {
+		return ftyp
+	}
+	return ''
+}
+
+fn (t &Transformer) lookup_struct_field_type(type_name string, field_name string) ?string {
+	if type_name.len == 0 || field_name.len == 0 {
+		return none
+	}
+	mut lookup_type := if type_name.starts_with('&') { type_name[1..] } else { type_name }
+	if lookup_type !in t.structs && lookup_type.contains('.') {
+		short_type := lookup_type.all_after_last('.')
+		if short_type in t.structs {
+			lookup_type = short_type
+		}
+	}
+	if lookup_type !in t.structs && !lookup_type.contains('.') && t.cur_module.len > 0
+		&& t.cur_module != 'main' && t.cur_module != 'builtin' {
+		qtype := '${t.cur_module}.${lookup_type}'
+		if qtype in t.structs {
+			lookup_type = qtype
+		}
+	}
+	info := t.structs[lookup_type] or { return none }
 	for f in info.fields {
 		if f.name == field_name {
 			return f.typ
 		}
 	}
-	return ''
+	return none
 }
 
 // resolve_index_elem_type determines the element type of an .index expression.
@@ -98,8 +134,8 @@ fn (t &Transformer) node_type(id flat.NodeId) string {
 	if !isnil(t.tc) {
 		if typ := t.tc.expr_type(id) {
 			name := typ.name()
-			if name.len > 0 && name != 'void'
-				&& (name != 'int' || node.kind in [.ident, .int_literal, .infix, .prefix, .paren]) {
+			if name.len > 0 && name != 'void' && (name != 'int'
+				|| node.kind in [.ident, .int_literal, .infix, .prefix, .paren, .selector, .index, .call]) {
 				return name
 			}
 		}

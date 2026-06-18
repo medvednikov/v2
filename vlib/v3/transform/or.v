@@ -1,12 +1,55 @@
 module transform
 
 import v3.flat
+import v3.types
 
 fn (t &Transformer) optional_base_type(typ string) string {
 	if typ.len > 1 && (typ[0] == `?` || typ[0] == `!`) {
 		return typ[1..]
 	}
 	return typ
+}
+
+fn (t &Transformer) or_expr_types(expr_id flat.NodeId, fallback_type string) (string, string) {
+	if !isnil(t.tc) {
+		if typ := t.tc.expr_type(expr_id) {
+			if typ is types.OptionType {
+				base_name := t.value_type_name(typ.base_type)
+				source_name := if base_name == 'int' && typ.base_type is types.Void {
+					'?void'
+				} else {
+					'?${base_name}'
+				}
+				return source_name, base_name
+			}
+			if typ is types.ResultType {
+				base_name := t.value_type_name(typ.base_type)
+				source_name := if base_name == 'int' && typ.base_type is types.Void {
+					'!void'
+				} else {
+					'!${base_name}'
+				}
+				return source_name, base_name
+			}
+		}
+	}
+	mut expr_type := t.node_type(expr_id)
+	if expr_type.len == 0 || expr_type == 'Optional' {
+		expr_type = fallback_type
+	}
+	base_type := t.optional_base_type(expr_type)
+	mut value_type := if base_type.len > 0 { base_type } else { fallback_type }
+	if value_type.len == 0 || value_type == 'void' || value_type == '!' || value_type == '?' {
+		value_type = 'int'
+	}
+	return expr_type, value_type
+}
+
+fn (t &Transformer) value_type_name(typ types.Type) string {
+	if typ is types.Void {
+		return 'int'
+	}
+	return typ.name()
 }
 
 fn (t &Transformer) is_optional_type_name(typ string) bool {
@@ -70,9 +113,9 @@ fn (mut t Transformer) lower_or_expr_to_temp(id flat.NodeId, node flat.Node) fla
 	}
 	expr_id := t.a.child(&node, 0)
 	body_id := t.a.child(&node, 1)
-	expr_type := t.node_type(expr_id)
-	base_type := t.optional_base_type(expr_type)
-	value_type := if base_type.len > 0 { base_type } else { node.typ }
+	expr_type, value_type := t.or_expr_types(expr_id, node.typ)
+	is_void := value_type.len == 0 || value_type == 'void'
+
 	opt_tmp := t.new_temp('or_opt')
 	val_tmp := t.new_temp('or_val')
 
@@ -81,6 +124,21 @@ fn (mut t Transformer) lower_or_expr_to_temp(id flat.NodeId, node flat.Node) fla
 	new_expr := t.transform_expr(expr_id)
 	mut prelude := []flat.NodeId{}
 	t.drain_pending(mut prelude)
+
+	if is_void {
+		prelude << t.make_decl_assign_typed(opt_tmp, new_expr, expr_type)
+		opt_ident := t.make_ident(opt_tmp)
+		not_ok := t.make_prefix(.not, t.make_selector(opt_ident, 'ok', 'bool'))
+		else_block := t.make_block(t.lower_or_body_to_stmts(body_id, '', '', node.value))
+		if_stmt := t.make_if(not_ok, else_block, t.make_empty())
+		t.pending_stmts = outer_pending
+		for stmt in prelude {
+			t.pending_stmts << stmt
+		}
+		t.pending_stmts << if_stmt
+		return t.make_int_literal(0)
+	}
+
 	prelude << t.make_decl_assign_typed(opt_tmp, new_expr, expr_type)
 	prelude << t.make_decl_assign_typed(val_tmp, t.zero_value_for_type(value_type), value_type)
 

@@ -5,7 +5,7 @@ import v3.types
 
 // resolve_call_name resolves the function name from a .call node.
 // child[0] is the function expression: .ident for plain calls, .selector for method calls.
-fn (mut t Transformer) resolve_call_name(node flat.Node) string {
+fn (t &Transformer) resolve_call_name(node flat.Node) string {
 	if node.children_count == 0 {
 		return ''
 	}
@@ -18,13 +18,13 @@ fn (mut t Transformer) resolve_call_name(node flat.Node) string {
 		.ident {
 			name := fn_node.value
 			// Try unqualified name first
-			if name in t.fn_ret_types {
+			if t.is_known_fn_name(name) {
 				return name
 			}
 			// Try qualified with current module
 			if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
 				qname := '${t.cur_module}.${name}'
-				if qname in t.fn_ret_types {
+				if t.is_known_fn_name(qname) {
 					return qname
 				}
 			}
@@ -34,6 +34,16 @@ fn (mut t Transformer) resolve_call_name(node flat.Node) string {
 			if fn_node.children_count > 0 {
 				base_id := t.a.child(&fn_node, 0)
 				base := t.a.nodes[int(base_id)]
+				if base.kind == .ident {
+					full := '${base.value}.${fn_node.value}'
+					if t.is_known_fn_name(full) {
+						return full
+					}
+				}
+				method_name := t.resolve_receiver_method_name(base_id, fn_node.value)
+				if method_name.len > 0 {
+					return method_name
+				}
 				if base.kind == .ident {
 					return '${base.value}.${fn_node.value}'
 				}
@@ -46,9 +56,40 @@ fn (mut t Transformer) resolve_call_name(node flat.Node) string {
 	}
 }
 
+fn (t &Transformer) is_known_fn_name(name string) bool {
+	return name in t.fn_ret_types || name in t.fn_param_types
+}
+
+fn (t &Transformer) resolve_receiver_method_name(base_id flat.NodeId, method string) string {
+	if method.len == 0 {
+		return ''
+	}
+	mut base_type := t.lvalue_type(base_id)
+	if base_type.starts_with('&') {
+		base_type = base_type[1..]
+	}
+	if base_type.len == 0 {
+		return ''
+	}
+	mut candidates := []string{}
+	candidates << '${base_type}.${method}'
+	if base_type.contains('.') {
+		short_type := base_type.all_after_last('.')
+		candidates << '${short_type}.${method}'
+	} else if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
+		candidates << '${t.cur_module}.${base_type}.${method}'
+	}
+	for candidate in candidates {
+		if t.is_known_fn_name(candidate) {
+			return candidate
+		}
+	}
+	return ''
+}
+
 // resolve_method_receiver_type determines the receiver type for method calls.
 // For a call where child[0] is a .selector, resolves the type of the selector's base expression.
-fn (mut t Transformer) resolve_method_receiver_type(call_node flat.Node) string {
+fn (t &Transformer) resolve_method_receiver_type(call_node flat.Node) string {
 	if call_node.children_count == 0 {
 		return ''
 	}
@@ -76,9 +117,18 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 			typ:   node.typ
 		})
 	}
+	call_name := t.resolve_call_name(node)
+	param_types := t.fn_param_types[call_name] or { []string{} }
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
+		if i > 0 && i - 1 < param_types.len {
+			mut child := &t.a.nodes[int(child_id)]
+			if child.kind == .array_literal && child.typ.len == 0
+				&& param_types[i - 1].starts_with('[]') {
+				child.typ = param_types[i - 1]
+			}
+		}
 		new_children << t.transform_expr(child_id)
 	}
 	start := t.a.children.len
@@ -477,7 +527,7 @@ fn (mut t Transformer) is_method_call(node flat.Node) bool {
 
 // get_call_return_type looks up the return type for a resolved call.
 // Handles both simple and qualified names.
-fn (mut t Transformer) get_call_return_type(node flat.Node) string {
+fn (t &Transformer) get_call_return_type(node flat.Node) string {
 	name := t.resolve_call_name(node)
 	if name.len == 0 {
 		return ''

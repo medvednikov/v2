@@ -39,6 +39,7 @@ mut:
 	globals         map[string]string
 	sum_types       map[string][]string
 	fn_ret_types    map[string]string
+	fn_param_types  map[string][]string
 	enum_types      map[string][]string
 	cur_module      string
 	cur_fn_name     string
@@ -134,8 +135,37 @@ fn (mut t Transformer) collect_types() {
 			.fn_decl {
 				if node.typ.len > 0 {
 					t.fn_ret_types[node.value] = node.typ
+					mut ptypes := []string{}
+					for i in 0 .. node.children_count {
+						child := t.a.child_node(&node, i)
+						if child.kind == .param {
+							ptypes << child.typ
+						}
+					}
+					t.fn_param_types[node.value] = ptypes
 					if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
 						t.fn_ret_types['${cur_mod}.${node.value}'] = node.typ
+						t.fn_param_types['${cur_mod}.${node.value}'] = ptypes
+					}
+				}
+			}
+			.c_fn_decl {
+				if node.typ.len > 0 {
+					t.fn_ret_types[node.value] = node.typ
+					mut ptypes := []string{}
+					for i in 0 .. node.children_count {
+						child := t.a.child_node(&node, i)
+						if child.kind == .param {
+							ptypes << child.typ
+						}
+					}
+					t.fn_param_types[node.value] = ptypes
+					if node.value.starts_with('C.') {
+						t.fn_ret_types[node.value[2..]] = node.typ
+						t.fn_param_types[node.value[2..]] = ptypes
+					} else {
+						t.fn_ret_types['C.${node.value}'] = node.typ
+						t.fn_param_types['C.${node.value}'] = ptypes
 					}
 				}
 			}
@@ -460,6 +490,23 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 		return arr1(id)
 	}
 	mut inferred_typ := ''
+	if node.children_count > 2 && !isnil(t.tc) {
+		rhs_id := t.a.child(&node, 1)
+		if rhs_type := t.tc.expr_type(rhs_id) {
+			if rhs_type is types.MultiReturn {
+				for j, field_type in rhs_type.types {
+					lhs_idx := if j == 0 { 0 } else { j + 1 }
+					if lhs_idx >= node.children_count {
+						continue
+					}
+					lhs := t.a.child_node(&node, lhs_idx)
+					if lhs.kind == .ident && lhs.value.len > 0 && lhs.value != '_' {
+						t.var_types[lhs.value] = field_type.name()
+					}
+				}
+			}
+		}
+	}
 	// Track the variable type for the common 2-child case.
 	if node.children_count == 2 {
 		lhs := t.a.child_node(&node, 0)
@@ -651,18 +698,6 @@ fn (mut t Transformer) transform_string_interp(_id flat.NodeId, node flat.Node) 
 	if node.children_count == 0 {
 		return t.make_string_literal('')
 	}
-	mut part_types := []string{cap: node.children_count}
-	for i in 0 .. node.children_count {
-		child_id := t.a.child(&node, i)
-		mut typ := t.reliable_stringify_type(child_id)
-		if typ.len == 0 {
-			typ = t.node_type(child_id)
-		}
-		if typ.len == 0 {
-			typ = 'string'
-		}
-		part_types << typ
-	}
 	tmp_name := t.new_temp('str_intp')
 	mut min_cap := 0
 	mut parts := []flat.NodeId{cap: node.children_count}
@@ -674,7 +709,18 @@ fn (mut t Transformer) transform_string_interp(_id flat.NodeId, node flat.Node) 
 		} else {
 			min_cap += 16
 		}
-		parts << t.wrap_string_conversion(t.transform_expr(child_id), part_types[i])
+		transformed := t.transform_expr(child_id)
+		mut typ := t.node_type(transformed)
+		if typ.len == 0 {
+			typ = t.reliable_stringify_type(child_id)
+		}
+		if typ.len == 0 {
+			typ = t.node_type(child_id)
+		}
+		if typ.len == 0 {
+			typ = 'string'
+		}
+		parts << t.wrap_string_conversion(transformed, typ)
 	}
 	if min_cap < 16 {
 		min_cap = 16
@@ -753,10 +799,44 @@ fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) f
 }
 
 fn (mut t Transformer) transform_or_expr(id flat.NodeId, node flat.Node) flat.NodeId {
-	if node.children_count == 0 {
+	if node.children_count < 2 {
 		return id
 	}
-	return t.lower_or_expr_to_temp(id, node)
+	if t.is_map_index_or_expr(node) {
+		return t.transform_map_index_or_expr(id, node)
+	}
+	expr_id := t.a.child(&node, 0)
+	body_id := t.a.child(&node, 1)
+	new_expr := t.transform_expr(expr_id)
+	mut new_body_ids := []flat.NodeId{}
+	body := t.a.nodes[int(body_id)]
+	old_err := t.var_types['err'] or { '' }
+	t.var_types['err'] = 'IError'
+	if body.kind == .block {
+		mut child_ids := []flat.NodeId{}
+		for i in 0 .. body.children_count {
+			child_ids << t.a.child(&body, i)
+		}
+		new_body_ids = t.transform_stmts(child_ids)
+	} else {
+		new_body_ids << t.transform_expr(body_id)
+	}
+	if old_err.len > 0 {
+		t.var_types['err'] = old_err
+	} else {
+		t.var_types.delete('err')
+	}
+	new_body := t.make_block(new_body_ids)
+	start := t.a.children.len
+	t.a.children << new_expr
+	t.a.children << new_body
+	return t.a.add_node(flat.Node{
+		kind:           .or_expr
+		children_start: start
+		children_count: 2
+		value:          node.value
+		typ:            node.typ
+	})
 }
 
 fn (mut t Transformer) transform_prefix_expr(id flat.NodeId, node flat.Node) flat.NodeId {
@@ -1156,32 +1236,9 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 			return t.var_types[node.value] or { '' }
 		}
 		.call {
-			if node.children_count > 0 {
-				fn_id := t.a.child(&node, 0)
-				fn_node := t.a.nodes[int(fn_id)]
-				if fn_node.kind == .ident {
-					if ret := t.fn_ret_types[fn_node.value] {
-						return ret
-					}
-					qname := if t.cur_module.len > 0 && t.cur_module != 'main'
-						&& t.cur_module != 'builtin' {
-						'${t.cur_module}.${fn_node.value}'
-					} else {
-						fn_node.value
-					}
-					if ret := t.fn_ret_types[qname] {
-						return ret
-					}
-				} else if fn_node.kind == .selector && fn_node.children_count > 0 {
-					base_id := t.a.child(&fn_node, 0)
-					base := t.a.nodes[int(base_id)]
-					if base.kind == .ident {
-						full := '${base.value}.${fn_node.value}'
-						if ret := t.fn_ret_types[full] {
-							return ret
-						}
-					}
-				}
+			ret := t.get_call_return_type(node)
+			if ret.len > 0 {
+				return ret
 			}
 			return ''
 		}
@@ -1220,8 +1277,62 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 			}
 			return ''
 		}
+		.match_stmt {
+			return t.match_expr_type(node)
+		}
 		else {
 			return ''
+		}
+	}
+}
+
+fn (t &Transformer) match_expr_type(node flat.Node) string {
+	if node.kind != .match_stmt || node.children_count < 2 {
+		return ''
+	}
+	for i in 1 .. node.children_count {
+		branch := t.a.child_node(&node, i)
+		if branch.kind != .match_branch {
+			continue
+		}
+		body_start := if branch.value == 'else' { 0 } else { t.count_conds(branch) }
+		if branch.children_count <= body_start {
+			continue
+		}
+		for j := branch.children_count - 1; j >= body_start; j-- {
+			stmt_id := t.a.child(branch, j)
+			typ := t.stmt_value_type(stmt_id)
+			if typ.len > 0 {
+				return typ
+			}
+		}
+	}
+	return ''
+}
+
+fn (t &Transformer) stmt_value_type(id flat.NodeId) string {
+	if int(id) < 0 {
+		return ''
+	}
+	node := t.a.nodes[int(id)]
+	match node.kind {
+		.expr_stmt {
+			if node.children_count > 0 {
+				return t.node_type(t.a.child(&node, node.children_count - 1))
+			}
+			return ''
+		}
+		.block {
+			for i := node.children_count - 1; i >= 0; i-- {
+				typ := t.stmt_value_type(t.a.child(&node, i))
+				if typ.len > 0 {
+					return typ
+				}
+			}
+			return ''
+		}
+		else {
+			return t.node_type(id)
 		}
 	}
 }

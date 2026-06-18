@@ -101,16 +101,47 @@ fn (mut t Transformer) transform_infix_struct_ops(_id flat.NodeId, node flat.Nod
 	if lhs_type.starts_with('&') {
 		lhs_type = lhs_type[1..]
 	}
-	if lhs_type.len == 0 || lhs_type !in t.structs {
+	struct_type := t.struct_lookup_name(lhs_type)
+	if struct_type.len == 0 {
 		return none
 	}
-	method_name := '${lhs_type}.${op_name}'
+	method_name := '${struct_type}.${op_name}'
 	if method_name !in t.fn_ret_types {
-		return none
+		if node.op != .eq && node.op != .ne {
+			return none
+		}
+		lhs := t.stable_expr_for_reuse(lhs_id)
+		rhs := t.stable_expr_for_reuse(t.a.child(&node, 1))
+		cmp := t.make_call_typed('memcmp', arr3(t.make_prefix(.amp, lhs), t.make_prefix(.amp, rhs),
+			t.make_sizeof_type(struct_type)), 'int')
+		return t.make_infix(node.op, cmp, t.make_int_literal(0))
 	}
 	new_lhs := t.transform_expr(lhs_id)
 	new_rhs := t.transform_expr(t.a.child(&node, 1))
 	return t.make_call(method_name, arr2(new_lhs, new_rhs))
+}
+
+fn (t &Transformer) struct_lookup_name(type_name string) string {
+	if type_name.len == 0 {
+		return ''
+	}
+	if type_name in t.structs {
+		return type_name
+	}
+	if type_name.contains('.') {
+		short_type := type_name.all_after_last('.')
+		if short_type in t.structs {
+			return short_type
+		}
+		return ''
+	}
+	if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
+		qtype := '${t.cur_module}.${type_name}'
+		if qtype in t.structs {
+			return qtype
+		}
+	}
+	return ''
 }
 
 fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.NodeId {
