@@ -506,9 +506,9 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 
 	tmp_output_path := '${output_path}.tmp.${os.getpid()}'
 	os.rm(tmp_output_path) or {}
-	os.write_file_array(tmp_output_path, l.buf) or { panic(err) }
+	os.write_file_array(tmp_output_path, l.buf) or { panic('failed to write output file') }
 	os.chmod(tmp_output_path, 0o755) or {}
-	os.rename(tmp_output_path, output_path) or { panic(err) }
+	os.rename(tmp_output_path, output_path) or { panic('failed to rename output file') }
 
 	println('  file write: ${time.since(t)}')
 	println('  TOTAL linker: ${time.since(t_total)}')
@@ -942,7 +942,11 @@ fn (mut l Linker) generate_bind_info() []u8 {
 		}
 
 		// Set dylib ordinal (1-based: 1 = first dylib)
-		ordinal := u8((l.sym_to_dylib[sym_name] or { 0 }) + 1)
+		mut ordinal_idx := 0
+		if idx := l.sym_to_dylib[sym_name] {
+			ordinal_idx = idx
+		}
+		ordinal := u8(ordinal_idx + 1)
 		info << (bind_opcode_set_dylib_ordinal_imm | ordinal)
 
 		// Set symbol name
@@ -1127,7 +1131,10 @@ fn (mut l Linker) write_text_with_relocations() {
 			}
 			arm64_reloc_got_load_page21 {
 				// ADRP instruction: PC-relative page address to GOT entry
-				got_idx1 := l.sym_to_got[sym_name] or { 0 }
+				mut got_idx1 := 0
+				if idx := l.sym_to_got[sym_name] {
+					got_idx1 = idx
+				}
 				got_entry_addr1 := l.data_vmaddr + u64(l.got_offset) + u64(got_idx1 * 8)
 
 				got_page := i64(got_entry_addr1) & ~0xFFF
@@ -1142,7 +1149,10 @@ fn (mut l Linker) write_text_with_relocations() {
 			}
 			arm64_reloc_got_load_pageoff12 {
 				// LDR instruction: page offset to GOT entry
-				got_idx2 := l.sym_to_got[sym_name] or { 0 }
+				mut got_idx2 := 0
+				if idx := l.sym_to_got[sym_name] {
+					got_idx2 = idx
+				}
 				got_entry_addr2 := l.data_vmaddr + u64(l.got_offset) + u64(got_idx2 * 8)
 
 				page_off := got_entry_addr2 & 0xFFF

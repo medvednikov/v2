@@ -131,7 +131,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 				count := if instr.operands.len > 0 {
 					count_val := g.m.values[instr.operands[0]]
 					if count_val.kind == .constant {
-						n := parse_int(count_val.name)
+						n := parse_arm64_int(count_val.name)
 						if n > 1 {
 							int(n)
 						} else {
@@ -249,7 +249,7 @@ fn (g &Gen) is_zero_const(val_id int) bool {
 		return false
 	}
 	val := g.m.values[val_id]
-	return val.kind == .constant && parse_int(val.name) == 0
+	return val.kind == .constant && parse_arm64_int(val.name) == 0
 }
 
 fn (mut g Gen) emit_zero_aggregate(ptr_reg int, typ_id ssa.TypeID) {
@@ -729,7 +729,7 @@ fn (mut g Gen) load_val(val_id int, reg int) int {
 	val := g.m.values[val_id]
 	match val.kind {
 		.constant {
-			n := parse_int(val.name)
+			n := parse_arm64_int(val.name)
 			g.emit_mov_imm(reg, n)
 			return reg
 		}
@@ -1022,7 +1022,7 @@ fn (mut g Gen) emit_add_sp(size int) {
 	}
 }
 
-fn parse_int(s string) i64 {
+fn parse_arm64_int(s string) i64 {
 	if s.len == 0 {
 		return 0
 	}

@@ -248,7 +248,7 @@ pub fn (mut m MachOObject) write(path string) {
 
 	buf << m.str_table
 
-	os.write_file_array(path, buf) or { panic(err) }
+	os.write_file_array(path, buf) or { panic('failed to write Mach-O object') }
 }
 
 fn write_u32_le(mut b []u8, v u32) {
