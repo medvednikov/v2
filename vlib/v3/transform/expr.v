@@ -73,6 +73,39 @@ fn (mut t Transformer) transform_infix_string_ops(_id flat.NodeId, node flat.Nod
 	}
 }
 
+fn (mut t Transformer) transform_infix_struct_ops(_id flat.NodeId, node flat.Node) ?flat.NodeId {
+	op_name := match node.op {
+		.plus { '+' }
+		.minus { '-' }
+		.eq { '==' }
+		.ne { '!=' }
+		.lt { '<' }
+		.gt { '>' }
+		.le { '<=' }
+		.ge { '>=' }
+		else { '' }
+	}
+
+	if op_name.len == 0 || node.children_count < 2 {
+		return none
+	}
+	lhs_id := t.a.child(&node, 0)
+	mut lhs_type := t.node_type(lhs_id)
+	if lhs_type.starts_with('&') {
+		lhs_type = lhs_type[1..]
+	}
+	if lhs_type.len == 0 || lhs_type !in t.structs {
+		return none
+	}
+	method_name := '${lhs_type}.${op_name}'
+	if method_name !in t.fn_ret_types {
+		return none
+	}
+	new_lhs := t.transform_expr(lhs_id)
+	new_rhs := t.transform_expr(t.a.child(&node, 1))
+	return t.make_call(method_name, arr2(new_lhs, new_rhs))
+}
+
 fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.NodeId {
 	if node.children_count < 2 {
 		return id
@@ -177,6 +210,18 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 	return result
 }
 
+fn (mut t Transformer) transform_fixed_array_len(_id flat.NodeId, node flat.Node) ?flat.NodeId {
+	if node.value != 'len' || node.children_count == 0 {
+		return none
+	}
+	base_id := t.a.child(&node, 0)
+	base_type := t.node_type(base_id)
+	if !is_fixed_array_type(base_type) {
+		return none
+	}
+	return t.make_int_literal(fixed_array_len(base_type))
+}
+
 fn (mut t Transformer) transform_enum_shorthand(id flat.NodeId, node flat.Node, expected_enum string) flat.NodeId {
 	if expected_enum.len == 0 {
 		return id
@@ -193,6 +238,10 @@ fn (mut t Transformer) transform_enum_shorthand(id flat.NodeId, node flat.Node, 
 }
 
 pub fn (mut t Transformer) make_call(fn_name string, args []flat.NodeId) flat.NodeId {
+	return t.make_call_typed(fn_name, args, '')
+}
+
+pub fn (mut t Transformer) make_call_typed(fn_name string, args []flat.NodeId, typ string) flat.NodeId {
 	fn_ident := t.make_ident(fn_name)
 	start := t.a.children.len
 	t.a.children << fn_ident
@@ -203,6 +252,7 @@ pub fn (mut t Transformer) make_call(fn_name string, args []flat.NodeId) flat.No
 		kind:           .call
 		children_start: start
 		children_count: 1 + args.len
+		typ:            typ
 	})
 }
 
@@ -248,6 +298,10 @@ fn is_fixed_array_type(s string) bool {
 		return false
 	}
 	return s.contains('[') && s.ends_with(']')
+}
+
+fn fixed_array_len(s string) int {
+	return s.all_after('[').all_before(']').int()
 }
 
 fn c_name(name string) string {

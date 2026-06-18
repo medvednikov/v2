@@ -20,7 +20,8 @@ fn (mut g FlatGen) gen_fns() {
 			if g.has_generic_params(node) {
 				continue
 			}
-			if g.tc.cur_module == 'strings' && node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
+			if g.tc.cur_module == 'strings'
+				&& node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
 				continue
 			}
 			if node.value.starts_with('Gen.') && g.tc.cur_module == 'c' {
@@ -167,22 +168,6 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			}
 			return
 		}
-		'println', 'print' {
-			g.write(fn_name)
-			g.write('(')
-			if node.children_count > 1 {
-				arg_id := g.a.child(&node, 1)
-				arg_type := g.tc.resolve_type(arg_id)
-				if arg_type is types.String {
-					g.gen_expr(arg_id)
-				} else {
-					g.write('int_str(')
-					g.gen_expr(arg_id)
-					g.write(')')
-				}
-			}
-			g.write(')')
-		}
 		else {
 			mut is_method := false
 			mut is_c_call := false
@@ -204,13 +189,15 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						mod
 					}
 					full_name := '${short_mod}.${fn_node.value}'
-					if full_name in g.tc.type_aliases || full_name in g.tc.structs || full_name in g.tc.enum_names || full_name in g.tc.sum_types {
+					if full_name in g.tc.type_aliases || full_name in g.tc.structs
+						|| full_name in g.tc.enum_names || full_name in g.tc.sum_types {
 						target_type := g.tc.parse_type(full_name)
 						ct := g.tc.c_type(target_type)
 						if target_type is types.SumType && node.children_count > 1 {
 							inner_id := g.a.child(&node, 1)
 							inner := g.a.nodes[int(inner_id)]
-							variant_name0 := if inner.kind == .struct_init || inner.kind == .cast_expr {
+							variant_name0 := if inner.kind == .struct_init
+								|| inner.kind == .cast_expr {
 								inner.value
 							} else {
 								g.tc.resolve_type(inner_id).name()
@@ -318,7 +305,9 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 								return
 							}
 						}
-						if !is_method && (clean_type is types.Primitive || clean_type is types.ISize || clean_type is types.USize || clean_type is types.Rune) {
+						if !is_method && (clean_type is types.Primitive
+							|| clean_type is types.ISize || clean_type is types.USize
+							|| clean_type is types.Rune) {
 							tname := clean_type.name()
 							prim_method := '${tname}.${fn_node.value}'
 							if prim_method in g.tc.fn_param_types {
@@ -388,7 +377,9 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							}
 						}
 					}
-				} else if base.kind == .ident && (base.value in g.tc.structs || base.value in g.tc.enum_names || g.tc.qualify_name(base.value) in g.tc.structs || g.tc.qualify_name(base.value) in g.tc.enum_names) {
+				} else if base.kind == .ident
+					&& (base.value in g.tc.structs || base.value in g.tc.enum_names || g.tc.qualify_name(base.value) in g.tc.structs
+					|| g.tc.qualify_name(base.value) in g.tc.enum_names) {
 					qname := if base.value in g.tc.structs || base.value in g.tc.enum_names {
 						base.value
 					} else {
@@ -452,7 +443,8 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							return
 						}
 					}
-					if !is_method && (clean_type is types.Void || clean_type is types.Primitive) && fn_node.value in ['vstring', 'vstring_with_len'] {
+					if !is_method && (clean_type is types.Void || clean_type is types.Primitive)
+						&& fn_node.value in ['vstring', 'vstring_with_len'] {
 						g.write('u8__${fn_node.value}((u8*)')
 						g.gen_expr(g.a.child(fn_node, 0))
 						for i in 1 .. node.children_count {
@@ -473,7 +465,9 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							return
 						}
 					}
-					if !is_method && (clean_type is types.Primitive || clean_type is types.ISize || clean_type is types.USize || clean_type is types.Rune) {
+					if !is_method && (clean_type is types.Primitive
+						|| clean_type is types.ISize || clean_type is types.USize
+						|| clean_type is types.Rune) {
 						tname := clean_type.name()
 						prim_method := '${tname}.${fn_node.value}'
 						if prim_method in g.tc.fn_param_types {
@@ -505,56 +499,61 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						}
 					}
 					if !is_method {
-					struct_name := if clean_type is types.Struct {
-						clean_type.name
-					} else {
-						clean_type.name()
-					}
-					method_name = '${struct_name}.${fn_node.value}'
-					if method_name !in g.tc.fn_param_types {
-						for alias, target in g.tc.type_aliases {
-							if target == struct_name {
-								alias_method := '${alias}.${fn_node.value}'
-								if alias_method in g.tc.fn_param_types {
-									method_name = alias_method
-									break
+						struct_name := if clean_type is types.Struct {
+							clean_type.name
+						} else {
+							clean_type.name()
+						}
+						method_name = '${struct_name}.${fn_node.value}'
+						if method_name !in g.tc.fn_param_types {
+							for alias, target in g.tc.type_aliases {
+								if target == struct_name {
+									alias_method := '${alias}.${fn_node.value}'
+									if alias_method in g.tc.fn_param_types {
+										method_name = alias_method
+										break
+									}
 								}
 							}
 						}
-					}
-					if method_name in g.tc.fn_param_types {
-						is_method = true
-						base_id = g.a.child(fn_node, 0)
-						g.write(c_name(method_name))
-					} else {
-						str_method := 'string.${fn_node.value}'
-						if str_method in g.tc.fn_param_types {
-							is_method = true
-							method_name = str_method
-							base_id = g.a.child(fn_node, 0)
-							g.write(c_name(str_method))
-						} else if struct_name.len > 0 {
+						if method_name in g.tc.fn_param_types {
 							is_method = true
 							base_id = g.a.child(fn_node, 0)
 							g.write(c_name(method_name))
 						} else {
-							g.gen_expr(g.a.child(&node, 0))
+							str_method := 'string.${fn_node.value}'
+							if str_method in g.tc.fn_param_types {
+								is_method = true
+								method_name = str_method
+								base_id = g.a.child(fn_node, 0)
+								g.write(c_name(str_method))
+							} else if struct_name.len > 0 {
+								is_method = true
+								base_id = g.a.child(fn_node, 0)
+								g.write(c_name(method_name))
+							} else {
+								g.gen_expr(g.a.child(&node, 0))
+							}
 						}
 					}
-					} // !is_method
+					// !is_method
 				}
 			} else {
 				fn_id := g.a.child(&node, 0)
 				fn_ident := g.a.nodes[int(fn_id)]
 				if fn_ident.kind == .ident {
 					qname := g.tc.qualify_name(fn_ident.value)
-					if fn_ident.value in g.tc.type_aliases || qname in g.tc.type_aliases || fn_ident.value in g.tc.structs || qname in g.tc.structs || fn_ident.value in g.tc.enum_names || qname in g.tc.enum_names || fn_ident.value in g.tc.sum_types || qname in g.tc.sum_types {
+					if fn_ident.value in g.tc.type_aliases || qname in g.tc.type_aliases
+						|| fn_ident.value in g.tc.structs || qname in g.tc.structs
+						|| fn_ident.value in g.tc.enum_names || qname in g.tc.enum_names
+						|| fn_ident.value in g.tc.sum_types || qname in g.tc.sum_types {
 						target_type := g.tc.parse_type(fn_ident.value)
 						ct := g.tc.c_type(target_type)
 						if target_type is types.SumType && node.children_count > 1 {
 							inner_id := g.a.child(&node, 1)
 							inner := g.a.nodes[int(inner_id)]
-							variant_name0 := if inner.kind == .struct_init || inner.kind == .cast_expr {
+							variant_name0 := if inner.kind == .struct_init
+								|| inner.kind == .cast_expr {
 								inner.value
 							} else {
 								g.tc.resolve_type(inner_id).name()
@@ -639,7 +638,8 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				arg_id := g.a.child(&node, i)
 				arg_node := g.a.nodes[int(arg_id)]
 				mut needs_addr := false
-				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer && !(arg_node.kind == .prefix && arg_node.op == .amp) {
+				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer
+					&& !(arg_node.kind == .prefix && arg_node.op == .amp) {
 					arg_type := g.tc.resolve_type(arg_id)
 					if arg_type !is types.Pointer {
 						needs_addr = true
@@ -648,7 +648,8 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Enum {
 					g.expected_enum = (param_types[arg_idx] as types.Enum).name
 				}
-				is_rvalue := arg_node.kind == .call || (arg_node.kind == .index && arg_node.value == 'range')
+				is_rvalue := arg_node.kind == .call
+					|| (arg_node.kind == .index && arg_node.value == 'range')
 				if needs_addr && is_rvalue {
 					pt := param_types[arg_idx]
 					ct := g.tc.c_type(types.unwrap_pointer(pt))
@@ -736,13 +737,15 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			}
 		}
 		mut needs_addr := false
-		if arg_idx < param_types.len && param_types[arg_idx] is types.Pointer && !(arg_node.kind == .prefix && arg_node.op == .amp) {
+		if arg_idx < param_types.len && param_types[arg_idx] is types.Pointer
+			&& !(arg_node.kind == .prefix && arg_node.op == .amp) {
 			arg_type := g.tc.resolve_type(arg_id)
 			if arg_type !is types.Pointer {
 				needs_addr = true
 			}
 		}
-		is_rvalue := arg_node.kind == .call || (arg_node.kind == .index && arg_node.value == 'range')
+		is_rvalue := arg_node.kind == .call
+			|| (arg_node.kind == .index && arg_node.value == 'range')
 		if needs_addr && is_rvalue {
 			pt := param_types[arg_idx]
 			ct := g.tc.c_type(types.unwrap_pointer(pt))
@@ -884,7 +887,8 @@ fn (mut g FlatGen) forward_decls() {
 			if g.has_generic_params(node) {
 				continue
 			}
-			if g.tc.cur_module == 'strings' && node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
+			if g.tc.cur_module == 'strings'
+				&& node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
 				continue
 			}
 			params := g.fn_params_list(node)

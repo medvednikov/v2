@@ -10,6 +10,35 @@ fn println(s string) {
 	C.write(1, nl.str, nl.len)
 }
 
+fn bool_str(b bool) string {
+	if b {
+		return 'true'
+	}
+	return 'false'
+}
+
+fn strconv__format_int(n i64, radix int) string {
+	if radix != 10 {
+		return int_str(int(n))
+	}
+	return int_str(int(n))
+}
+
+fn strconv__format_uint(n u64, radix int) string {
+	if radix != 10 {
+		return int_str(int(n))
+	}
+	return int_str(int(n))
+}
+
+fn strconv__f32_to_str_l(n f32) string {
+	return int_str(int(n))
+}
+
+fn strconv__f64_to_str_l(n f64) string {
+	return int_str(int(n))
+}
+
 fn memdup(src &u8, len int) &u8 {
 	dst := C.malloc(len)
 	C.memcpy(dst, src, len)

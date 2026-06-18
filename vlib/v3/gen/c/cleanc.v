@@ -290,6 +290,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					.ge { '__ge' }
 					else { '' }
 				}
+
 				if op_name.len > 0 {
 					g.write('${c_name(lhs_type.name)}${op_name}(')
 					g.gen_expr(lhs_id)
@@ -338,7 +339,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				if fn_child.kind == .selector {
 					base_child := g.a.child_node(fn_child, 0)
 					if base_child.kind == .ident && base_child.value == 'C' {
-						c_struct_prefix := if fn_child.value.len > 0 && fn_child.value[0] >= `a` && fn_child.value[0] <= `z` && !fn_child.value.ends_with('_t') {
+						c_struct_prefix := if fn_child.value.len > 0 && fn_child.value[0] >= `a`
+							&& fn_child.value[0] <= `z` && !fn_child.value.ends_with('_t') {
 							'struct '
 						} else {
 							''
@@ -405,7 +407,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			base := g.a.nodes[int(base_id)]
 			if base.kind == .ident && base.value == 'C' {
 				g.write(node.value)
-			} else if base.kind == .ident && (base.value in g.tc.enum_names || g.tc.qualify_name(base.value) in g.tc.enum_names) {
+			} else if base.kind == .ident && (base.value in g.tc.enum_names
+				|| g.tc.qualify_name(base.value) in g.tc.enum_names) {
 				qbase := if base.value in g.tc.enum_names {
 					base.value
 				} else {
@@ -438,7 +441,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					mod
 				}
 				g.write(c_name('${short_mod}.${node.value}'))
-			} else if base.kind == .selector && base.children_count > 0 && g.is_module_qualified_enum(base) {
+			} else if base.kind == .selector && base.children_count > 0
+				&& g.is_module_qualified_enum(base) {
 				inner_base := g.a.child_node(&base, 0)
 				mod := g.modules[inner_base.value]
 				short_mod := if mod.contains('.') {
@@ -498,7 +502,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write('}, &(${c_val}[]){0}))')
-			} else if base_type is types.Array || (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
+			} else if base_type is types.Array || (base_type is types.Pointer
+				&& (base_type as types.Pointer).base_type is types.Array) {
 				arr_type := if base_type is types.Array {
 					base_type as types.Array
 				} else if base_type is types.Pointer {
@@ -520,7 +525,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write('.str[')
 				g.gen_expr(g.a.child(&node, 1))
 				g.write(']')
-			} else if base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Void {
+			} else if base_type is types.Pointer
+				&& (base_type as types.Pointer).base_type is types.Void {
 				g.write('((u8*)')
 				g.gen_expr(base_id)
 				g.write(')[')
@@ -1013,6 +1019,26 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\tchar* buf = malloc(32); int len = snprintf(buf, 32, "%g", d);')
 	g.writeln('\treturn (string){buf, len, 0};')
 	g.writeln('}')
+	if g.should_emit_runtime_helper('strconv__format_int') {
+		g.writeln('string strconv__format_int(i64 n, int radix) {')
+		g.writeln('\t(void)radix;')
+		g.writeln('\treturn i64_str(n);')
+		g.writeln('}')
+	}
+	if g.should_emit_runtime_helper('strconv__format_uint') {
+		g.writeln('string strconv__format_uint(u64 n, int radix) {')
+		g.writeln('\t(void)radix;')
+		g.writeln('\tchar* buf = malloc(32);')
+		g.writeln('\tint len = snprintf(buf, 32, "%llu", (unsigned long long)n);')
+		g.writeln('\treturn (string){buf, len, 0};')
+		g.writeln('}')
+	}
+	if g.should_emit_runtime_helper('strconv__f32_to_str_l') {
+		g.writeln('string strconv__f32_to_str_l(float d) { return double_str((double)d); }')
+	}
+	if g.should_emit_runtime_helper('strconv__f64_to_str_l') {
+		g.writeln('string strconv__f64_to_str_l(double d) { return double_str(d); }')
+	}
 	g.writeln('bool string__contains(string s, string sub) {')
 	g.writeln('\tif (sub.len > s.len) return 0;')
 	g.writeln('\tfor (int i = 0; i <= s.len - sub.len; i++) if (memcmp(s.str + i, sub.str, sub.len) == 0) return 1;')
@@ -1240,12 +1266,12 @@ fn (mut g FlatGen) runtime_fns() {
 		g.writeln('}')
 		g.writeln('')
 	}
-	g.writeln('bool u8__is_alnum(u8 c) { return (c >= \'a\' && c <= \'z\') || (c >= \'A\' && c <= \'Z\') || (c >= \'0\' && c <= \'9\'); }')
-	g.writeln('bool u8__is_digit(u8 c) { return c >= \'0\' && c <= \'9\'; }')
-	g.writeln('bool u8__is_alpha(u8 c) { return (c >= \'a\' && c <= \'z\') || (c >= \'A\' && c <= \'Z\'); }')
-	g.writeln('bool u8__is_letter(u8 c) { return u8__is_alpha(c) || c == \'_\'; }')
-	g.writeln('bool u8__is_hex_digit(u8 c) { return u8__is_digit(c) || (c >= \'a\' && c <= \'f\') || (c >= \'A\' && c <= \'F\'); }')
-	g.writeln('bool u8__is_space(u8 c) { return c == \' \' || c == \'\\t\' || c == \'\\n\' || c == \'\\r\' || c == \'\\v\' || c == \'\\f\'; }')
+	g.writeln("bool u8__is_alnum(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); }")
+	g.writeln("bool u8__is_digit(u8 c) { return c >= '0' && c <= '9'; }")
+	g.writeln("bool u8__is_alpha(u8 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }")
+	g.writeln("bool u8__is_letter(u8 c) { return u8__is_alpha(c) || c == '_'; }")
+	g.writeln("bool u8__is_hex_digit(u8 c) { return u8__is_digit(c) || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }")
+	g.writeln("bool u8__is_space(u8 c) { return c == ' ' || c == '\\t' || c == '\\n' || c == '\\r' || c == '\\v' || c == '\\f'; }")
 	g.writeln('bool int__is_alnum(int c) { return u8__is_alnum((u8)c); }')
 	g.writeln('bool int__is_digit(int c) { return u8__is_digit((u8)c); }')
 	g.writeln('bool int__is_alpha(int c) { return u8__is_alpha((u8)c); }')
@@ -1259,6 +1285,13 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('\treturn n;')
 	g.writeln('}')
 	g.writeln('')
+}
+
+fn (g &FlatGen) should_emit_runtime_helper(cname string) bool {
+	if cname in g.emitted_fns {
+		return false
+	}
+	return g.used_fns.len == 0 || cname in g.used_fns
 }
 
 fn (mut g FlatGen) global_decls() {
@@ -1316,7 +1349,8 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 	}
 	v_type := g.tc.resolve_type(val_id)
 	ct := g.tc.c_type(v_type)
-	qname := if name in g.const_modules && g.const_modules[name].len > 0 && g.const_modules[name] != 'main' && g.const_modules[name] != 'builtin' {
+	qname := if name in g.const_modules && g.const_modules[name].len > 0
+		&& g.const_modules[name] != 'main' && g.const_modules[name] != 'builtin' {
 		c_name('${g.const_modules[name]}.${name}')
 	} else {
 		c_name(name)

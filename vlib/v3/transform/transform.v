@@ -33,20 +33,20 @@ pub:
 
 pub struct Transformer {
 mut:
-	a                &flat.FlatAst = unsafe { nil }
-	tc               &types.TypeChecker = unsafe { nil }
-	structs          map[string]StructInfo
-	globals          map[string]string
-	sum_types        map[string][]string
-	fn_ret_types     map[string]string
-	enum_types       map[string][]string
-	cur_module       string
-	cur_fn_name      string
-	cur_fn_ret_type  string
-	var_types        map[string]string
-	temp_counter     int
-	pending_stmts    []flat.NodeId
-	smartcast_stack  []SmartcastContext
+	a               &flat.FlatAst      = unsafe { nil }
+	tc              &types.TypeChecker = unsafe { nil }
+	structs         map[string]StructInfo
+	globals         map[string]string
+	sum_types       map[string][]string
+	fn_ret_types    map[string]string
+	enum_types      map[string][]string
+	cur_module      string
+	cur_fn_name     string
+	cur_fn_ret_type string
+	var_types       map[string]string
+	temp_counter    int
+	pending_stmts   []flat.NodeId
+	smartcast_stack []SmartcastContext
 }
 
 pub struct StructInfo {
@@ -176,7 +176,8 @@ fn (mut t Transformer) transform_const_decl(node flat.Node) {
 			// prelude's chunked embedded-data tables: `"chunk" + "chunk" + ...`).
 			// Other const values are left byte-identical so backend const codegen
 			// is undisturbed.
-			is_string := t.is_string_type(t.a.child(&val, 0)) || t.is_string_type(t.a.child(&val, 1))
+			is_string := t.is_string_type(t.a.child(&val, 0))
+				|| t.is_string_type(t.a.child(&val, 1))
 			if val.kind == .infix && val.children_count >= 2 && is_string {
 				new_val := t.transform_expr(val_id)
 				// Overwrite the field's value slot in place (each const_field owns
@@ -430,7 +431,8 @@ fn (mut t Transformer) try_lower_string_compound_assign(_id flat.NodeId, node fl
 	}
 	rhs_id := t.a.child(&node, 1)
 	rhs := t.a.nodes[int(rhs_id)]
-	is_string := t.resolve_expr_type(lhs_id) == 'string' || rhs.kind == .string_literal || rhs.kind == .string_interp || t.resolve_expr_type(rhs_id) == 'string'
+	is_string := t.resolve_expr_type(lhs_id) == 'string' || rhs.kind == .string_literal
+		|| rhs.kind == .string_interp || t.resolve_expr_type(rhs_id) == 'string'
 	if !is_string {
 		return none
 	}
@@ -480,6 +482,9 @@ fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []fla
 		return arr1(id)
 	}
 	child_id := t.a.child(&node, 0)
+	if lowered := t.try_lower_flag_enum_stmt(child_id) {
+		return arr1(lowered)
+	}
 	new_child := t.transform_expr(child_id)
 	start := t.a.children.len
 	t.a.children << new_child
@@ -562,6 +567,9 @@ fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat
 	if str_result := t.transform_infix_string_ops(id, node) {
 		return str_result
 	}
+	if struct_result := t.transform_infix_struct_ops(id, node) {
+		return struct_result
+	}
 	lhs_id := t.a.child(&node, 0)
 	rhs_id := t.a.child(&node, 1)
 	new_lhs := t.transform_expr(lhs_id)
@@ -619,14 +627,13 @@ fn (mut t Transformer) transform_index_expr(id flat.NodeId, node flat.Node) flat
 	})
 }
 
-fn (mut t Transformer) transform_string_interp(id flat.NodeId, node flat.Node) flat.NodeId {
+fn (mut t Transformer) transform_string_interp(_id flat.NodeId, node flat.Node) flat.NodeId {
 	if node.children_count == 0 {
-		return id
+		return t.make_string_literal('')
 	}
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
-		child_id := t.a.child(&node, i)
-		new_children << t.transform_expr(child_id)
+		new_children << t.stringify_expr(t.a.child(&node, i))
 	}
 	start := t.a.children.len
 	for nc in new_children {
@@ -636,7 +643,7 @@ fn (mut t Transformer) transform_string_interp(id flat.NodeId, node flat.Node) f
 		kind:           .string_interp
 		op:             node.op
 		children_start: start
-		children_count: node.children_count
+		children_count: new_children.len
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -646,6 +653,9 @@ fn (mut t Transformer) transform_string_interp(id flat.NodeId, node flat.Node) f
 fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) flat.NodeId {
 	if node.children_count == 0 {
 		return id
+	}
+	if fixed_len := t.transform_fixed_array_len(id, node) {
+		return fixed_len
 	}
 	base_id := t.a.child(&node, 0)
 	new_base := t.transform_expr(base_id)
@@ -852,12 +862,16 @@ pub fn (mut t Transformer) make_decl_assign(name string, rhs flat.NodeId) flat.N
 }
 
 pub fn (mut t Transformer) make_assign(lhs flat.NodeId, rhs flat.NodeId) flat.NodeId {
+	return t.make_assign_op(lhs, rhs, .assign)
+}
+
+pub fn (mut t Transformer) make_assign_op(lhs flat.NodeId, rhs flat.NodeId, op flat.Op) flat.NodeId {
 	start := t.a.children.len
 	t.a.children << lhs
 	t.a.children << rhs
 	return t.a.add_node(flat.Node{
 		kind:           .assign
-		op:             .assign
+		op:             op
 		children_start: start
 		children_count: 2
 	})
@@ -884,6 +898,17 @@ pub fn (mut t Transformer) make_infix(op flat.Op, lhs flat.NodeId, rhs flat.Node
 		op:             op
 		children_start: start
 		children_count: 2
+	})
+}
+
+pub fn (mut t Transformer) make_prefix(op flat.Op, expr flat.NodeId) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << expr
+	return t.a.add_node(flat.Node{
+		kind:           .prefix
+		op:             op
+		children_start: start
+		children_count: 1
 	})
 }
 
@@ -1036,9 +1061,9 @@ pub fn (mut t Transformer) drain_pending(mut result []flat.NodeId) {
 }
 
 fn (t &Transformer) is_stmt_kind(kind flat.NodeKind) bool {
-	return kind in [.expr_stmt, .assign, .decl_assign, .selector_assign, .index_assign,
-		.return_stmt, .block, .for_stmt, .for_in_stmt, .break_stmt, .continue_stmt,
-		.match_stmt, .defer_stmt, .assert_stmt, .goto_stmt, .label_stmt, .if_expr]
+	return kind in [.expr_stmt, .assign, .decl_assign, .selector_assign, .index_assign, .return_stmt,
+		.block, .for_stmt, .for_in_stmt, .break_stmt, .continue_stmt, .match_stmt, .defer_stmt,
+		.assert_stmt, .goto_stmt, .label_stmt, .if_expr]
 }
 
 // --- type resolution helpers (will move to types.v later) ---
@@ -1075,7 +1100,8 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 					if ret := t.fn_ret_types[fn_node.value] {
 						return ret
 					}
-					qname := if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
+					qname := if t.cur_module.len > 0 && t.cur_module != 'main'
+						&& t.cur_module != 'builtin' {
 						'${t.cur_module}.${fn_node.value}'
 					} else {
 						fn_node.value
@@ -1331,7 +1357,8 @@ fn (t &Transformer) count_conds(branch flat.Node) int {
 	mut count := 0
 	for i in 0 .. branch.children_count {
 		child := t.a.child_node(&branch, i)
-		if child.kind == .int_literal || child.kind == .ident || child.kind == .string_literal || child.kind == .enum_val || child.kind == .bool_literal || child.kind == .char_literal {
+		if child.kind == .int_literal || child.kind == .ident || child.kind == .string_literal
+			|| child.kind == .enum_val || child.kind == .bool_literal || child.kind == .char_literal {
 			count++
 		} else {
 			break
@@ -1468,7 +1495,8 @@ fn (mut t Transformer) annotate_left_shift(node_id flat.NodeId) {
 	}
 	lhs_id := t.a.child(&node, 0)
 	mut lhs_type := t.lvalue_type(lhs_id)
-	if lhs_type == 'strings.Builder' || lhs_type == '&strings.Builder' || lhs_type == 'Builder' || lhs_type == '&Builder' {
+	if lhs_type == 'strings.Builder' || lhs_type == '&strings.Builder' || lhs_type == 'Builder'
+		|| lhs_type == '&Builder' {
 		lhs_type = '[]u8'
 	}
 	if !lhs_type.starts_with('[]') {

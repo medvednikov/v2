@@ -61,7 +61,8 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 				}
 			}
 			mut callees := []string{}
-			collect_calls(a, tc, &node, cur_module, imports, receiver_name, receiver_struct, mut callees)
+			collect_calls(a, tc, &node, cur_module, imports, receiver_name, receiver_struct, mut
+				callees)
 			call_graph[node.value] = callees
 			if qname != node.value {
 				call_graph[qname] = callees
@@ -135,9 +136,6 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 							if qcallee != callee.value {
 								calls << qcallee
 							}
-							if callee.value in ['println', 'print'] {
-								calls << 'int_str'
-							}
 						} else if callee.kind == .selector && callee.value.len > 0 {
 							if callee.children_count > 0 {
 								base_id := a.child(&callee, 0)
@@ -146,7 +144,8 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 									if base.kind == .ident && base.value.len > 0 {
 										if receiver_name.len > 0 && base.value == receiver_name {
 											calls << receiver_struct + '.' + callee.value
-											qrecv := qualify_fn(cur_module, receiver_struct + '.' + callee.value)
+											qrecv := qualify_fn(cur_module, receiver_struct + '.' +
+												callee.value)
 											if qrecv != receiver_struct + '.' + callee.value {
 												calls << qrecv
 											}
@@ -205,7 +204,6 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 				}
 			}
 			.string_interp {
-				calls << 'int_str'
 				calls << 'string_plus_many'
 			}
 			.infix {
@@ -229,6 +227,7 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 								.ge { '>=' }
 								else { '' }
 							}
+
 							if op_name.len > 0 {
 								calls << lhs_name + '.' + op_name
 							}

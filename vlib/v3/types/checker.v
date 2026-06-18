@@ -58,8 +58,8 @@ pub mut:
 	has_builtins    bool
 	cur_module      string
 	errors          []TypeError
-	resolved_calls  map[int]string  // node_id -> resolved function name
-	expr_types      map[int]Type    // node_id -> resolved type (populated by annotate_types)
+	resolved_calls  map[int]string // node_id -> resolved function name
+	expr_types      map[int]Type   // node_id -> resolved type (populated by annotate_types)
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -294,13 +294,17 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 	tc.fn_ret_types['strings.Builder.str'] = tc.parse_type('string')
 	tc.fn_param_types['strings.Builder.str'] = tarr1(tc.parse_type('&strings.Builder'))
 	tc.fn_ret_types['strings.Builder.write_string'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_string'] = tarr2(tc.parse_type('&strings.Builder'), tc.parse_type('string'))
+	tc.fn_param_types['strings.Builder.write_string'] = tarr2(tc.parse_type('&strings.Builder'),
+		tc.parse_type('string'))
 	tc.fn_ret_types['strings.Builder.writeln'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.writeln'] = tarr2(tc.parse_type('&strings.Builder'), tc.parse_type('string'))
+	tc.fn_param_types['strings.Builder.writeln'] = tarr2(tc.parse_type('&strings.Builder'),
+		tc.parse_type('string'))
 	tc.fn_ret_types['strings.Builder.write_ptr'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_ptr'] = tarr3(tc.parse_type('&strings.Builder'), tc.parse_type('voidptr'), tc.parse_type('int'))
+	tc.fn_param_types['strings.Builder.write_ptr'] = tarr3(tc.parse_type('&strings.Builder'),
+		tc.parse_type('voidptr'), tc.parse_type('int'))
 	tc.fn_ret_types['strings.Builder.write_u8'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_u8'] = tarr2(tc.parse_type('&strings.Builder'), tc.parse_type('u8'))
+	tc.fn_param_types['strings.Builder.write_u8'] = tarr2(tc.parse_type('&strings.Builder'),
+		tc.parse_type('u8'))
 	tc.fn_ret_types['strings.Builder.free'] = tc.parse_type('void')
 	tc.fn_param_types['strings.Builder.free'] = tarr1(tc.parse_type('&strings.Builder'))
 	tc.fn_ret_types['check_fwrite'] = tc.parse_type('!int')
@@ -315,6 +319,16 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 	tc.fn_ret_types['string__eq'] = tc.parse_type('bool')
 	tc.fn_ret_types['string__lt'] = tc.parse_type('bool')
 	tc.fn_ret_types['string_plus_many'] = tc.parse_type('string')
+	tc.fn_ret_types['bool_str'] = tc.parse_type('string')
+	tc.fn_ret_types['strconv__format_int'] = tc.parse_type('string')
+	tc.fn_ret_types['strconv__format_uint'] = tc.parse_type('string')
+	tc.fn_ret_types['strconv__f32_to_str_l'] = tc.parse_type('string')
+	tc.fn_ret_types['strconv__f64_to_str_l'] = tc.parse_type('string')
+	tc.fn_param_types['bool_str'] = tarr1(tc.parse_type('bool'))
+	tc.fn_param_types['strconv__format_int'] = tarr2(tc.parse_type('i64'), tc.parse_type('int'))
+	tc.fn_param_types['strconv__format_uint'] = tarr2(tc.parse_type('u64'), tc.parse_type('int'))
+	tc.fn_param_types['strconv__f32_to_str_l'] = tarr1(tc.parse_type('f32'))
+	tc.fn_param_types['strconv__f64_to_str_l'] = tarr1(tc.parse_type('f64'))
 	tc.fn_ret_types['string__bytes'] = tc.parse_type('[]u8')
 	tc.fn_ret_types['string__int'] = tc.parse_type('int')
 	tc.fn_ret_types['string__clone'] = tc.parse_type('string')
@@ -453,6 +467,7 @@ fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
 		}
 		else {}
 	}
+
 	tc.expr_types[int(id)] = tc.resolve_type(id)
 	for i in 0 .. node.children_count {
 		tc.annotate_node(tc.a.child(&node, i))
@@ -546,6 +561,7 @@ pub fn (mut tc TypeChecker) check_semantics() {
 			}
 			else {}
 		}
+
 		_ = i
 	}
 }
@@ -575,6 +591,7 @@ fn (mut tc TypeChecker) check_node(id flat.NodeId) {
 		}
 		else {}
 	}
+
 	for i in 0 .. node.children_count {
 		tc.check_node(tc.a.child(&node, i))
 	}
@@ -650,7 +667,9 @@ fn (mut tc TypeChecker) check_if_expr(id flat.NodeId, node flat.Node) {
 	}
 	if then_type !is Void && else_type !is Void {
 		if then_type.name() != else_type.name() {
-			tc.record_error(.if_branch_mismatch, 'if-expression branch type mismatch: then `${then_type.name()}` vs else `${else_type.name()}`', id)
+			tc.record_error(.if_branch_mismatch,
+				'if-expression branch type mismatch: then `${then_type.name()}` vs else `${else_type.name()}`',
+				id)
 		}
 	}
 }
@@ -885,6 +904,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			return Type(int_)
 		}
 		.call {
+			if node.typ.len > 0 {
+				return tc.parse_type(node.typ)
+			}
 			fn_node := tc.a.child_node(&node, 0)
 			if fn_node.kind == .selector {
 				base_node := tc.a.child_node(fn_node, 0)
@@ -907,13 +929,19 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						return tc.fn_ret_types[mod_name] or { Type(int_) }
 					}
 					if mod_name in tc.sum_types {
-						return Type(SumType{name: mod_name})
+						return Type(SumType{
+							name: mod_name
+						})
 					}
 					if mod_name in tc.structs {
-						return Type(Struct{name: mod_name})
+						return Type(Struct{
+							name: mod_name
+						})
 					}
 					if mod_name in tc.enum_names {
-						return Type(Enum{name: mod_name})
+						return Type(Enum{
+							name: mod_name
+						})
 					}
 					if base_node.value in tc.structs || base_node.value in tc.enum_names {
 						qname := tc.qualify_name(base_node.value)

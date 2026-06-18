@@ -12,14 +12,8 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 		.expr_stmt {
 			child_id := g.a.child(&node, 0)
 			child := g.a.nodes[int(child_id)]
-			if child.kind == .call {
-				fn_n := g.a.child_node(&child, 0)
-				if fn_n.kind == .selector && fn_n.value in ['set', 'clear'] {
-					base_sel := g.a.child_node(fn_n, 0)
-					if base_sel.kind == .selector && base_sel.value == 'flags' {
-						return
-					}
-				}
+			if g.is_runtime_array_flags_stmt(child_id) {
+				return
 			}
 			if child.kind == .or_expr {
 				g.gen_or_expr_stmt(child)
@@ -234,6 +228,28 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 	}
 }
 
+fn (g &FlatGen) is_runtime_array_flags_stmt(id flat.NodeId) bool {
+	if int(id) < 0 {
+		return false
+	}
+	node := g.a.nodes[int(id)]
+	if node.kind != .call || node.children_count == 0 {
+		return false
+	}
+	fn_node := g.a.child_node(&node, 0)
+	if fn_node.kind != .selector || fn_node.value !in ['set', 'clear']
+		|| fn_node.children_count == 0 {
+		return false
+	}
+	flags_node := g.a.child_node(fn_node, 0)
+	if flags_node.kind != .selector || flags_node.value != 'flags' || flags_node.children_count == 0 {
+		return false
+	}
+	owner_id := g.a.child(flags_node, 0)
+	owner_type := types.unwrap_pointer(g.tc.resolve_type(owner_id))
+	return owner_type is types.Array || owner_type.name() == 'strings.Builder'
+}
+
 fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 	if node.children_count >= 3 {
 		rhs_type := g.tc.resolve_type(g.a.child(&node, 1))
@@ -374,7 +390,8 @@ fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
 		if lhs.kind == .ident && lhs.value == '_' {
 			continue
 		}
-		field_type := if rhs_type is types.MultiReturn && j < (rhs_type as types.MultiReturn).types.len {
+		field_type := if rhs_type is types.MultiReturn
+			&& j < (rhs_type as types.MultiReturn).types.len {
 			g.tc.c_type((rhs_type as types.MultiReturn).types[j])
 		} else {
 			'int'
@@ -382,7 +399,8 @@ fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
 		lhs_name := c_name(lhs.value)
 		g.writeln('${field_type} ${lhs_name} = ${tmp}.arg${j};')
 		if lhs.kind == .ident {
-			inner := if rhs_type is types.MultiReturn && j < (rhs_type as types.MultiReturn).types.len {
+			inner := if rhs_type is types.MultiReturn
+				&& j < (rhs_type as types.MultiReturn).types.len {
 				(rhs_type as types.MultiReturn).types[j]
 			} else {
 				types.Type(types.int_)

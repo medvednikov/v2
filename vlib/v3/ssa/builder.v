@@ -122,15 +122,32 @@ fn (mut b Builder) register_functions() {
 	// V externs for string interpolation (stubs for now)
 	p1 = []TypeID{}
 	p1 << b.i64_type
-	b.register_extern('int_str', b.str_type, p1)
+	b.register_runtime_extern('int_str', b.str_type, p1)
+	p1 = []TypeID{}
+	p1 << b.i1_type
+	b.register_runtime_extern('bool_str', b.str_type, p1)
+	p2 = []TypeID{}
+	p2 << b.i64_type
+	p2 << b.i64_type
+	b.register_runtime_extern('strconv__format_int', b.str_type, p2)
+	p2 = []TypeID{}
+	p2 << b.i64_type
+	p2 << b.i64_type
+	b.register_runtime_extern('strconv__format_uint', b.str_type, p2)
+	p1 = []TypeID{}
+	p1 << b.i64_type
+	b.register_runtime_extern('strconv__f32_to_str_l', b.str_type, p1)
+	p1 = []TypeID{}
+	p1 << b.i64_type
+	b.register_runtime_extern('strconv__f64_to_str_l', b.str_type, p1)
 	p2 = []TypeID{}
 	p2 << b.str_type
 	p2 << b.str_type
-	b.register_extern('string__plus', b.str_type, p2)
+	b.register_runtime_extern('string__plus', b.str_type, p2)
 	p2 = []TypeID{}
 	p2 << b.i64_type
 	p2 << b.m.type_store.get_ptr(b.str_type)
-	b.register_extern('string_plus_many', b.str_type, p2)
+	b.register_runtime_extern('string_plus_many', b.str_type, p2)
 	p1 = []TypeID{}
 	p1 << ptr_i8
 	b.register_extern('free', b.void_type, p1)
@@ -176,6 +193,22 @@ fn (mut b Builder) register_extern(name string, ret TypeID, params []TypeID) {
 	mut f := b.m.funcs[func_id]
 	f.is_c_extern = true
 	b.m.funcs[func_id] = f
+}
+
+fn (mut b Builder) register_runtime_extern(name string, ret TypeID, params []TypeID) {
+	if b.has_fn_decl(name) {
+		return
+	}
+	b.register_extern(name, ret, params)
+}
+
+fn (b &Builder) has_fn_decl(name string) bool {
+	for node in b.a.nodes {
+		if node.kind == .fn_decl && node.value == name {
+			return true
+		}
+	}
+	return false
 }
 
 fn (mut b Builder) build_functions() {
@@ -677,107 +710,84 @@ fn (mut b Builder) build_call(node flat.Node) ValueID {
 	fn_node := b.a.child_node(&node, 0)
 	fn_name := fn_node.value
 
-	match fn_name {
-		'println', 'print' {
-			if node.children_count > 1 {
-				arg_id := b.a.child(&node, 1)
-				arg_type := b.infer_v_type(arg_id)
-				if arg_type == 'string' {
-					arg := b.build_expr(arg_id)
-					fn_ref := b.m.add_value(.func_ref, b.void_type, fn_name, b.fn_ids[fn_name])
-					return b.emit2(.call, b.void_type, fn_ref, arg)
-				} else {
-					arg := b.build_expr(arg_id)
-					int_str_ref := b.m.add_value(.func_ref, b.str_type, 'int_str',
-						b.fn_ids['int_str'])
-					str_val := b.emit2(.call, b.str_type, int_str_ref, arg)
-					fn_ref := b.m.add_value(.func_ref, b.void_type, fn_name, b.fn_ids[fn_name])
-					return b.emit2(.call, b.void_type, fn_ref, str_val)
+	mut is_method := false
+	mut base_id := flat.NodeId(0)
+	actual_name := if fn_node.kind == .selector {
+		base := b.a.child_node(fn_node, 0)
+		if base.kind == .ident && base.value == 'C' {
+			fn_node.value
+		} else {
+			mut found_name := fn_node.value
+			for fname, _ in b.fn_ids {
+				if fname.ends_with('.${fn_node.value}') {
+					found_name = fname
+					is_method = true
+					base_id = b.a.child(fn_node, 0)
+					break
 				}
 			}
-			return b.m.get_or_add_const(b.i64_type, '0')
+			found_name
 		}
-		else {
-			mut is_method := false
-			mut base_id := flat.NodeId(0)
-			actual_name := if fn_node.kind == .selector {
-				base := b.a.child_node(fn_node, 0)
-				if base.kind == .ident && base.value == 'C' {
-					fn_node.value
-				} else {
-					mut found_name := fn_node.value
-					for fname, _ in b.fn_ids {
-						if fname.ends_with('.${fn_node.value}') {
-							found_name = fname
-							is_method = true
-							base_id = b.a.child(fn_node, 0)
-							break
-						}
-					}
-					found_name
-				}
-			} else {
-				fn_name
-			}
+	} else {
+		fn_name
+	}
 
-			mut fn_idx := 0
-			if idx := b.fn_ids[actual_name] {
-				fn_idx = idx
-			} else {
-				panic('ssa: unknown function `${actual_name}`')
-			}
-			fn_ref := b.m.add_value(.func_ref, b.void_type, actual_name, fn_idx)
-			ret_type := b.m.funcs[fn_idx].typ
+	mut fn_idx := 0
+	if idx := b.fn_ids[actual_name] {
+		fn_idx = idx
+	} else {
+		panic('ssa: unknown function `${actual_name}`')
+	}
+	fn_ref := b.m.add_value(.func_ref, b.void_type, actual_name, fn_idx)
+	ret_type := b.m.funcs[fn_idx].typ
 
-			mut param_types := []TypeID{}
-			if ft_id := b.fn_types[actual_name] {
-				ft := b.m.type_store.types[ft_id]
-				param_types = ft.params.clone()
-			}
+	mut param_types := []TypeID{}
+	if ft_id := b.fn_types[actual_name] {
+		ft := b.m.type_store.types[ft_id]
+		param_types = ft.params.clone()
+	}
 
-			mut args := []ValueID{}
-			args << fn_ref
-			if is_method {
-				if param_types.len > 0 {
-					pt := b.m.type_store.types[param_types[0]]
-					if pt.kind == .ptr_t {
-						base_node := b.a.nodes[int(base_id)]
-						if base_node.kind == .ident {
-							if addr := b.vars[base_node.value] {
-								args << addr
-							} else {
-								args << b.build_expr(base_id)
-							}
-						} else {
-							args << b.build_expr(base_id)
-						}
+	mut args := []ValueID{}
+	args << fn_ref
+	if is_method {
+		if param_types.len > 0 {
+			pt := b.m.type_store.types[param_types[0]]
+			if pt.kind == .ptr_t {
+				base_node := b.a.nodes[int(base_id)]
+				if base_node.kind == .ident {
+					if addr := b.vars[base_node.value] {
+						args << addr
 					} else {
 						args << b.build_expr(base_id)
 					}
 				} else {
 					args << b.build_expr(base_id)
 				}
+			} else {
+				args << b.build_expr(base_id)
 			}
-			for i in 1 .. node.children_count {
-				arg_id := b.a.child(&node, i)
-				param_idx := if is_method { i } else { i - 1 }
-				if param_idx < param_types.len {
-					pt := b.m.type_store.types[param_types[param_idx]]
-					if pt.kind == .ptr_t {
-						arg_node := b.a.nodes[int(arg_id)]
-						if arg_node.kind == .ident {
-							if addr := b.vars[arg_node.value] {
-								args << addr
-								continue
-							}
-						}
-					}
-				}
-				args << b.build_expr(arg_id)
-			}
-			return b.m.add_instr(.call, b.cur_block, ret_type, args)
+		} else {
+			args << b.build_expr(base_id)
 		}
 	}
+	for i in 1 .. node.children_count {
+		arg_id := b.a.child(&node, i)
+		param_idx := if is_method { i } else { i - 1 }
+		if param_idx < param_types.len {
+			pt := b.m.type_store.types[param_types[param_idx]]
+			if pt.kind == .ptr_t {
+				arg_node := b.a.nodes[int(arg_id)]
+				if arg_node.kind == .ident {
+					if addr := b.vars[arg_node.value] {
+						args << addr
+						continue
+					}
+				}
+			}
+		}
+		args << b.build_expr(arg_id)
+	}
+	return b.m.add_instr(.call, b.cur_block, ret_type, args)
 }
 
 fn (mut b Builder) build_selector(node flat.Node) ValueID {
@@ -808,7 +818,8 @@ fn (mut b Builder) build_struct_init(node flat.Node) ValueID {
 					offset := b.m.struct_field_offset(typ_id, fi)
 					off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
 					field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
-					field_ptr := b.emit2(.get_element_ptr, b.m.type_store.get_ptr(field_type), alloca, off_const)
+					field_ptr := b.emit2(.get_element_ptr, b.m.type_store.get_ptr(field_type),
+						alloca, off_const)
 					b.emit2(.store, b.void_type, field_val, field_ptr)
 					initialized[fname] = true
 					break
@@ -821,7 +832,8 @@ fn (mut b Builder) build_struct_init(node flat.Node) ValueID {
 				offset := b.m.struct_field_offset(typ_id, fi)
 				off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
 				field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
-				field_ptr := b.emit2(.get_element_ptr, b.m.type_store.get_ptr(field_type), alloca, off_const)
+				field_ptr := b.emit2(.get_element_ptr, b.m.type_store.get_ptr(field_type), alloca,
+					off_const)
 				b.emit2(.store, b.void_type, zero, field_ptr)
 			}
 		}
@@ -843,7 +855,8 @@ fn (mut b Builder) build_heap_struct_init(node flat.Node) ValueID {
 					offset := b.m.struct_field_offset(typ_id, fi)
 					off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
 					field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
-					field_ptr := b.emit2(.get_element_ptr, b.m.type_store.get_ptr(field_type), alloca, off_const)
+					field_ptr := b.emit2(.get_element_ptr, b.m.type_store.get_ptr(field_type),
+						alloca, off_const)
 					b.emit2(.store, b.void_type, field_val, field_ptr)
 					break
 				}
@@ -1051,7 +1064,9 @@ fn (b &Builder) infer_v_type(id flat.NodeId) string {
 		.ident {
 			if addr := b.vars[node.value] {
 				val := b.m.values[addr]
-				if val.typ == b.str_type || (val.typ > 0 && val.typ < b.m.type_store.types.len && b.m.type_store.types[val.typ].kind == .ptr_t && b.m.type_store.types[val.typ].elem_type == b.str_type) {
+				if val.typ == b.str_type || (val.typ > 0 && val.typ < b.m.type_store.types.len
+					&& b.m.type_store.types[val.typ].kind == .ptr_t
+					&& b.m.type_store.types[val.typ].elem_type == b.str_type) {
 					return 'string'
 				}
 			}
