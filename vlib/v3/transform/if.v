@@ -128,11 +128,11 @@ fn (mut t Transformer) transform_and_chain_smartcasts(cond_id flat.NodeId) flat.
 	// If the left side is an is_expr, push smartcast before processing RHS.
 	if lhs.kind == .is_expr && lhs.children_count >= 1 {
 		lhs_expr_id := t.a.child(&lhs, 0)
-		lhs_expr := t.a.nodes[int(lhs_expr_id)]
-		if lhs_expr.kind == .ident && lhs.value.len > 0 {
+		ek := t.expr_key(lhs_expr_id)
+		if ek.len > 0 && lhs.value.len > 0 {
 			sum_type_name := t.find_sum_type_for_variant(lhs.value)
 			if sum_type_name.len > 0 {
-				t.push_smartcast(lhs_expr.value, lhs.value, sum_type_name)
+				t.push_smartcast(ek, lhs.value, sum_type_name)
 			}
 		}
 	} else if lhs.kind == .infix && lhs.op == .logical_and {
@@ -162,12 +162,6 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	//   b) an && chain where one term is an is_expr
 	is_info := t.extract_is_expr(cond_id)
 
-	// Push the smartcast (if any) BEFORE transforming the condition, so that a
-	// chain like `x is T && x.field` rewrites the payload access on the rhs, and
-	// keep it pushed for the then-branch below. Then run the whole condition
-	// through the normal expression path so that string/`in`/etc. lowering
-	// applies to conditions too — this is the single place that owns condition
-	// lowering (the backend no longer special-cases it).
 	mut has_smartcast := false
 	if is_info.expr_name.len > 0 && is_info.sum_type_name.len > 0 {
 		t.push_smartcast(is_info.expr_name, is_info.variant_name, is_info.sum_type_name)
@@ -259,10 +253,10 @@ fn (t &Transformer) extract_is_expr(cond_id flat.NodeId) IsExprInfo {
 	cond := t.a.nodes[int(cond_id)]
 	if cond.kind == .is_expr && cond.children_count >= 1 {
 		expr_id := t.a.child(&cond, 0)
-		expr_node := t.a.nodes[int(expr_id)]
-		if expr_node.kind == .ident && cond.value.len > 0 {
+		ek := t.expr_key(expr_id)
+		if ek.len > 0 && cond.value.len > 0 {
 			return IsExprInfo{
-				expr_name:     expr_node.value
+				expr_name:     ek
 				variant_name:  cond.value
 				sum_type_name: t.find_sum_type_for_variant(cond.value)
 			}
@@ -285,12 +279,19 @@ fn (t &Transformer) extract_is_expr(cond_id flat.NodeId) IsExprInfo {
 // find_sum_type_for_variant returns the sum type name that contains
 // the given variant, or '' if none is found.
 fn (t &Transformer) find_sum_type_for_variant(variant string) string {
+	short := if variant.contains('.') { variant.all_after_last('.') } else { variant }
+	mut best := ''
 	for sum_name, variants in t.sum_types {
 		for v in variants {
-			if v == variant {
-				return sum_name
+			if v == variant || v == short {
+				if sum_name.contains('.') {
+					return sum_name
+				}
+				if best.len == 0 {
+					best = sum_name
+				}
 			}
 		}
 	}
-	return ''
+	return best
 }

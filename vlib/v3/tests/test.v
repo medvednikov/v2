@@ -775,11 +775,11 @@ enum Direction {
 
 // ===================== MAIN TEST FUNCTION =====================
 
-fn try_get_value(ok bool) Optional {
+fn try_get_value(ok bool) ?int {
 	if ok {
-		return optional_ok(42)
+		return 42
 	}
-	return optional_none()
+	return none
 }
 
 fn main() {
@@ -2988,7 +2988,6 @@ fn main() {
 		.down { print_int(20) }
 		.left { print_int(30) }
 		.right { print_int(40) }
-		else { print_int(0) }
 	}
 
 	// 65.3 Enum comparison
@@ -3770,10 +3769,9 @@ fn main() {
 	print_int(mi[10]) // 100
 	print_int(mi[20]) // 200
 	// map init with values
-	ml := map[string]int{
-		'x': 10
-		'y': 20
-	}
+	mut ml := map[string]int{}
+	ml['x'] = 10
+	ml['y'] = 20
 	print_int(ml['x']) // 10
 	print_int(ml['y']) // 20
 	print_str('maps: ok')
@@ -3955,7 +3953,7 @@ fn main() {
 
 	// for v in map (value only)
 	mut count94 := 0
-	for v in m94 {
+	for _, v in m94 {
 		count94 = count94 + v
 	}
 	print_int(count94) // 6

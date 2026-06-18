@@ -54,13 +54,16 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 
 	// BFS from main
 	mut used := map[string]bool{}
-	mut queue := ['main']
+	mut queue := []string{}
+	queue << 'main'
 	used['main'] = true
 
-	for queue.len > 0 {
-		name := queue[0]
-		queue.delete(0)
-		if calls := call_graph[name] {
+	mut qi := 0
+	for qi < queue.len {
+		name := queue[qi]
+		qi++
+		if name in call_graph {
+			calls := call_graph[name]
 			for callee in calls {
 				if callee in all_fns {
 					if callee !in used {
@@ -190,6 +193,29 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 				if child.op == .plus {
 					calls << 'string__plus'
 				}
+				if child.children_count >= 2 {
+					lhs_id := a.child(child, 0)
+					if int(lhs_id) >= 0 {
+						lhs_type := tc.resolve_type(lhs_id)
+						lhs_name := resolve_type_name(lhs_type)
+						if lhs_name.len > 0 {
+							op_name := match child.op {
+								.minus { '-' }
+								.plus { '+' }
+								.eq { '==' }
+								.ne { '!=' }
+								.lt { '<' }
+								.gt { '>' }
+								.le { '<=' }
+								.ge { '>=' }
+								else { '' }
+							}
+							if op_name.len > 0 {
+								calls << lhs_name + '.' + op_name
+							}
+						}
+					}
+				}
 			}
 			else {}
 		}
@@ -209,6 +235,45 @@ fn resolve_type_name(t types.Type) string {
 		return 'map'
 	} else if t is types.Pointer {
 		return resolve_type_name(t.base_type)
+	} else if t is types.Primitive {
+		props := int(t.props)
+		sz := int(t.size)
+		if props & 1 > 0 {
+			return 'bool'
+		}
+		if props & 4 > 0 {
+			if props & 8 > 0 {
+				return match sz {
+					8 { 'u8' }
+					16 { 'u16' }
+					32 { 'u32' }
+					64 { 'u64' }
+					else { 'int' }
+				}
+			}
+			return match sz {
+				0 { 'int' }
+				8 { 'i8' }
+				16 { 'i16' }
+				32 { 'i32' }
+				64 { 'i64' }
+				else { 'int' }
+			}
+		}
+		if props & 2 > 0 {
+			return match sz {
+				32 { 'f32' }
+				64 { 'f64' }
+				else { 'f64' }
+			}
+		}
+		return 'int'
+	} else if t is types.ISize {
+		return 'isize'
+	} else if t is types.USize {
+		return 'usize'
+	} else if t is types.Rune {
+		return 'rune'
 	}
 	return ''
 }

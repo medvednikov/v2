@@ -20,13 +20,13 @@ fn (mut t Transformer) transform_infix_string_ops(id flat.NodeId, node flat.Node
 
 	match node.op {
 		.plus {
-			return t.make_call('string__plus', [new_lhs, new_rhs])
+			return t.make_call('string__plus', arr2(new_lhs, new_rhs))
 		}
 		.eq {
-			return t.make_call('string__eq', [new_lhs, new_rhs])
+			return t.make_call('string__eq', arr2(new_lhs, new_rhs))
 		}
 		.ne {
-			eq_call := t.make_call('string__eq', [new_lhs, new_rhs])
+			eq_call := t.make_call('string__eq', arr2(new_lhs, new_rhs))
 			start := t.a.children.len
 			t.a.children << eq_call
 			return t.a.add_node(flat.Node{
@@ -37,15 +37,15 @@ fn (mut t Transformer) transform_infix_string_ops(id flat.NodeId, node flat.Node
 			})
 		}
 		.lt {
-			return t.make_call('string__lt', [new_lhs, new_rhs])
+			return t.make_call('string__lt', arr2(new_lhs, new_rhs))
 		}
 		.gt {
 			// a > b  ->  string__lt(b, a)
-			return t.make_call('string__lt', [new_rhs, new_lhs])
+			return t.make_call('string__lt', arr2(new_rhs, new_lhs))
 		}
 		.le {
 			// a <= b  ->  !(b < a)  ->  !string__lt(rhs, lhs)
-			lt_call := t.make_call('string__lt', [new_rhs, new_lhs])
+			lt_call := t.make_call('string__lt', arr2(new_rhs, new_lhs))
 			start := t.a.children.len
 			t.a.children << lt_call
 			return t.a.add_node(flat.Node{
@@ -57,7 +57,7 @@ fn (mut t Transformer) transform_infix_string_ops(id flat.NodeId, node flat.Node
 		}
 		.ge {
 			// a >= b  ->  !(a < b)  ->  !string__lt(lhs, rhs)
-			lt_call := t.make_call('string__lt', [new_lhs, new_rhs])
+			lt_call := t.make_call('string__lt', arr2(new_lhs, new_rhs))
 			start := t.a.children.len
 			t.a.children << lt_call
 			return t.a.add_node(flat.Node{
@@ -107,12 +107,17 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 		if rhs.children_count == 0 {
 			t.make_bool_literal(false)
 		} else {
+			is_str := t.is_string_type(lhs_id)
 			mut or_chain := flat.empty_node
 			for i in 0 .. rhs.children_count {
 				elem_id := t.a.child(&rhs, i)
 				new_elem := t.transform_expr(elem_id)
 				lhs_copy := t.transform_expr(lhs_id)
-				eq_cmp := t.make_infix(.eq, lhs_copy, new_elem)
+				eq_cmp := if is_str {
+					t.make_call('string__eq', arr2(lhs_copy, new_elem))
+				} else {
+					t.make_infix(.eq, lhs_copy, new_elem)
+				}
 				if int(or_chain) < 0 {
 					or_chain = eq_cmp
 				} else {
@@ -128,7 +133,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			// dynamic array membership -> array_contains_int/string(arr, val)
 			elem := rhs_type[2..]
 			fn_name := if elem == 'string' { 'array_contains_string' } else { 'array_contains_int' }
-			t.make_call(fn_name, [new_rhs, new_lhs])
+			t.make_call(fn_name, arr2(new_rhs, new_lhs))
 		} else if is_fixed_array_type(rhs_type) {
 			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
 			elem := rhs_type.all_before('[')
@@ -139,7 +144,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 				'fixed_array_contains_int'
 			}
 			len_lit := t.make_int_literal(len_str.int())
-			t.make_call(fn_name, [new_rhs, len_lit, new_lhs])
+			t.make_call(fn_name, arr3(new_rhs, len_lit, new_lhs))
 		} else {
 			// map / unknown containment: the backend renders the membership test.
 			// map__exists needs a C key pointer (compound literal) that cannot be
@@ -229,7 +234,7 @@ pub fn (mut t Transformer) make_string_literal(value string) flat.NodeId {
 }
 
 pub fn (mut t Transformer) make_int_literal(value int) flat.NodeId {
-	return t.a.add_val(.int_literal, value.str())
+	return t.a.add_val(.int_literal, '${value}')
 }
 
 pub fn (mut t Transformer) make_bool_literal(value bool) flat.NodeId {

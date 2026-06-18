@@ -27,12 +27,8 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 			val_node := t.a.nodes[int(val_id)]
 			field_type := field_types[child.value] or { '' }
 			// Check if the value is an enum shorthand and the field type is an enum
-			new_val := if val_node.kind == .enum_val && field_type.len > 0 {
-				if _ := t.enum_types[field_type] {
-					t.transform_enum_shorthand(val_id, val_node, field_type)
-				} else {
-					t.transform_expr(val_id)
-				}
+			new_val := if val_node.kind == .enum_val && field_type.len > 0 && field_type in t.enum_types {
+				t.transform_enum_shorthand(val_id, val_node, field_type)
 			} else {
 				t.transform_expr(val_id)
 			}
@@ -130,10 +126,14 @@ fn (mut t Transformer) transform_array_init_expr(id flat.NodeId, node flat.Node)
 	if node.children_count == 0 {
 		return id
 	}
-	start := t.a.children.len
+	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
-		t.a.children << t.transform_expr(child_id)
+		new_children << t.transform_expr(child_id)
+	}
+	start := t.a.children.len
+	for nc in new_children {
+		t.a.children << nc
 	}
 	return t.a.add_node(flat.Node{
 		kind:           .array_init
@@ -152,10 +152,14 @@ fn (mut t Transformer) transform_map_init_expr(id flat.NodeId, node flat.Node) f
 	if node.children_count == 0 {
 		return id
 	}
-	start := t.a.children.len
+	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
-		t.a.children << t.transform_expr(child_id)
+		new_children << t.transform_expr(child_id)
+	}
+	start := t.a.children.len
+	for nc in new_children {
+		t.a.children << nc
 	}
 	return t.a.add_node(flat.Node{
 		kind:           .map_init

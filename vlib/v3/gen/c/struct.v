@@ -31,6 +31,40 @@ fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
 	g.write('}, sizeof(${name}))')
 }
 
+fn (mut g FlatGen) gen_return_assoc(node flat.Node) {
+	ct := g.tc.c_type(g.tc.parse_type(node.value))
+	tmp := g.tmp_name()
+	g.write('${ct} ${tmp} = ')
+	g.gen_expr(g.a.child(&node, 0))
+	g.writeln(';')
+	for i in 1 .. node.children_count {
+		field := g.a.child_node(&node, i)
+		if field.kind == .field_init && field.children_count > 0 {
+			g.write('${tmp}.${c_name(field.value)} = ')
+			g.gen_expr(g.a.child(field, 0))
+			g.writeln(';')
+		}
+	}
+	g.writeln('return ${tmp};')
+}
+
+fn (mut g FlatGen) gen_assoc_expr(node flat.Node) {
+	ct := g.tc.c_type(g.tc.parse_type(node.value))
+	tmp := g.tmp_name()
+	g.write('({${ct} ${tmp} = ')
+	g.gen_expr(g.a.child(&node, 0))
+	g.write(';')
+	for i in 1 .. node.children_count {
+		field := g.a.child_node(&node, i)
+		if field.kind == .field_init && field.children_count > 0 {
+			g.write(' ${tmp}.${c_name(field.value)} = ')
+			g.gen_expr(g.a.child(field, 0))
+			g.write(';')
+		}
+	}
+	g.write(' ${tmp};})')
+}
+
 fn (mut g FlatGen) gen_map_init(node flat.Node) {
 	map_type := g.tc.parse_type(node.value)
 	if map_type is types.Map {
@@ -213,7 +247,7 @@ fn (mut g FlatGen) emit_struct(name string) {
 
 fn (mut g FlatGen) write_struct_field(struct_name string, f types.StructField) {
 	if f.typ is types.FnType {
-		ret := if r := f.typ.return_type { g.tc.c_type(r) } else { 'void' }
+		ret := if f.typ.return_type is types.Void { 'void' } else { g.tc.c_type(f.typ.return_type) }
 		mut params := []string{}
 		for p in f.typ.params {
 			params << g.tc.c_type(p)

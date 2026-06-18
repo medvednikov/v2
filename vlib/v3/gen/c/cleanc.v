@@ -73,7 +73,9 @@ pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, 
 	g.global_decls()
 	g.fn_ptr_typedefs()
 	g.forward_decls()
+	g.register_interface_strings()
 	g.string_literals()
+	g.interface_method_stubs()
 	g.sb.write_string(const_code)
 	if g.runtime_inits.len > 0 {
 		g.writeln('void _vinit() {')
@@ -258,29 +260,50 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_call(node)
 		}
 		.infix {
-			// NOTE: string operators (+, ==, !=, <, >, <=, >=) are lowered to
-			// string__plus / string__eq / string__lt calls by the transformer
-			// (transform.transform_infix_string_ops + match/condition lowering),
-			// which is type-aware via the pre-transform type checker. The backend
-			// only emits primitive infix here.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
-			lhs_node := g.a.nodes[int(lhs_id)]
-			rhs_node := g.a.nodes[int(rhs_id)]
-			if lhs_node.kind == .infix {
-				g.write('(')
-				g.gen_expr(lhs_id)
-				g.write(')')
+			lhs_type := g.tc.resolve_type(lhs_id)
+			if lhs_type is types.Struct {
+				op_name := match node.op {
+					.minus { '__minus' }
+					.plus { '__plus' }
+					.eq { '__eq' }
+					.ne { '__ne' }
+					.lt { '__lt' }
+					.gt { '__gt' }
+					.le { '__le' }
+					.ge { '__ge' }
+					else { '' }
+				}
+				if op_name.len > 0 {
+					g.write('${c_name(lhs_type.name)}${op_name}(')
+					g.gen_expr(lhs_id)
+					g.write(', ')
+					g.gen_expr(rhs_id)
+					g.write(')')
+				} else {
+					g.gen_expr(lhs_id)
+					g.write(' ${g.op_str(node.op)} ')
+					g.gen_expr(rhs_id)
+				}
 			} else {
-				g.gen_expr(lhs_id)
-			}
-			g.write(' ${g.op_str(node.op)} ')
-			if rhs_node.kind == .infix {
-				g.write('(')
-				g.gen_expr(rhs_id)
-				g.write(')')
-			} else {
-				g.gen_expr(rhs_id)
+				lhs_node := g.a.nodes[int(lhs_id)]
+				rhs_node := g.a.nodes[int(rhs_id)]
+				if lhs_node.kind == .infix {
+					g.write('(')
+					g.gen_expr(lhs_id)
+					g.write(')')
+				} else {
+					g.gen_expr(lhs_id)
+				}
+				g.write(' ${g.op_str(node.op)} ')
+				if rhs_node.kind == .infix {
+					g.write('(')
+					g.gen_expr(rhs_id)
+					g.write(')')
+				} else {
+					g.gen_expr(rhs_id)
+				}
 			}
 		}
 		.prefix {
@@ -333,9 +356,15 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			rhs_type := g.tc.resolve_type(rhs_id)
-			if rhs_type is types.Map {
-				c_key := g.tc.c_type(rhs_type.key_type)
-				g.write('map__exists(&')
+			clean_rhs := types.unwrap_pointer(rhs_type)
+			if clean_rhs is types.Map {
+				c_key := g.tc.c_type(clean_rhs.key_type)
+				is_ptr := rhs_type is types.Pointer
+				if is_ptr {
+					g.write('map__exists(')
+				} else {
+					g.write('map__exists(&')
+				}
 				g.gen_expr(rhs_id)
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(lhs_id)
@@ -393,6 +422,28 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					mod
 				}
 				g.write(c_name('${short_mod}.${node.value}'))
+			} else if base.kind == .selector && base.children_count > 0 && g.is_module_qualified_enum(base) {
+				inner_base := g.a.child_node(&base, 0)
+				mod := g.modules[inner_base.value]
+				short_mod := if mod.contains('.') {
+					mod.all_after_last('.')
+				} else {
+					mod
+				}
+				qname := '${short_mod}.${base.value}'
+				if qname in g.tc.enum_names || base.value in g.tc.enum_names {
+					ekey := '${qname}.${node.value}'
+					ekey2 := '${base.value}.${node.value}'
+					if ekey in g.enum_vals {
+						g.write('${g.enum_vals[ekey]}')
+					} else if ekey2 in g.enum_vals {
+						g.write('${g.enum_vals[ekey2]}')
+					} else {
+						g.write(c_name('${qname}.${node.value}'))
+					}
+				} else {
+					g.write(c_name('${qname}.${node.value}'))
+				}
 			} else {
 				g.gen_expr(base_id)
 				if node.op == .arrow {
@@ -426,11 +477,11 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			} else if base_type is types.Map {
 				c_key := g.tc.c_type(base_type.key_type)
 				c_val := g.tc.c_type(base_type.value_type)
-				g.write('*(${c_val}*)map__get(&')
+				g.write('(*(${c_val}*)map__get(&')
 				g.gen_expr(base_id)
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(g.a.child(&node, 1))
-				g.write('}, &(${c_val}[]){0})')
+				g.write('}, &(${c_val}[]){0}))')
 			} else if base_type is types.Array || (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
 				arr_type := if base_type is types.Array {
 					base_type as types.Array
@@ -477,7 +528,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		.cast_expr {
 			target_type := g.tc.parse_type(node.value)
 			ct := g.tc.c_type(target_type)
-			if target_type is types.SumType {
+			if node.value in g.interfaces || g.tc.qualify_name(node.value) in g.interfaces {
+				g.write('(${ct}){0}')
+			} else if target_type is types.SumType {
 				inner_id := g.a.child(&node, 0)
 				inner := g.a.nodes[int(inner_id)]
 				variant_name0 := if inner.kind == .struct_init || inner.kind == .cast_expr {
@@ -490,8 +543,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				field := g.sum_field_name(variant_name)
 				if g.variant_references_sum(variant_name, target_type.name) {
 					inner_ct := g.tc.c_type(g.tc.parse_type(variant_name))
-					g.write('(${ct}){.typ = ${idx}, .${field} = (${inner_ct}*)memdup(&(${inner_ct}){')
 					if inner.kind == .struct_init {
+						g.write('(${ct}){.typ = ${idx}, .${field} = (${inner_ct}*)memdup(&(${inner_ct}){')
 						for si in 0 .. inner.children_count {
 							sf := g.a.child_node(&inner, si)
 							if si > 0 {
@@ -500,10 +553,12 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 							g.write('.${c_name(sf.value)} = ')
 							g.gen_expr(g.a.child(sf, 0))
 						}
+						g.write('}, sizeof(${inner_ct}))}')
 					} else {
+						g.write('(${ct}){.typ = ${idx}, .${field} = (${inner_ct}*)memdup(&')
 						g.gen_expr(inner_id)
+						g.write(', sizeof(${inner_ct}))}')
 					}
-					g.write('}, sizeof(${inner_ct}))}')
 				} else {
 					g.write('(${ct}){.typ = ${idx}, .${field} = ')
 					g.gen_expr(inner_id)
@@ -542,8 +597,23 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.gen_or_expr(node)
 		}
 		.block {
-			if node.children_count > 0 {
+			if node.children_count > 1 {
+				g.write('({')
+				for bi in 0 .. node.children_count - 1 {
+					g.gen_node(g.a.child(&node, bi))
+				}
 				last_id := g.a.child(&node, node.children_count - 1)
+				last := g.a.nodes[int(last_id)]
+				if last.kind == .expr_stmt {
+					g.gen_expr(g.a.child(&last, 0))
+				} else if last.kind == .if_expr {
+					g.gen_expr(last_id)
+				} else {
+					g.gen_node(last_id)
+				}
+				g.write(';})')
+			} else if node.children_count > 0 {
+				last_id := g.a.child(&node, 0)
 				last := g.a.nodes[int(last_id)]
 				if last.kind == .expr_stmt {
 					g.gen_expr(g.a.child(&last, 0))
@@ -607,9 +677,26 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write('sizeof(${ct})')
 			}
 		}
+		.assoc {
+			g.gen_assoc_expr(node)
+		}
 		.empty {}
 		else {}
 	}
+}
+
+fn (g &FlatGen) is_module_qualified_enum(base flat.Node) bool {
+	if base.kind != .selector || base.children_count == 0 {
+		return false
+	}
+	inner_base := g.a.child_node(&base, 0)
+	if inner_base.kind != .ident || inner_base.value !in g.modules {
+		return false
+	}
+	mod := g.modules[inner_base.value]
+	short_mod := if mod.contains('.') { mod.all_after_last('.') } else { mod }
+	qname := '${short_mod}.${base.value}'
+	return qname in g.tc.enum_names || base.value in g.tc.enum_names
 }
 
 fn (mut g FlatGen) preamble() {
@@ -993,7 +1080,7 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('}')
 	g.writeln('string string__after(string s, string sub) { return string__all_after(s, sub); }')
 	g.writeln('string string__before(string s, string sub) { return string__all_before(s, sub); }')
-	g.writeln('string string__int(string s) { return (int)strtol(s.str, NULL, 10); }')
+	g.writeln('int string__int(string s) { return (int)strtol(s.str, NULL, 10); }')
 	g.writeln('i64 string__i64(string s) { return (i64)strtoll(s.str, NULL, 10); }')
 	g.writeln('Array string__split(string s, string delim) {')
 	g.writeln('\tArray a = array_new(sizeof(string), 0, 4);')
@@ -1128,6 +1215,25 @@ fn (mut g FlatGen) runtime_fns() {
 		g.writeln('}')
 		g.writeln('')
 	}
+	g.writeln('bool u8__is_alnum(u8 c) { return (c >= \'a\' && c <= \'z\') || (c >= \'A\' && c <= \'Z\') || (c >= \'0\' && c <= \'9\'); }')
+	g.writeln('bool u8__is_digit(u8 c) { return c >= \'0\' && c <= \'9\'; }')
+	g.writeln('bool u8__is_alpha(u8 c) { return (c >= \'a\' && c <= \'z\') || (c >= \'A\' && c <= \'Z\'); }')
+	g.writeln('bool u8__is_letter(u8 c) { return u8__is_alpha(c) || c == \'_\'; }')
+	g.writeln('bool u8__is_hex_digit(u8 c) { return u8__is_digit(c) || (c >= \'a\' && c <= \'f\') || (c >= \'A\' && c <= \'F\'); }')
+	g.writeln('bool u8__is_space(u8 c) { return c == \' \' || c == \'\\t\' || c == \'\\n\' || c == \'\\r\' || c == \'\\v\' || c == \'\\f\'; }')
+	g.writeln('bool int__is_alnum(int c) { return u8__is_alnum((u8)c); }')
+	g.writeln('bool int__is_digit(int c) { return u8__is_digit((u8)c); }')
+	g.writeln('bool int__is_alpha(int c) { return u8__is_alpha((u8)c); }')
+	g.writeln('bool int__is_letter(int c) { return u8__is_letter((u8)c); }')
+	g.writeln('bool int__is_hex_digit(int c) { return u8__is_hex_digit((u8)c); }')
+	g.writeln('bool int__is_space(int c) { return u8__is_space((u8)c); }')
+	g.writeln('void v_exit(int code) { exit(code); }')
+	g.writeln('int v_copy(Array* dst, Array src) {')
+	g.writeln('\tint n = dst->len < src.len ? dst->len : src.len;')
+	g.writeln('\tif (n > 0) memcpy(dst->data, src.data, n * dst->elem_size);')
+	g.writeln('\treturn n;')
+	g.writeln('}')
+	g.writeln('')
 }
 
 fn (mut g FlatGen) global_decls() {
@@ -1249,7 +1355,11 @@ fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
 			true
 		}
 		.prefix {
-			g.is_const_expr(g.a.child(&node, 0))
+			if node.op == .amp {
+				false
+			} else {
+				g.is_const_expr(g.a.child(&node, 0))
+			}
 		}
 		.infix {
 			g.is_const_expr(g.a.child(&node, 0)) && g.is_const_expr(g.a.child(&node, 1))
@@ -1313,6 +1423,9 @@ fn (g &FlatGen) is_runtime_assignable(id flat.NodeId) bool {
 			}
 		}
 		.ident {
+			true
+		}
+		.cast_expr, .prefix, .struct_init {
 			true
 		}
 		else {

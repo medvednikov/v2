@@ -2,6 +2,27 @@ module types
 
 import v3.flat
 
+fn tarr1(a Type) []Type {
+	mut r := []Type{}
+	r << a
+	return r
+}
+
+fn tarr2(a Type, b Type) []Type {
+	mut r := []Type{}
+	r << a
+	r << b
+	return r
+}
+
+fn tarr3(a Type, b Type, c Type) []Type {
+	mut r := []Type{}
+	r << a
+	r << b
+	r << c
+	return r
+}
+
 pub struct TypeError {
 pub:
 	msg  string
@@ -128,6 +149,9 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 			.fn_decl {
 				qname := tc.qualify_fn_name(node.value)
 				tc.fn_ret_types[qname] = tc.parse_type(node.typ)
+				if qname != node.value && node.value !in tc.fn_ret_types {
+					tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
+				}
 				mut ptypes := []Type{}
 				for i in 0 .. node.children_count {
 					child := a.child_node(&node, i)
@@ -136,6 +160,9 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 					}
 				}
 				tc.fn_param_types[qname] = ptypes
+				if qname != node.value && node.value !in tc.fn_param_types {
+					tc.fn_param_types[node.value] = ptypes
+				}
 			}
 			.struct_decl {
 				if node.value.starts_with('C.') {
@@ -164,6 +191,29 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 					}
 				}
 				tc.fn_param_types[node.value] = ptypes
+			}
+			.interface_decl {
+				iface_name := tc.qualify_name(node.value)
+				for i in 0 .. node.children_count {
+					f := a.child_node(&node, i)
+					if f.kind == .interface_field {
+						mname := '${iface_name}.${f.value}'
+						tc.fn_ret_types[mname] = tc.parse_type(f.typ)
+						mut ptypes := []Type{}
+						ptypes << Type(Pointer{
+							base_type: Type(Struct{
+								name: iface_name
+							})
+						})
+						for j in 0 .. f.children_count {
+							child := a.child_node(f, j)
+							if child.kind == .param {
+								ptypes << tc.parse_type(child.typ)
+							}
+						}
+						tc.fn_param_types[mname] = ptypes
+					}
+				}
 			}
 			.global_decl {
 				for i in 0 .. node.children_count {
@@ -232,7 +282,7 @@ pub fn (tc &TypeChecker) qualify_name(name string) string {
 	if name.contains('.') {
 		return name
 	}
-	if builtin_type(name) != none {
+	if is_builtin_type_name(name) {
 		return name
 	}
 	return tc.cur_module + '.' + name
@@ -240,107 +290,94 @@ pub fn (tc &TypeChecker) qualify_name(name string) string {
 
 fn (mut tc TypeChecker) register_runtime_methods() {
 	tc.fn_ret_types['strings.new_builder'] = tc.parse_type('strings.Builder')
-	tc.fn_param_types['strings.new_builder'] = [tc.parse_type('int')]
+	tc.fn_param_types['strings.new_builder'] = tarr1(tc.parse_type('int'))
 	tc.fn_ret_types['strings.Builder.str'] = tc.parse_type('string')
-	tc.fn_param_types['strings.Builder.str'] = [tc.parse_type('&strings.Builder')]
+	tc.fn_param_types['strings.Builder.str'] = tarr1(tc.parse_type('&strings.Builder'))
 	tc.fn_ret_types['strings.Builder.write_string'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_string'] = [
-		tc.parse_type('&strings.Builder'),
-		tc.parse_type('string'),
-	]
+	tc.fn_param_types['strings.Builder.write_string'] = tarr2(tc.parse_type('&strings.Builder'), tc.parse_type('string'))
 	tc.fn_ret_types['strings.Builder.writeln'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.writeln'] = [tc.parse_type('&strings.Builder'),
-		tc.parse_type('string')]
+	tc.fn_param_types['strings.Builder.writeln'] = tarr2(tc.parse_type('&strings.Builder'), tc.parse_type('string'))
 	tc.fn_ret_types['strings.Builder.write_ptr'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_ptr'] = [
-		tc.parse_type('&strings.Builder'),
-		tc.parse_type('voidptr'),
-		tc.parse_type('int'),
-	]
+	tc.fn_param_types['strings.Builder.write_ptr'] = tarr3(tc.parse_type('&strings.Builder'), tc.parse_type('voidptr'), tc.parse_type('int'))
 	tc.fn_ret_types['strings.Builder.write_u8'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_u8'] = [
-		tc.parse_type('&strings.Builder'),
-		tc.parse_type('u8'),
-	]
+	tc.fn_param_types['strings.Builder.write_u8'] = tarr2(tc.parse_type('&strings.Builder'), tc.parse_type('u8'))
 	tc.fn_ret_types['strings.Builder.free'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.free'] = [tc.parse_type('&strings.Builder')]
+	tc.fn_param_types['strings.Builder.free'] = tarr1(tc.parse_type('&strings.Builder'))
 	tc.fn_ret_types['check_fwrite'] = tc.parse_type('!int')
-	tc.fn_param_types['check_fwrite'] = [tc.parse_type('int')]
+	tc.fn_param_types['check_fwrite'] = tarr1(tc.parse_type('int'))
 	tc.fn_ret_types['os.check_fwrite'] = tc.parse_type('!int')
 	tc.fn_ret_types['malloc_noscan'] = tc.parse_type('voidptr')
 	tc.fn_ret_types['u8.vstring'] = tc.parse_type('string')
 	tc.fn_ret_types['u8.vstring_with_len'] = tc.parse_type('string')
 	tc.fn_ret_types['IError.msg'] = tc.parse_type('string')
 	tc.fn_ret_types['IError.code'] = tc.parse_type('int')
-	tc.fn_param_types['IError.msg'] = [tc.parse_type('&IError')]
-	tc.fn_param_types['IError.code'] = [tc.parse_type('&IError')]
-	methods := {
-		'string.all_before':      ['string', 'string']
-		'string.all_before_last': ['string', 'string']
-		'string.all_after':       ['string', 'string']
-		'string.all_after_last':  ['string', 'string']
-		'string.before':          ['string', 'string']
-		'string.after':           ['string', 'string']
-		'string.substr':          ['string', 'int', 'int']
-		'string.trim_left':       ['string', 'string']
-		'string.trim_right':      ['string', 'string']
-		'string.trim_space':      ['string']
-		'string.count':           ['string', 'string']
-		'string.index':           ['string', 'string']
-		'string.last_index':      ['string', 'string']
-		'string.replace':         ['string', 'string', 'string']
-		'string.contains':        ['string', 'string']
-		'string.split':           ['string', 'string']
-		'string.starts_with':     ['string', 'string']
-		'string.ends_with':       ['string', 'string']
-		'string.index_u8':        ['string', 'u8']
-		'string.last_index_u8':   ['string', 'u8']
-		'string.contains_u8':     ['string', 'u8']
-		'string.int':             ['string']
-		'string.free':            ['&string']
-		'string.clone':           ['string']
-		'string.bytes':           ['string']
+	tc.fn_ret_types['string__plus'] = tc.parse_type('string')
+	tc.fn_ret_types['string__eq'] = tc.parse_type('bool')
+	tc.fn_ret_types['string__lt'] = tc.parse_type('bool')
+	tc.fn_ret_types['string_plus_many'] = tc.parse_type('string')
+	tc.fn_ret_types['string__bytes'] = tc.parse_type('[]u8')
+	tc.fn_ret_types['string__int'] = tc.parse_type('int')
+	tc.fn_ret_types['string__clone'] = tc.parse_type('string')
+	tc.fn_ret_types['string__contains'] = tc.parse_type('bool')
+	tc.fn_ret_types['string__split'] = tc.parse_type('[]string')
+	tc.fn_ret_types['string__replace'] = tc.parse_type('string')
+	tc.fn_ret_types['string__substr'] = tc.parse_type('string')
+	tc.fn_ret_types['string__trim_space'] = tc.parse_type('string')
+	tc.fn_ret_types['string__starts_with'] = tc.parse_type('bool')
+	tc.fn_ret_types['string__ends_with'] = tc.parse_type('bool')
+	tc.fn_ret_types['string__all_before'] = tc.parse_type('string')
+	tc.fn_ret_types['string__all_after'] = tc.parse_type('string')
+	tc.fn_ret_types['string__all_after_last'] = tc.parse_type('string')
+	tc.fn_ret_types['string__all_before_last'] = tc.parse_type('string')
+	tc.fn_ret_types['string__count'] = tc.parse_type('int')
+	tc.fn_ret_types['string__index_u8'] = tc.parse_type('int')
+	tc.fn_ret_types['string__trim_left'] = tc.parse_type('string')
+	tc.fn_ret_types['string__trim_right'] = tc.parse_type('string')
+	tc.fn_param_types['IError.msg'] = tarr1(tc.parse_type('&IError'))
+	tc.fn_param_types['IError.code'] = tarr1(tc.parse_type('&IError'))
+	s := tc.parse_type('string')
+	str_ref := tc.parse_type('&string')
+	i := tc.parse_type('int')
+	b := tc.parse_type('bool')
+	u := tc.parse_type('u8')
+	v := tc.parse_type('void')
+	tc.register_string_method('all_before', tarr2(s, s), s)
+	tc.register_string_method('all_before_last', tarr2(s, s), s)
+	tc.register_string_method('all_after', tarr2(s, s), s)
+	tc.register_string_method('all_after_last', tarr2(s, s), s)
+	tc.register_string_method('before', tarr2(s, s), s)
+	tc.register_string_method('after', tarr2(s, s), s)
+	tc.register_string_method('substr', tarr3(s, i, i), s)
+	tc.register_string_method('trim_left', tarr2(s, s), s)
+	tc.register_string_method('trim_right', tarr2(s, s), s)
+	tc.register_string_method('trim_space', tarr1(s), s)
+	tc.register_string_method('count', tarr2(s, s), i)
+	tc.register_string_method('index', tarr2(s, s), tc.parse_type('?int'))
+	tc.register_string_method('last_index', tarr2(s, s), tc.parse_type('?int'))
+	tc.register_string_method('replace', tarr3(s, s, s), s)
+	tc.register_string_method('contains', tarr2(s, s), b)
+	tc.register_string_method('split', tarr2(s, s), tc.parse_type('[]string'))
+	tc.register_string_method('starts_with', tarr2(s, s), b)
+	tc.register_string_method('ends_with', tarr2(s, s), b)
+	tc.register_string_method('index_u8', tarr2(s, u), i)
+	tc.register_string_method('last_index_u8', tarr2(s, u), i)
+	tc.register_string_method('contains_u8', tarr2(s, u), b)
+	tc.register_string_method('int', tarr1(s), i)
+	tc.register_string_method('free', tarr1(str_ref), v)
+	tc.register_string_method('clone', tarr1(s), s)
+	tc.register_string_method('bytes', tarr1(s), tc.parse_type('[]u8'))
+	tc.register_string_method('plus', tarr2(s, s), s)
+	tc.register_string_method('eq', tarr2(s, s), b)
+	tc.register_string_method('lt', tarr2(s, s), b)
+}
+
+fn (mut tc TypeChecker) register_string_method(name string, params []Type, ret Type) {
+	full := 'string.${name}'
+	if full !in tc.fn_param_types {
+		tc.fn_param_types[full] = params
 	}
-	ret_types := {
-		'string.all_before':      'string'
-		'string.all_before_last': 'string'
-		'string.all_after':       'string'
-		'string.all_after_last':  'string'
-		'string.before':          'string'
-		'string.after':           'string'
-		'string.substr':          'string'
-		'string.trim_left':       'string'
-		'string.trim_right':      'string'
-		'string.trim_space':      'string'
-		'string.count':           'int'
-		'string.index':           '?int'
-		'string.last_index':      '?int'
-		'string.replace':         'string'
-		'string.contains':        'bool'
-		'string.split':           '[]string'
-		'string.starts_with':     'bool'
-		'string.ends_with':       'bool'
-		'string.index_u8':        'int'
-		'string.last_index_u8':   'int'
-		'string.contains_u8':     'bool'
-		'string.int':             'int'
-		'string.free':            'void'
-		'string.clone':           'string'
-		'string.bytes':           '[]u8'
-	}
-	for name, params in methods {
-		if name !in tc.fn_param_types {
-			mut pt := []Type{}
-			for p in params {
-				pt << tc.parse_type(p)
-			}
-			tc.fn_param_types[name] = pt
-		}
-	}
-	for name, ret in ret_types {
-		if name !in tc.fn_ret_types {
-			tc.fn_ret_types[name] = tc.parse_type(ret)
-		}
+	if full !in tc.fn_ret_types {
+		tc.fn_ret_types[full] = ret
 	}
 }
 
@@ -563,19 +600,7 @@ fn (mut tc TypeChecker) check_call(id flat.NodeId, node flat.Node) {
 			} else {
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
 				clean := unwrap_pointer(base_type)
-				type_name := if clean is Struct {
-					clean.name
-				} else if clean is String {
-					'string'
-				} else if clean is Array {
-					'Array'
-				} else if clean is Map {
-					'map'
-				} else if clean is Primitive {
-					prim_c_type(clean)
-				} else {
-					''
-				}
+				type_name := resolve_type_name_for_method(clean)
 				if type_name.len > 0 {
 					mname := '${type_name}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
@@ -804,7 +829,7 @@ fn (tc &TypeChecker) parse_fn_type(typ string) Type {
 			params << tc.parse_type(param_type)
 		}
 	}
-	mut ret_type := ?Type(none)
+	mut ret_type := Type(Void{})
 	if ret_str.len > 0 {
 		ret_type = tc.parse_type(ret_str)
 	}
@@ -922,20 +947,49 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
 				clean_type := unwrap_pointer(base_type)
 				if clean_type is Array {
-					return match fn_node.value {
-						'clone' { base_type }
-						'last', 'first', 'pop' { clean_type.elem_type }
-						'contains' { Type(bool_) }
-						'index' { Type(int_) }
-						'join', 'str' { Type(string_) }
-						else { Type(int_) }
+					if fn_node.value == 'clone' {
+						return base_type
 					}
+					if fn_node.value == 'last' || fn_node.value == 'first' || fn_node.value == 'pop' {
+						return clean_type.elem_type
+					}
+					if fn_node.value == 'contains' {
+						return Type(bool_)
+					}
+					if fn_node.value == 'index' {
+						return Type(int_)
+					}
+					if fn_node.value == 'join' || fn_node.value == 'str' {
+						return Type(string_)
+					}
+					elem_name := clean_type.elem_type.name()
+					short_elem := if elem_name.contains('.') {
+						elem_name.all_after_last('.')
+					} else {
+						elem_name
+					}
+					mod_prefix := if elem_name.contains('.') {
+						elem_name.all_before_last('.')
+					} else {
+						''
+					}
+					arr_mname1 := '[]${short_elem}.${fn_node.value}'
+					if mod_prefix.len > 0 {
+						arr_mkey := '${mod_prefix}.${arr_mname1}'
+						if arr_mkey in tc.fn_ret_types {
+							return tc.fn_ret_types[arr_mkey]
+						}
+					}
+					if arr_mname1 in tc.fn_ret_types {
+						return tc.fn_ret_types[arr_mname1]
+					}
+					return Type(int_)
 				}
 				if clean_type is Map {
-					return match fn_node.value {
-						'clone' { base_type }
-						else { Type(int_) }
+					if fn_node.value == 'clone' {
+						return base_type
 					}
+					return Type(int_)
 				}
 				if clean_type is String {
 					mname := 'string.${fn_node.value}'
@@ -949,8 +1003,20 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						return tc.fn_ret_types[mname]
 					}
 				}
+				if clean_type is SumType {
+					mname := '${clean_type.name}.${fn_node.value}'
+					if mname in tc.fn_ret_types {
+						return tc.fn_ret_types[mname]
+					}
+				}
+				if clean_type is Enum {
+					mname := '${clean_type.name}.${fn_node.value}'
+					if mname in tc.fn_ret_types {
+						return tc.fn_ret_types[mname]
+					}
+				}
 				if clean_type is Primitive {
-					mname := '${prim_c_type(clean_type)}.${fn_node.value}'
+					mname := '${prim_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
 						return tc.fn_ret_types[mname]
 					}
@@ -1051,6 +1117,16 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					}
 				}
 			}
+			if clean is Primitive && base_node.kind == .selector {
+				vname := base_node.value.replace('__', '.')
+				if vname in tc.structs {
+					for f in tc.structs[vname] {
+						if f.name == node.value {
+							return f.typ
+						}
+					}
+				}
+			}
 			return Type(int_)
 		}
 		.array_literal {
@@ -1082,6 +1158,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			}
 			if base_type is ArrayFixed {
 				return base_type.elem_type
+			}
+			if base_type is String {
+				return Type(u8_)
 			}
 			return Type(int_)
 		}
@@ -1163,90 +1242,141 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 }
 
 pub fn (tc &TypeChecker) c_type(t Type) string {
-	match t {
-		Void {
-			return 'void'
+	if t is Void {
+		return 'void'
+	}
+	if t is Nil {
+		return 'void*'
+	}
+	if t is None {
+		return 'Optional'
+	}
+	if t is String {
+		return 'string'
+	}
+	if t is Char {
+		return 'char'
+	}
+	if t is Rune {
+		return 'i32'
+	}
+	if t is ISize {
+		return 'ptrdiff_t'
+	}
+	if t is USize {
+		return 'size_t'
+	}
+	if t is Primitive {
+		return prim_c_type_from(t.props, t.size)
+	}
+	if t is Array {
+		return 'Array'
+	}
+	if t is ArrayFixed {
+		return if tc.has_builtins { 'array' } else { 'Array' }
+	}
+	if t is Map {
+		return 'map'
+	}
+	if t is Pointer {
+		return tc.c_type(t.base_type) + '*'
+	}
+	if t is FnType {
+		ret := if t.return_type is Void { 'void' } else { tc.c_type(t.return_type) }
+		if t.params.len == 0 {
+			return 'fn_ptr:${ret}|void'
 		}
-		Nil {
-			return 'void*'
+		mut params := []string{}
+		for p in t.params {
+			params << tc.c_type(p)
 		}
-		None {
-			return 'Optional'
-		}
-		String {
-			return 'string'
-		}
-		Char {
-			return 'char'
-		}
-		Rune {
-			return 'i32'
-		}
-		ISize {
-			return 'ptrdiff_t'
-		}
-		USize {
-			return 'size_t'
-		}
-		Primitive {
-			return prim_c_type(t)
-		}
-		Array {
-			return 'Array'
-		}
-		ArrayFixed {
-			return if tc.has_builtins { 'array' } else { 'Array' }
-		}
-		Map {
-			return 'map'
-		}
-		Pointer {
-			return tc.c_type(t.base_type) + '*'
-		}
-		FnType {
-			ret := if r := t.return_type { tc.c_type(r) } else { 'void' }
-			if t.params.len == 0 {
-				return 'fn_ptr:${ret}|void'
+		return 'fn_ptr:${ret}|${params.join(', ')}'
+	}
+	if t is OptionType {
+		return 'Optional'
+	}
+	if t is ResultType {
+		return 'Optional'
+	}
+	if t is Struct {
+		if t.name.starts_with('C.') {
+			raw := t.name[2..]
+			if raw.len > 0 && raw[0] >= `a` && raw[0] <= `z` && !raw.ends_with('_t') {
+				return 'struct ${raw}'
 			}
-			mut params := []string{}
-			for p in t.params {
-				params << tc.c_type(p)
+			return raw
+		}
+		return c_name(t.name)
+	}
+	if t is Enum {
+		return 'int'
+	}
+	if t is SumType {
+		return c_name(t.name)
+	}
+	if t is Alias {
+		return tc.c_type(t.base_type)
+	}
+	if t is MultiReturn {
+		mut parts := []string{}
+		for ty in t.types {
+			parts << tc.c_type(ty)
+		}
+		return 'multi_return_${parts.join('_')}'
+	}
+	return 'int'
+}
+
+fn resolve_type_name_for_method(t Type) string {
+	if t is Struct {
+		return t.name
+	}
+	if t is String {
+		return 'string'
+	}
+	if t is Array {
+		return 'Array'
+	}
+	if t is Map {
+		return 'map'
+	}
+	if t is Primitive {
+		return prim_c_type_from(t.props, t.size)
+	}
+	return ''
+}
+
+fn prim_c_type_from(props Properties, size u8) string {
+	if props.has(.boolean) {
+		return 'bool'
+	}
+	if props.has(.integer) {
+		if props.has(.unsigned) {
+			return match size {
+				8 { 'u8' }
+				16 { 'u16' }
+				32 { 'u32' }
+				64 { 'u64' }
+				else { 'u${size}' }
 			}
-			return 'fn_ptr:${ret}|${params.join(', ')}'
 		}
-		OptionType {
-			return 'Optional'
-		}
-		ResultType {
-			return 'Optional'
-		}
-		Struct {
-			if t.name.starts_with('C.') {
-				raw := t.name[2..]
-				if raw.len > 0 && raw[0] >= `a` && raw[0] <= `z` && !raw.ends_with('_t') {
-					return 'struct ${raw}'
-				}
-				return raw
-			}
-			return c_name(t.name)
-		}
-		Enum {
-			return 'int'
-		}
-		SumType {
-			return c_name(t.name)
-		}
-		Alias {
-			return tc.c_type(t.base_type)
-		}
-		MultiReturn {
-			mut parts := []string{}
-			for ty in t.types {
-				parts << tc.c_type(ty)
-			}
-			return 'multi_return_${parts.join('_')}'
+		return match size {
+			0 { 'int' }
+			8 { 'i8' }
+			16 { 'i16' }
+			32 { 'i32' }
+			64 { 'i64' }
+			else { 'i${size}' }
 		}
 	}
+	if props.has(.float) {
+		return match size {
+			32 { 'float' }
+			64 { 'double' }
+			else { 'double' }
+		}
+	}
+	return 'int'
 }
 
 fn prim_c_type(p Primitive) string {

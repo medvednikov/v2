@@ -67,6 +67,10 @@ pub const byteptr_ = Pointer{
 	})
 }
 
+pub fn is_builtin_type_name(name string) bool {
+	return name == 'bool' || name == 'int' || name == 'i8' || name == 'i16' || name == 'i32' || name == 'i64' || name == 'u8' || name == 'byte' || name == 'u16' || name == 'u32' || name == 'u64' || name == 'f32' || name == 'f64' || name == 'string' || name == 'char' || name == 'rune' || name == 'isize' || name == 'usize' || name == 'void' || name == 'voidptr' || name == 'array' || name == 'charptr' || name == 'byteptr' || name == 'nil' || name == 'none'
+}
+
 pub fn builtin_type(name string) ?Type {
 	return match name {
 		'bool' { Type(bool_) }

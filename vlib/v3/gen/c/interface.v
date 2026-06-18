@@ -47,28 +47,32 @@ fn (g &FlatGen) variant_refs_sum_inner(variant string, sum_name string, mut visi
 	visited[variant] = true
 	if variant in g.tc.structs {
 		for f in g.tc.structs[variant] {
-			clean := types.unwrap_pointer(f.typ)
-			if clean is types.Struct && clean.name == sum_name {
+			if g.type_references_sum(f.typ, sum_name, mut visited) {
 				return true
-			}
-			if clean is types.SumType && clean.name == sum_name {
-				return true
-			}
-			if clean is types.Struct {
-				if g.variant_refs_sum_inner(clean.name, sum_name, mut visited) {
-					return true
-				}
-			}
-			if clean is types.SumType {
-				if clean.name in g.tc.sum_types {
-					for sv in g.tc.sum_types[clean.name] {
-						if g.variant_refs_sum_inner(sv, sum_name, mut visited) {
-							return true
-						}
-					}
-				}
 			}
 		}
+	}
+	return false
+}
+
+fn (g &FlatGen) type_references_sum(typ types.Type, sum_name string, mut visited map[string]bool) bool {
+	clean := types.unwrap_pointer(typ)
+	if clean is types.Struct && clean.name == sum_name {
+		return true
+	}
+	if clean is types.SumType && clean.name == sum_name {
+		return true
+	}
+	if clean is types.SumType {
+		return true
+	}
+	if clean is types.Struct {
+		if g.variant_refs_sum_inner(clean.name, sum_name, mut visited) {
+			return true
+		}
+	}
+	if clean is types.Array {
+		return g.type_references_sum(clean.elem_type, sum_name, mut visited)
 	}
 	return false
 }
@@ -110,6 +114,39 @@ fn (g &FlatGen) sum_field_name(variant string) string {
 		'bool' { '_bool' }
 		'string' { '_string' }
 		else { c_name(variant) }
+	}
+}
+
+fn (mut g FlatGen) register_interface_strings() {
+	for iface_name, methods in g.interfaces {
+		cn := c_name(iface_name)
+		for method in methods {
+			g.intern_string('interface method ${cn}.${method} not implemented')
+		}
+	}
+}
+
+fn (mut g FlatGen) interface_method_stubs() {
+	for iface_name, methods in g.interfaces {
+		cn := c_name(iface_name)
+		for method in methods {
+			sid := g.intern_string('interface method ${cn}.${method} not implemented')
+			mname := '${iface_name}.${method}'
+			ret_type := if mname in g.tc.fn_ret_types {
+				g.tc.fn_ret_types[mname]
+			} else {
+				types.Type(types.int_)
+			}
+			ct := g.optional_type_name(ret_type)
+			if ct == 'void' {
+				g.writeln('void ${cn}__${method}() { v_panic(_str_${sid}); }')
+			} else {
+				g.writeln('${ct} ${cn}__${method}() { v_panic(_str_${sid}); return (${ct}){0}; }')
+			}
+		}
+	}
+	if g.interfaces.len > 0 {
+		g.writeln('')
 	}
 }
 

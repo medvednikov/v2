@@ -59,7 +59,7 @@ fn constant_fold(mut m ssa.Module) bool {
 
 				if folded {
 					typ := m.values[val_id].typ
-					const_val := m.get_or_add_const(typ, result.str())
+					const_val := m.get_or_add_const(typ, '${result}')
 					m.replace_uses(val_id, const_val)
 					changed = true
 				}
@@ -85,7 +85,9 @@ fn branch_fold(mut m ssa.Module) bool {
 					target := if cond_int != 0 { term.operands[1] } else { term.operands[2] }
 					mut jmp_instr := m.instrs[m.values[term_val_id].index]
 					jmp_instr.op = .jmp
-					jmp_instr.operands = [target]
+					mut new_ops := []ssa.ValueID{}
+					new_ops << target
+					jmp_instr.operands = new_ops
 					m.instrs[m.values[term_val_id].index] = jmp_instr
 					changed = true
 				}

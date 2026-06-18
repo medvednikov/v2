@@ -361,21 +361,18 @@ pub fn (mut m Module) replace_uses(old_id ValueID, new_id ValueID) {
 }
 
 pub fn (i &Instruction) value_operands() []ValueID {
-	return match i.op {
-		.br {
-			if i.operands.len > 0 {
-				[i.operands[0]]
-			} else {
-				[]ValueID{}
-			}
+	if i.op == .br {
+		if i.operands.len > 0 {
+			mut r := []ValueID{}
+			r << i.operands[0]
+			return r
 		}
-		.jmp {
-			[]ValueID{}
-		}
-		else {
-			i.operands
-		}
+		return []ValueID{}
 	}
+	if i.op == .jmp {
+		return []ValueID{}
+	}
+	return i.operands
 }
 
 pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {

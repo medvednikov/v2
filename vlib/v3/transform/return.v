@@ -10,11 +10,11 @@ import v3.flat
 // This is a hook for future sum type return wrapping at the transform level.
 fn (mut t Transformer) transform_return_with_sumtype_wrap(id flat.NodeId, node flat.Node) []flat.NodeId {
 	if node.children_count == 0 {
-		return [id]
+		return arr1(id)
 	}
 	// Check if current function returns a sum type
 	if t.cur_fn_ret_type.len == 0 || t.cur_fn_ret_type !in t.sum_types {
-		return [id]
+		return arr1(id)
 	}
 	// Check if the return value is a struct init whose type is a variant
 	child_id := t.a.child(&node, 0)
@@ -26,11 +26,11 @@ fn (mut t Transformer) transform_return_with_sumtype_wrap(id flat.NodeId, node f
 				// This is a variant being returned as a sum type.
 				// For now, pass through - C gen handles the wrapping.
 				// TODO: Generate explicit sum type wrapping here.
-				return [id]
+				return arr1(id)
 			}
 		}
 	}
-	return [id]
+	return arr1(id)
 }
 
 // branch_tail_expr extracts the tail EXPRESSION id from a branch block,
@@ -71,14 +71,14 @@ fn (mut t Transformer) return_block_from_branch(branch_id flat.NodeId, ret_typ s
 	if branch.kind != .block {
 		// single expression branch: just `return <expr>`
 		ret := t.make_return(t.transform_expr(branch_id), ret_typ)
-		return t.make_block([ret])
+		return t.make_block(arr1(ret))
 	}
 	mut stmt_ids := []flat.NodeId{}
 	for i in 0 .. branch.children_count {
 		stmt_ids << t.a.child(&branch, i)
 	}
 	if stmt_ids.len == 0 {
-		return t.make_block([])
+		return t.make_block([]flat.NodeId{})
 	}
 	// all but the last are kept as statements (transformed); the last becomes a return
 	lead := stmt_ids[..stmt_ids.len - 1].clone()
@@ -108,7 +108,7 @@ fn (mut t Transformer) build_return_if_chain(if_id flat.NodeId, ret_typ string) 
 		if else_node.kind == .if_expr {
 			// else-if chain: recurse, wrap resulting if-stmt in a block
 			inner := t.build_return_if_chain(else_id, ret_typ)
-			else_block = t.make_block([inner])
+			else_block = t.make_block(arr1(inner))
 		} else {
 			else_block = t.return_block_from_branch(else_id, ret_typ)
 		}
@@ -136,7 +136,7 @@ fn (mut t Transformer) try_expand_return_if(id flat.NodeId, node flat.Node) ?[]f
 	if val_node.kind != .if_expr || val_node.children_count < 3 {
 		return none
 	}
-	return [t.build_return_if_chain(val_id, node.typ)]
+	return arr1(t.build_return_if_chain(val_id, node.typ))
 }
 
 // try_expand_return_match detects a `return match x { ... }` pattern where

@@ -9,7 +9,8 @@ fn remove_unreachable_blocks(mut m ssa.Module) {
 			continue
 		}
 		mut reachable := map[int]bool{}
-		mut q := [m.funcs[fi].blocks[0]]
+		mut q := []int{}
+		q << m.funcs[fi].blocks[0]
 		reachable[m.funcs[fi].blocks[0]] = true
 
 		for q.len > 0 {

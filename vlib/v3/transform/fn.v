@@ -75,10 +75,14 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 			typ:   node.typ
 		})
 	}
-	start := t.a.children.len
+	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
-		t.a.children << t.transform_expr(child_id)
+		new_children << t.transform_expr(child_id)
+	}
+	start := t.a.children.len
+	for nc in new_children {
+		t.a.children << nc
 	}
 	return t.a.add_node(flat.Node{
 		kind:           .call

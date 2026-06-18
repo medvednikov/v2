@@ -278,6 +278,13 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							g.gen_array_method_call(node, fn_node, clean_type as types.Array)
 							return
 						}
+						if clean_type is types.ArrayFixed && fn_node.value == 'bytestr' {
+							af := clean_type as types.ArrayFixed
+							g.write('u8__vstring_with_len((u8*)')
+							g.gen_expr(g.a.child(fn_node, 0))
+							g.write(', ${af.len})')
+							return
+						}
 						if clean_type is types.Map {
 							if fn_node.value == 'delete' {
 								g.gen_map_delete(node, fn_node, clean_type as types.Map)
@@ -311,6 +318,37 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 								return
 							}
 						}
+						if !is_method && (clean_type is types.Primitive || clean_type is types.ISize || clean_type is types.USize || clean_type is types.Rune) {
+							tname := clean_type.name()
+							prim_method := '${tname}.${fn_node.value}'
+							if prim_method in g.tc.fn_param_types {
+								is_method = true
+								base_id = g.a.child(fn_node, 0)
+								g.write('${tname}_${fn_node.value}')
+							} else {
+								mut prim_found := false
+								for alias, target in g.tc.type_aliases {
+									if target == tname {
+										alias_method := '${alias}.${fn_node.value}'
+										if alias_method in g.tc.fn_param_types {
+											is_method = true
+											prim_found = true
+											base_id = g.a.child(fn_node, 0)
+											g.write(c_name(alias_method))
+											break
+										}
+									}
+								}
+								if !prim_found {
+									alt_name := g.find_prim_method(fn_node.value)
+									if alt_name.len > 0 {
+										is_method = true
+										base_id = g.a.child(fn_node, 0)
+										g.write(alt_name)
+									}
+								}
+							}
+						}
 						if !is_method {
 							struct_name := if clean_type is types.Struct {
 								clean_type.name
@@ -340,6 +378,10 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 									method_name = str_method
 									base_id = g.a.child(fn_node, 0)
 									g.write(c_name(str_method))
+								} else if struct_name.len > 0 {
+									is_method = true
+									base_id = g.a.child(fn_node, 0)
+									g.write(c_name(method_name))
 								} else {
 									g.gen_expr(g.a.child(&node, 0))
 								}
@@ -368,6 +410,13 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					clean_type := types.unwrap_pointer(base_type)
 					if clean_type is types.Array {
 						g.gen_array_method_call(node, fn_node, clean_type as types.Array)
+						return
+					}
+					if clean_type is types.ArrayFixed && fn_node.value == 'bytestr' {
+						af := clean_type as types.ArrayFixed
+						g.write('u8__vstring_with_len((u8*)')
+						g.gen_expr(g.a.child(fn_node, 0))
+						g.write(', ${af.len})')
 						return
 					}
 					if clean_type is types.Map {
@@ -424,6 +473,37 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							return
 						}
 					}
+					if !is_method && (clean_type is types.Primitive || clean_type is types.ISize || clean_type is types.USize || clean_type is types.Rune) {
+						tname := clean_type.name()
+						prim_method := '${tname}.${fn_node.value}'
+						if prim_method in g.tc.fn_param_types {
+							is_method = true
+							base_id = g.a.child(fn_node, 0)
+							g.write('${tname}_${fn_node.value}')
+						} else {
+							mut prim_found := false
+							for alias, target in g.tc.type_aliases {
+								if target == tname {
+									alias_method := '${alias}.${fn_node.value}'
+									if alias_method in g.tc.fn_param_types {
+										is_method = true
+										prim_found = true
+										base_id = g.a.child(fn_node, 0)
+										g.write(c_name(alias_method))
+										break
+									}
+								}
+							}
+							if !prim_found {
+								alt_name := g.find_prim_method(fn_node.value)
+								if alt_name.len > 0 {
+									is_method = true
+									base_id = g.a.child(fn_node, 0)
+									g.write(alt_name)
+								}
+							}
+						}
+					}
 					if !is_method {
 					struct_name := if clean_type is types.Struct {
 						clean_type.name
@@ -453,6 +533,10 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							method_name = str_method
 							base_id = g.a.child(fn_node, 0)
 							g.write(c_name(str_method))
+						} else if struct_name.len > 0 {
+							is_method = true
+							base_id = g.a.child(fn_node, 0)
+							g.write(c_name(method_name))
 						} else {
 							g.gen_expr(g.a.child(&node, 0))
 						}
@@ -554,13 +638,27 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				arg_idx := if is_method { i } else { i - 1 }
 				arg_id := g.a.child(&node, i)
 				arg_node := g.a.nodes[int(arg_id)]
+				mut needs_addr := false
 				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer && !(arg_node.kind == .prefix && arg_node.op == .amp) {
 					arg_type := g.tc.resolve_type(arg_id)
 					if arg_type !is types.Pointer {
-						g.write('&')
+						needs_addr = true
 					}
 				}
-				g.gen_expr(arg_id)
+				is_rvalue := arg_node.kind == .call || (arg_node.kind == .index && arg_node.value == 'range')
+				if needs_addr && is_rvalue {
+					pt := param_types[arg_idx]
+					ct := g.tc.c_type(types.unwrap_pointer(pt))
+					g.write('({${ct} _t${g.tmp_count} = ')
+					g.gen_expr(arg_id)
+					g.write('; &_t${g.tmp_count};})')
+					g.tmp_count++
+				} else {
+					if needs_addr {
+						g.write('&')
+					}
+					g.gen_expr(arg_id)
+				}
 			}
 			actual_args := node.children_count - arg_start
 			expected_args := if is_method {
@@ -620,13 +718,27 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			}
 			break
 		}
+		mut needs_addr := false
 		if arg_idx < param_types.len && param_types[arg_idx] is types.Pointer && !(arg_node.kind == .prefix && arg_node.op == .amp) {
 			arg_type := g.tc.resolve_type(arg_id)
 			if arg_type !is types.Pointer {
-				g.write('&')
+				needs_addr = true
 			}
 		}
-		g.gen_expr(arg_id)
+		is_rvalue := arg_node.kind == .call || (arg_node.kind == .index && arg_node.value == 'range')
+		if needs_addr && is_rvalue {
+			pt := param_types[arg_idx]
+			ct := g.tc.c_type(types.unwrap_pointer(pt))
+			g.write('({${ct} _t${g.tmp_count} = ')
+			g.gen_expr(arg_id)
+			g.write('; &_t${g.tmp_count};})')
+			g.tmp_count++
+		} else {
+			if needs_addr {
+				g.write('&')
+			}
+			g.gen_expr(arg_id)
+		}
 	}
 	num_provided := node.children_count - start
 	if num_provided < param_types.len {
@@ -719,6 +831,25 @@ fn (g &FlatGen) has_generic_params(node flat.Node) bool {
 	return is_generic_type(node.typ)
 }
 
+fn (g &FlatGen) find_prim_method(method string) string {
+	if 'u8.${method}' in g.tc.fn_param_types {
+		return 'u8_${method}'
+	}
+	if 'int.${method}' in g.tc.fn_param_types {
+		return 'int_${method}'
+	}
+	if 'i64.${method}' in g.tc.fn_param_types {
+		return 'i64_${method}'
+	}
+	if 'u32.${method}' in g.tc.fn_param_types {
+		return 'u32_${method}'
+	}
+	if 'u64.${method}' in g.tc.fn_param_types {
+		return 'u64_${method}'
+	}
+	return ''
+}
+
 fn (mut g FlatGen) forward_decls() {
 	for i, node in g.a.nodes {
 		if node.kind == .module_decl {
@@ -740,9 +871,6 @@ fn (mut g FlatGen) forward_decls() {
 				continue
 			}
 			params := g.fn_params_list(node)
-			if g.has_c_struct_type(node, params) {
-				continue
-			}
 			ret_type := g.tc.parse_type(node.typ)
 			g.write(g.optional_type_name(ret_type))
 			g.write(' ')

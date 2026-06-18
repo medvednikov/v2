@@ -32,18 +32,48 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					g.gen_expr(g.a.child(&child, 1))
 					g.writeln(');')
 				} else if child.value == 'push' {
-					c_elem := g.tc.c_type(g.tc.parse_type(child.typ))
-					g.write('array_push(&')
-					g.gen_expr(lhs_id)
-					g.write(', &(${c_elem}[]){')
-					g.gen_expr(g.a.child(&child, 1))
-					g.writeln('});')
+					push_rhs_id := g.a.child(&child, 1)
+					push_rhs_type := g.tc.resolve_type(push_rhs_id)
+					push_rhs_clean := types.unwrap_pointer(push_rhs_type)
+					if push_rhs_clean is types.Array {
+						g.write('array_push_many(&')
+						g.gen_expr(lhs_id)
+						g.write(', ')
+						g.gen_expr(push_rhs_id)
+						g.writeln(');')
+					} else {
+						c_elem := g.tc.c_type(g.tc.parse_type(child.typ))
+						g.write('array_push(&')
+						g.gen_expr(lhs_id)
+						g.write(', &(${c_elem}[]){')
+						g.gen_expr(push_rhs_id)
+						g.writeln('});')
+					}
 				} else {
-					// Array appends are annotated by the transformer (value =
-					// 'push'/'push_many'); an un-annotated `<<` here is the integer
-					// bit-shift operator.
-					g.gen_expr(child_id)
-					g.writeln(';')
+					lhs_type := g.tc.resolve_type(lhs_id)
+					clean := types.unwrap_pointer(lhs_type)
+					if clean is types.Array {
+						rhs_id := g.a.child(&child, 1)
+						rhs_type := g.tc.resolve_type(rhs_id)
+						rhs_clean := types.unwrap_pointer(rhs_type)
+						if rhs_clean is types.Array {
+							g.write('array_push_many(&')
+							g.gen_expr(lhs_id)
+							g.write(', ')
+							g.gen_expr(rhs_id)
+							g.writeln(');')
+						} else {
+							c_elem := g.tc.c_type(clean.elem_type)
+							g.write('array_push(&')
+							g.gen_expr(lhs_id)
+							g.write(', &(${c_elem}[]){')
+							g.gen_expr(rhs_id)
+							g.writeln('});')
+						}
+					} else {
+						g.gen_expr(child_id)
+						g.writeln(';')
+					}
 				}
 			} else {
 				g.gen_expr(child_id)
@@ -119,6 +149,8 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						g.gen_expr(ret_id)
 						g.writeln('};')
 					}
+				} else if ret_node.kind == .assoc {
+					g.gen_return_assoc(ret_node)
 				} else {
 					if g.cur_fn_ret is types.Struct && g.cur_fn_ret.name in g.tc.interface_names {
 						ct := g.tc.c_type(g.cur_fn_ret)
@@ -197,9 +229,12 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 }
 
 fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
-	if node.children_count >= 3 && node.children_count % 2 == 1 {
-		g.gen_multi_return_decl(node)
-		return
+	if node.children_count >= 3 {
+		rhs_type := g.tc.resolve_type(g.a.child(&node, 1))
+		if rhs_type is types.MultiReturn {
+			g.gen_multi_return_decl(node)
+			return
+		}
 	}
 	mut i := 0
 	for i < node.children_count {
@@ -309,7 +344,6 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 }
 
 fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
-	num_lhs := (node.children_count + 1) / 2
 	rhs_id := g.a.child(&node, 1)
 	rhs_type := g.tc.resolve_type(rhs_id)
 	ct := g.tc.c_type(rhs_type)
@@ -317,11 +351,9 @@ fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
 	g.write('${ct} ${tmp} = ')
 	g.gen_expr(rhs_id)
 	g.writeln(';')
+	num_lhs := node.children_count - 1
 	for j in 0 .. num_lhs {
-		lhs_idx := j * 2
-		if lhs_idx >= node.children_count {
-			break
-		}
+		lhs_idx := if j == 0 { 0 } else { j + 1 }
 		lhs_id := g.a.child(&node, lhs_idx)
 		lhs := g.a.nodes[int(lhs_id)]
 		if lhs.kind == .ident && lhs.value == '_' {
@@ -374,6 +406,11 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 		} else {
 			rhs_id := g.a.child(&node, i + 1)
 			rhs_node := g.a.nodes[int(rhs_id)]
+			if rhs_node.kind == .or_expr {
+				g.gen_assign_or_expr(node, i, rhs_node)
+				i += 2
+				continue
+			}
 			if rhs_node.kind == .array_literal && rhs_node.children_count > 0 {
 				elem_type := g.tc.resolve_type(g.a.child(&rhs_node, 0))
 				c_elem := g.tc.c_type(elem_type)
@@ -413,6 +450,37 @@ fn (mut g FlatGen) decl_lhs_str(id flat.NodeId) string {
 		return c_name(node.value)
 	}
 	return g.expr_to_string(id)
+}
+
+fn (mut g FlatGen) gen_assign_or_expr(node flat.Node, lhs_idx int, or_node flat.Node) {
+	expr_id := g.a.child(&or_node, 0)
+	or_body_id := g.a.child(&or_node, 1)
+	or_body := g.a.nodes[int(or_body_id)]
+	tmp := g.tmp_name()
+	expr_type := g.tc.resolve_type(expr_id)
+	opt_ct := g.optional_type_name(expr_type)
+	g.write('${opt_ct} ${tmp} = ')
+	g.gen_expr(expr_id)
+	g.writeln(';')
+	g.writeln('if (${tmp}.ok) {')
+	g.indent++
+	g.gen_expr(g.a.child(&node, lhs_idx))
+	g.writeln(' = ${tmp}.value;')
+	g.indent--
+	g.writeln('} else {')
+	g.tc.push_scope()
+	g.tc.cur_scope.insert('err', types.Type(types.Struct{
+		name: 'IError'
+	}))
+	g.indent++
+	g.writeln('IError err = (IError){0};')
+	for j in 0 .. or_body.children_count {
+		child_id := g.a.child(&or_body, j)
+		g.gen_node(child_id)
+	}
+	g.indent--
+	g.tc.pop_scope()
+	g.writeln('}')
 }
 
 fn (mut g FlatGen) gen_decl_or_expr(lhs flat.Node, or_node flat.Node) {

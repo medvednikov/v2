@@ -240,7 +240,7 @@ fn (mut g FlatGen) gen_if_expr_stmt(node flat.Node) {
 			g.writeln('}')
 		}
 	} else {
-		g.writeln('{ _ifexpr = 0; }')
+		g.writeln('{ _ifexpr = (${ct}){0}; }')
 	}
 	g.write('_ifexpr;})')
 }
@@ -262,6 +262,6 @@ fn (mut g FlatGen) gen_if_expr_else_if(node flat.Node) {
 			g.writeln('}')
 		}
 	} else {
-		g.writeln('{ _ifexpr = 0; }')
+		g.writeln('{ _ifexpr = (typeof(_ifexpr)){0}; }')
 	}
 }

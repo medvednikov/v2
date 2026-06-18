@@ -133,7 +133,12 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			for mname, _ in g.tc.fn_param_types {
 				if mname.ends_with('.${fn_node.value}') {
 					g.write(c_name(mname))
-					g.write('(&')
+					g.write('(')
+					ptypes := g.tc.fn_param_types[mname]
+					wants_ptr := ptypes.len > 0 && ptypes[0] is types.Pointer
+					if wants_ptr {
+						g.write('&')
+					}
 					g.gen_expr(base_id)
 					for i in 1 .. node.children_count {
 						g.write(', ')
@@ -169,10 +174,16 @@ fn (mut g FlatGen) gen_index_assign(node flat.Node) {
 	if lhs.kind == .index {
 		base_id := g.a.child(&lhs, 0)
 		base_type := g.tc.resolve_type(base_id)
-		if base_type is types.Map {
-			c_key := g.tc.c_type(base_type.key_type)
-			c_val := g.tc.c_type(base_type.value_type)
-			g.write('map__set(&')
+		clean_base := types.unwrap_pointer(base_type)
+		if clean_base is types.Map {
+			c_key := g.tc.c_type(clean_base.key_type)
+			c_val := g.tc.c_type(clean_base.value_type)
+			is_ptr := base_type is types.Pointer
+			if is_ptr {
+				g.write('map__set(')
+			} else {
+				g.write('map__set(&')
+			}
 			g.gen_expr(base_id)
 			g.write(', &(${c_key}[]){')
 			g.gen_expr(g.a.child(&lhs, 1))

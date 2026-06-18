@@ -32,6 +32,18 @@ fn (mut g FlatGen) gen_string_interp(node flat.Node) {
 				g.write('${ct}_str(')
 				g.gen_expr(child_id)
 				g.write(')')
+			} else if typ is types.ISize || typ is types.USize {
+				g.write('${typ.name()}_str(')
+				g.gen_expr(child_id)
+				g.write(')')
+			} else if typ is types.Struct {
+				g.write('${c_name(typ.name)}__str(')
+				g.gen_expr(child_id)
+				g.write(')')
+			} else if typ is types.SumType {
+				g.write('${c_name(typ.name)}__str(')
+				g.gen_expr(child_id)
+				g.write(')')
 			} else {
 				g.write('int_str(')
 				g.gen_expr(child_id)
@@ -48,7 +60,8 @@ fn (g &FlatGen) is_string_node(id flat.NodeId) bool {
 
 fn (mut g FlatGen) string_literals() {
 	for i, s in g.str_lits {
-		g.writeln("string _str_${i} = {\"${c_escape(s)}\", ${s.len}, 1};")
+		escaped := s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t').replace('\r', '\\r')
+		g.writeln('string _str_${i} = {"${escaped}", ${s.len}, 1};')
 	}
 	if g.str_lits.len > 0 {
 		g.writeln('')

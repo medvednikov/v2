@@ -41,7 +41,7 @@ fn build_cfg(mut m ssa.Module) {
 			match term.op {
 				.br {
 					if term.operands.len >= 3 {
-						for oi in [1, 2] {
+						for oi in 1 .. 3 {
 							s := int(term.operands[oi])
 							if s >= 0 && s < n_blocks && !arr_contains(m.blocks[blk_id].succs, s) {
 								mut b := m.blocks[blk_id]

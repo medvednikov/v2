@@ -4,7 +4,7 @@ import v3.flat
 
 fn (mut t Transformer) transform_for_body(id flat.NodeId, node flat.Node) []flat.NodeId {
 	if node.children_count < 3 {
-		return [id]
+		return arr1(id)
 	}
 	// child 0: init statement
 	init_id := t.a.child(&node, 0)
@@ -51,13 +51,13 @@ fn (mut t Transformer) transform_for_body(id flat.NodeId, node flat.Node) []flat
 		value:          node.value
 		typ:            node.typ
 	})
-	return [new_id]
+	return arr1(new_id)
 }
 
 fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []flat.NodeId {
 	header_count := node.value.int()
 	if header_count < 3 || node.children_count < 3 {
-		return [id]
+		return arr1(id)
 	}
 	key_id := t.a.child(&node, 0) // loop var ident — pass through (do not transform a binding)
 	val_id := t.a.child(&node, 1) // may be flat.empty_node (-1)
@@ -132,25 +132,25 @@ fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []f
 	for cid in ids {
 		t.a.children << cid
 	}
-	return [t.a.add_node(flat.Node{
+	return arr1(t.a.add_node(flat.Node{
 		kind:           .for_in_stmt
 		op:             node.op
 		children_start: start
 		children_count: ids.len
 		pos:            node.pos
-		value:          node.value // MUST preserve "3"/"4" header count
+		value:          node.value
 		typ:            node.typ
-	})]
+	}))
 }
 
 fn (mut t Transformer) detect_for_in_type(node flat.Node) string {
-	// Check if the parser already set a type on the for_in_stmt node
 	if node.typ.len > 0 {
 		return node.typ
 	}
-	// Try to resolve the type from the iterable expression (child 0)
-	if node.children_count > 0 {
-		iter_id := t.a.child(&node, 0)
+	header_count := node.value.int()
+	container_idx := if header_count >= 3 { header_count - 1 } else { 2 }
+	if node.children_count > container_idx {
+		iter_id := t.a.child(&node, container_idx)
 		return t.resolve_expr_type(iter_id)
 	}
 	return ''

@@ -22,11 +22,11 @@ fn detect_vroot() string {
 		if !os.is_abs_path(dir) {
 			cwd := os.getwd()
 			if cwd.len > 0 {
-				dir = os.join_path(cwd, dir)
+				dir = os.join_path_single(cwd, dir)
 			}
 		}
 		for _ in 0 .. 8 {
-			if os.is_dir(os.join_path(dir, 'vlib', 'builtin')) {
+			if os.is_dir(os.join_path_single(os.join_path_single(dir, 'vlib'), 'builtin')) {
 				return dir
 			}
 			parent := os.dir(dir)
@@ -37,7 +37,7 @@ fn detect_vroot() string {
 		}
 	}
 	cwd := os.getwd()
-	if os.is_dir(os.join_path(cwd, 'vlib', 'builtin')) {
+	if os.is_dir(os.join_path_single(os.join_path_single(cwd, 'vlib'), 'builtin')) {
 		return cwd
 	}
 	return ''
@@ -45,16 +45,16 @@ fn detect_vroot() string {
 
 pub fn (p &Preferences) get_vlib_module_path(mod string) string {
 	mod_path := mod.replace('.', os.path_separator)
-	return os.join_path(p.vroot, 'vlib', mod_path)
+	return os.join_path_single(os.join_path_single(p.vroot, 'vlib'), mod_path)
 }
 
 pub fn (p &Preferences) get_module_path(mod string, importing_file_path string) string {
 	mod_path := mod.replace('.', os.path_separator)
-	relative_path := os.join_path(os.dir(importing_file_path), mod_path)
+	relative_path := os.join_path_single(os.dir(importing_file_path), mod_path)
 	if os.is_dir(relative_path) {
 		return relative_path
 	}
-	vlib_path := os.join_path(p.vroot, 'vlib', mod_path)
+	vlib_path := os.join_path_single(os.join_path_single(p.vroot, 'vlib'), mod_path)
 	if os.is_dir(vlib_path) {
 		return vlib_path
 	}
@@ -75,7 +75,7 @@ pub fn file_has_incompatible_os_suffix(file string, current_os string) bool {
 	if os_name != 'macos' && (file.contains('_macos.') || file.contains('_darwin.')) {
 		return true
 	}
-	if os_name !in ['macos', 'freebsd', 'openbsd', 'netbsd', 'dragonfly'] && file.contains('_bsd.') {
+	if os_name != 'macos' && os_name != 'freebsd' && os_name != 'openbsd' && os_name != 'netbsd' && os_name != 'dragonfly' && file.contains('_bsd.') {
 		return true
 	}
 	if os_name != 'android' && file.contains('_android') {
@@ -129,9 +129,8 @@ pub fn get_v_files_from_dir(dir string, user_defines []string, target_os string)
 				continue
 			}
 		}
-		v_files << os.join_path(dir, file)
+		v_files << os.join_path_single(dir, file)
 	}
-	v_files.sort()
 	return v_files
 }
 
@@ -163,37 +162,38 @@ pub fn (p &Preferences) is_cross_target() bool {
 	return p.normalized_target_os() != normalized_os(os.user_os())
 }
 
-pub fn comptime_flag_value(pref &Preferences, name string) bool {
+pub fn comptime_flag_value(p &Preferences, name string) bool {
 	match name {
 		'macos', 'darwin', 'mac' {
-			return pref.normalized_target_os() == 'macos'
+			return p.normalized_target_os() == 'macos'
 		}
 		'linux' {
-			return pref.normalized_target_os() == 'linux'
+			return p.normalized_target_os() == 'linux'
 		}
 		'windows' {
-			return pref.normalized_target_os() == 'windows'
+			return p.normalized_target_os() == 'windows'
 		}
 		'freebsd' {
-			return pref.normalized_target_os() == 'freebsd'
+			return p.normalized_target_os() == 'freebsd'
 		}
 		'openbsd' {
-			return pref.normalized_target_os() == 'openbsd'
+			return p.normalized_target_os() == 'openbsd'
 		}
 		'netbsd' {
-			return pref.normalized_target_os() == 'netbsd'
+			return p.normalized_target_os() == 'netbsd'
 		}
 		'dragonfly' {
-			return pref.normalized_target_os() == 'dragonfly'
+			return p.normalized_target_os() == 'dragonfly'
 		}
 		'android' {
-			return pref.normalized_target_os() == 'android'
+			return p.normalized_target_os() == 'android'
 		}
 		'posix', 'unix' {
-			return pref.normalized_target_os() != 'windows'
+			return p.normalized_target_os() != 'windows'
 		}
 		'bsd' {
-			return pref.normalized_target_os() in ['macos', 'freebsd', 'openbsd', 'netbsd', 'dragonfly']
+			tos := p.normalized_target_os()
+			return tos == 'macos' || tos == 'freebsd' || tos == 'openbsd' || tos == 'netbsd' || tos == 'dragonfly'
 		}
 		'x64', 'amd64' {
 			$if amd64 {
@@ -226,19 +226,19 @@ pub fn comptime_flag_value(pref &Preferences, name string) bool {
 			return false
 		}
 		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding', 'nofloat' {
-			return name in pref.user_defines
+			return name in p.user_defines
 		}
 		else {
-			return name in pref.user_defines
+			return name in p.user_defines
 		}
 	}
 }
 
-pub fn comptime_optional_flag_value(pref &Preferences, name string) bool {
-	if name in pref.user_defines {
+pub fn comptime_optional_flag_value(p &Preferences, name string) bool {
+	if name in p.user_defines {
 		return true
 	}
-	return comptime_flag_value(pref, name)
+	return comptime_flag_value(p, name)
 }
 
 pub fn comptime_pkgconfig_value(name string) bool {

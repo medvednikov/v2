@@ -20,14 +20,14 @@ fn (mut t Transformer) transform_interface_cast(id flat.NodeId, node flat.Node) 
 	if node.children_count == 0 {
 		return id
 	}
-	// TODO: When interface lowering is implemented, this will:
-	// 1. Identify the concrete type from the cast target
-	// 2. Generate the appropriate vtable lookup + pointer unwrap
-	// 3. Return a transformed node that accesses the inner value
-	start := t.a.children.len
+	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
-		t.a.children << t.transform_expr(child_id)
+		new_children << t.transform_expr(child_id)
+	}
+	start := t.a.children.len
+	for nc in new_children {
+		t.a.children << nc
 	}
 	return t.a.add_node(flat.Node{
 		kind:           node.kind
@@ -48,14 +48,14 @@ fn (mut t Transformer) transform_interface_method_call(id flat.NodeId, node flat
 	if node.children_count == 0 {
 		return id
 	}
-	// TODO: When interface dispatch is implemented, this will:
-	// 1. Detect that the receiver is an interface type
-	// 2. Look up the method index in the interface vtable
-	// 3. Rewrite to: ((vtable_type*)iface._vtable)->method(iface._object, args)
-	start := t.a.children.len
+	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
-		t.a.children << t.transform_expr(child_id)
+		new_children << t.transform_expr(child_id)
+	}
+	start := t.a.children.len
+	for nc in new_children {
+		t.a.children << nc
 	}
 	return t.a.add_node(flat.Node{
 		kind:           node.kind

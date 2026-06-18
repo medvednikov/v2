@@ -126,7 +126,7 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 				g.writeln('int ${elem_var} = 0;')
 				g.tc.cur_scope.insert(elem_var, types.Type(types.int_))
 			}
-			if has_index {
+			if has_index && container_type !is types.Map {
 				g.tc.cur_scope.insert(idx_var, types.Type(types.int_))
 			}
 			for i in body_start .. node.children_count {

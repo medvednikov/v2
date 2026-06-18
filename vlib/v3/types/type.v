@@ -94,7 +94,7 @@ pub:
 pub struct FnType {
 pub:
 	params      []Type
-	return_type ?Type
+	return_type Type
 }
 
 pub struct OptionType {
@@ -170,86 +170,118 @@ pub fn (t Type) is_float() bool {
 }
 
 pub fn (t Type) name() string {
-	match t {
-		Void {
-			return 'void'
-		}
-		Nil {
-			return 'nil'
-		}
-		None {
-			return 'none'
-		}
-		String {
-			return 'string'
-		}
-		Char {
-			return 'char'
-		}
-		Rune {
-			return 'rune'
-		}
-		ISize {
-			return 'isize'
-		}
-		USize {
-			return 'usize'
-		}
-		Primitive {
-			return prim_name(t)
-		}
-		Array {
-			return '[]${t.elem_type.name()}'
-		}
-		ArrayFixed {
-			return '${t.elem_type.name()}[${t.len}]'
-		}
-		Map {
-			return 'map[${t.key_type.name()}]${t.value_type.name()}'
-		}
-		Pointer {
-			return '&${t.base_type.name()}'
-		}
-		FnType {
-			mut s := 'fn('
-			for i, p in t.params {
-				if i > 0 {
-					s += ', '
-				}
-				s += p.name()
+	if t is Void {
+		return 'void'
+	}
+	if t is Nil {
+		return 'nil'
+	}
+	if t is None {
+		return 'none'
+	}
+	if t is String {
+		return 'string'
+	}
+	if t is Char {
+		return 'char'
+	}
+	if t is Rune {
+		return 'rune'
+	}
+	if t is ISize {
+		return 'isize'
+	}
+	if t is USize {
+		return 'usize'
+	}
+	if t is Primitive {
+		return prim_name_from(t.props, t.size)
+	}
+	if t is Array {
+		return '[]${t.elem_type.name()}'
+	}
+	if t is ArrayFixed {
+		return '${t.elem_type.name()}[${t.len}]'
+	}
+	if t is Map {
+		return 'map[${t.key_type.name()}]${t.value_type.name()}'
+	}
+	if t is Pointer {
+		return '&${t.base_type.name()}'
+	}
+	if t is FnType {
+		mut s := 'fn('
+		for i, p in t.params {
+			if i > 0 {
+				s += ', '
 			}
-			s += ')'
-			if ret := t.return_type {
-				s += ' ${ret.name()}'
+			s += p.name()
+		}
+		s += ')'
+		if t.return_type !is Void {
+			s += ' ${t.return_type.name()}'
+		}
+		return s
+	}
+	if t is OptionType {
+		return '?${t.base_type.name()}'
+	}
+	if t is ResultType {
+		return '!${t.base_type.name()}'
+	}
+	if t is Struct {
+		return t.name
+	}
+	if t is Enum {
+		return t.name
+	}
+	if t is SumType {
+		return t.name
+	}
+	if t is Alias {
+		return t.name
+	}
+	if t is MultiReturn {
+		mut parts := []string{}
+		for ty in t.types {
+			parts << ty.name()
+		}
+		return '(${parts.join(', ')})'
+	}
+	return ''
+}
+
+fn prim_name_from(props Properties, size u8) string {
+	if props.has(.boolean) {
+		return 'bool'
+	}
+	if props.has(.integer) {
+		if props.has(.unsigned) {
+			return match size {
+				8 { 'u8' }
+				16 { 'u16' }
+				32 { 'u32' }
+				64 { 'u64' }
+				else { 'u${size}' }
 			}
-			return s
 		}
-		OptionType {
-			return '?${t.base_type.name()}'
-		}
-		ResultType {
-			return '!${t.base_type.name()}'
-		}
-		Struct {
-			return t.name
-		}
-		Enum {
-			return t.name
-		}
-		SumType {
-			return t.name
-		}
-		Alias {
-			return t.name
-		}
-		MultiReturn {
-			mut parts := []string{}
-			for ty in t.types {
-				parts << ty.name()
-			}
-			return '(${parts.join(', ')})'
+		return match size {
+			0 { 'int' }
+			8 { 'i8' }
+			16 { 'i16' }
+			32 { 'i32' }
+			64 { 'i64' }
+			else { 'i${size}' }
 		}
 	}
+	if props.has(.float) {
+		return match size {
+			32 { 'f32' }
+			64 { 'f64' }
+			else { 'f${size}' }
+		}
+	}
+	return 'int'
 }
 
 fn prim_name(t Primitive) string {
