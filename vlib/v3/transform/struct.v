@@ -7,9 +7,9 @@ import v3.flat
 // is a known enum, resolves shorthand enum values (e.g. `.red` -> `Color.red`).
 fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) flat.NodeId {
 	if node.children_count == 0 {
-		return id
+		return t.add_missing_struct_defaults(id, node)
 	}
-	info := t.structs[node.value] or {
+	info := t.lookup_struct_info(node.value) or {
 		// Unknown struct: fall back to generic child transform
 		return t.transform_struct_children(id, node)
 	}
@@ -52,7 +52,7 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 	for fid in field_ids {
 		t.a.children << fid
 	}
-	return t.a.add_node(flat.Node{
+	new_id := t.a.add_node(flat.Node{
 		kind:           .struct_init
 		op:             node.op
 		children_start: start
@@ -61,6 +61,7 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 		value:          node.value
 		typ:            node.typ
 	})
+	return t.add_missing_struct_defaults(new_id, t.a.nodes[int(new_id)])
 }
 
 // transform_struct_children is a fallback for struct inits where the struct type is unknown.
@@ -113,10 +114,82 @@ fn (mut t Transformer) add_missing_struct_defaults(id flat.NodeId, node flat.Nod
 	if node.value.len == 0 {
 		return id
 	}
-	_ = t.structs[node.value] or { return id }
-	// TODO: Compare provided field_init children against known fields,
-	// and insert default values for missing fields once FieldInfo carries defaults.
-	return id
+	info := t.lookup_struct_info(node.value) or { return id }
+	mut provided := map[string]bool{}
+	mut field_ids := []flat.NodeId{cap: node.children_count + info.fields.len}
+	for i in 0 .. node.children_count {
+		child_id := t.a.child(&node, i)
+		child := t.a.nodes[int(child_id)]
+		if child.kind == .field_init {
+			provided[child.value] = true
+		}
+		field_ids << child_id
+	}
+	old_module := t.cur_module
+	if info.module.len > 0 {
+		t.cur_module = info.module
+	}
+	mut added := false
+	for field in info.fields {
+		if field.name in provided || int(field.default_expr) < 0 {
+			continue
+		}
+		default_node := t.a.nodes[int(field.default_expr)]
+		new_val := if default_node.kind == .enum_val && field.typ.len > 0
+			&& field.typ in t.enum_types {
+			t.transform_enum_shorthand(field.default_expr, default_node, field.typ)
+		} else {
+			t.transform_expr(field.default_expr)
+		}
+		fi_start := t.a.children.len
+		t.a.children << new_val
+		field_ids << t.a.add_node(flat.Node{
+			kind:           .field_init
+			children_start: fi_start
+			children_count: 1
+			value:          field.name
+			typ:            field.typ
+		})
+		provided[field.name] = true
+		added = true
+	}
+	t.cur_module = old_module
+	if !added {
+		return id
+	}
+	start := t.a.children.len
+	for fid in field_ids {
+		t.a.children << fid
+	}
+	return t.a.add_node(flat.Node{
+		kind:           .struct_init
+		op:             node.op
+		children_start: start
+		children_count: field_ids.len
+		pos:            node.pos
+		value:          node.value
+		typ:            node.typ
+	})
+}
+
+fn (t &Transformer) lookup_struct_info(name string) ?StructInfo {
+	if name in t.structs {
+		return t.structs[name]
+	}
+	if name.contains('.') {
+		short_name := name.all_after_last('.')
+		if short_name in t.structs {
+			return t.structs[short_name]
+		}
+		return none
+	}
+	if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
+		qname := '${t.cur_module}.${name}'
+		if qname in t.structs {
+			return t.structs[qname]
+		}
+	}
+	return none
 }
 
 // transform_array_init_expr transforms .array_init nodes (e.g. `[]int{len: n}`).
