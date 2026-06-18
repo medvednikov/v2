@@ -90,7 +90,7 @@ fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []f
 			if key_name.len > 0 && bracket_end > 4 {
 				t.var_types[key_name] = iter_type[4..bracket_end]
 			}
-		} else {
+		} else if iter_type.starts_with('[]') || iter_type == 'string' {
 			// []E: child0 (index) -> 'int'
 			if key_name.len > 0 {
 				t.var_types[key_name] = 'int'

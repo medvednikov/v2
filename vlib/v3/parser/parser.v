@@ -2136,6 +2136,10 @@ fn (mut p Parser) expr(min_bp token.BindingPower) flat.NodeId {
 			})
 			continue
 		}
+		// skip auto-semicolons before infix operators (multi-line expressions)
+		if p.tok == .semicolon && p.peek().is_infix() {
+			p.next()
+		}
 		// infix operators
 		if !p.tok.is_infix() {
 			break
@@ -3135,16 +3139,56 @@ fn (mut p Parser) parse_type_name() string {
 // ==================== helpers ====================
 
 fn strip_quotes(s string) string {
-	if s.len >= 2 && ((s[0] == `'` && s[s.len - 1] == `'`) || (s[0] == `"` && s[s.len - 1] == `"`)) {
-		return s[1..s.len - 1]
+	mut raw := s
+	is_raw := s.len >= 3 && s[0] == `r`
+	if is_raw {
+		raw = s[1..]
 	}
-	if s.len >= 1 && (s[0] == `'` || s[0] == `"`) {
-		return s[1..]
+	if raw.len >= 2 && ((raw[0] == `'` && raw[raw.len - 1] == `'`) || (raw[0] == `"` && raw[raw.len - 1] == `"`)) {
+		raw = raw[1..raw.len - 1]
+	} else if raw.len >= 1 && (raw[0] == `'` || raw[0] == `"`) {
+		raw = raw[1..]
+	} else if raw.len >= 1 && (raw[raw.len - 1] == `'` || raw[raw.len - 1] == `"`) {
+		raw = raw[..raw.len - 1]
 	}
-	if s.len >= 1 && (s[s.len - 1] == `'` || s[s.len - 1] == `"`) {
-		return s[..s.len - 1]
+	if is_raw {
+		return raw
 	}
-	return s
+	return unescape_string(raw)
+}
+
+fn unescape_string(s string) string {
+	if !s.contains('\\') {
+		return s
+	}
+	mut result := []u8{cap: s.len}
+	mut i := 0
+	for i < s.len {
+		if s[i] == `\\` && i + 1 < s.len {
+			match s[i + 1] {
+				`n` { result << `\n` }
+				`t` { result << `\t` }
+				`r` { result << `\r` }
+				`\\` { result << `\\` }
+				`'` { result << `'` }
+				`"` { result << `"` }
+				`0` { result << 0 }
+				`a` { result << 7 }
+				`b` { result << 8 }
+				`f` { result << 12 }
+				`v` { result << 11 }
+				else {
+					result << s[i]
+					result << s[i + 1]
+				}
+			}
+			i += 2
+		} else {
+			result << s[i]
+			i++
+		}
+	}
+	return result.bytestr()
 }
 
 fn is_builtin_type(name string) bool {

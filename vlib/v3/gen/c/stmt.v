@@ -38,7 +38,15 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						g.gen_expr(push_rhs_id)
 						g.writeln(');')
 					} else {
-						c_elem := g.tc.c_type(g.tc.parse_type(child.typ))
+						mut c_elem := if child.typ.len > 0 {
+							g.tc.c_type(g.tc.parse_type(child.typ))
+						} else {
+							'string'
+						}
+						lhs_arr_type := types.unwrap_pointer(g.tc.resolve_type(lhs_id))
+						if lhs_arr_type is types.Array {
+							c_elem = g.tc.c_type(lhs_arr_type.elem_type)
+						}
 						g.write('array_push(${amp}')
 						g.gen_expr(lhs_id)
 						g.write(', &(${c_elem}[]){')
@@ -514,9 +522,18 @@ fn (mut g FlatGen) gen_assign_or_expr(node flat.Node, lhs_idx int, or_node flat.
 	}))
 	g.indent++
 	g.writeln('IError err = (IError){0};')
-	for j in 0 .. or_body.children_count {
-		child_id := g.a.child(&or_body, j)
-		g.gen_node(child_id)
+	if or_node.value == '!' || or_node.value == '?' {
+		if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+			fn_opt_ct := g.optional_type_name(g.cur_fn_ret)
+			g.writeln('return (${fn_opt_ct}){.ok = false};')
+		} else {
+			g.writeln('v_panic(err.message);')
+		}
+	} else {
+		for j in 0 .. or_body.children_count {
+			child_id := g.a.child(&or_body, j)
+			g.gen_node(child_id)
+		}
 	}
 	g.indent--
 	g.tc.pop_scope()
@@ -556,7 +573,14 @@ fn (mut g FlatGen) gen_decl_or_expr(lhs flat.Node, or_node flat.Node) {
 	}))
 	g.indent++
 	g.writeln('IError err = (IError){0};')
-	if or_body.children_count > 0 {
+	if or_node.value == '!' || or_node.value == '?' {
+		if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+			fn_opt_ct := g.optional_type_name(g.cur_fn_ret)
+			g.writeln('return (${fn_opt_ct}){.ok = false};')
+		} else {
+			g.writeln('v_panic(err.message);')
+		}
+	} else if or_body.children_count > 0 {
 		for i in 0 .. or_body.children_count {
 			child_id := g.a.child(&or_body, i)
 			child := g.a.nodes[int(child_id)]
@@ -709,8 +733,17 @@ fn (mut g FlatGen) gen_or_expr_stmt(node flat.Node) {
 	}))
 	g.indent++
 	g.writeln('IError err = (IError){0};')
-	for i in 0 .. or_body.children_count {
-		g.gen_node(g.a.child(&or_body, i))
+	if node.value == '!' || node.value == '?' {
+		if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+			fn_opt_ct := g.optional_type_name(g.cur_fn_ret)
+			g.writeln('return (${fn_opt_ct}){.ok = false};')
+		} else {
+			g.writeln('v_panic(err.message);')
+		}
+	} else {
+		for i in 0 .. or_body.children_count {
+			g.gen_node(g.a.child(&or_body, i))
+		}
 	}
 	g.indent--
 	g.tc.pop_scope()

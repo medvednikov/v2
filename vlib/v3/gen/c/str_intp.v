@@ -20,6 +20,8 @@ fn (mut g FlatGen) gen_string_interp(node flat.Node) {
 		if child.kind == .string_literal {
 			sid := g.intern_string(child.value)
 			g.write('_str_${sid}')
+		} else if child.typ == 'string' {
+			g.gen_expr(child_id)
 		} else {
 			typ := g.tc.resolve_type(child_id)
 			if typ is types.String {

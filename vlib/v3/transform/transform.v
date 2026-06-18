@@ -717,6 +717,7 @@ fn (mut t Transformer) transform_or_expr(id flat.NodeId, node flat.Node) flat.No
 		child_id := t.a.child(&node, i)
 		child := t.a.nodes[int(child_id)]
 		if child.kind == .block {
+			t.var_types['err'] = 'IError'
 			mut block_children := []flat.NodeId{}
 			for j in 0 .. child.children_count {
 				block_children << t.a.child(&child, j)
@@ -1011,11 +1012,20 @@ fn (t &Transformer) sum_field_name(variant string) string {
 }
 
 fn (t &Transformer) variant_references_sum(variant string, sum_name string) bool {
+	mut visited := map[string]bool{}
+	return t.variant_refs_sum_inner(variant, sum_name, mut visited)
+}
+
+fn (t &Transformer) variant_refs_sum_inner(variant string, sum_name string, mut visited map[string]bool) bool {
 	short_v := if variant.contains('.') { variant.all_after_last('.') } else { variant }
 	short_s := if sum_name.contains('.') { sum_name.all_after_last('.') } else { sum_name }
 	if short_v == short_s {
 		return true
 	}
+	if variant in visited {
+		return false
+	}
+	visited[variant] = true
 	qualified := if sum_name.contains('.') && !variant.contains('.') {
 		'${sum_name.all_before_last('.')}.${variant}'
 	} else {
@@ -1035,16 +1045,26 @@ fn (t &Transformer) variant_references_sum(variant string, sum_name string) bool
 			if ftyp == sum_name || short_f == short_s {
 				return true
 			}
-			if !f.typ.starts_with('[]') && !f.typ.starts_with('&') {
-				if ftyp in t.sum_types || short_f in t.sum_types {
-					return true
-				}
-				qftyp := if sum_name.contains('.') && !ftyp.contains('.') {
-					'${sum_name.all_before_last('.')}.${ftyp}'
-				} else {
+			if ftyp in t.sum_types || short_f in t.sum_types {
+				return true
+			}
+			qftyp := if sum_name.contains('.') && !ftyp.contains('.') {
+				'${sum_name.all_before_last('.')}.${ftyp}'
+			} else {
+				ftyp
+			}
+			if qftyp in t.sum_types {
+				return true
+			}
+			if ftyp in t.structs || short_f in t.structs || qftyp in t.structs {
+				inner_lookup := if ftyp in t.structs {
 					ftyp
+				} else if short_f in t.structs {
+					short_f
+				} else {
+					qftyp
 				}
-				if qftyp in t.sum_types {
+				if t.variant_refs_sum_inner(inner_lookup, sum_name, mut visited) {
 					return true
 				}
 			}

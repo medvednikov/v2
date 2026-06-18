@@ -87,15 +87,19 @@ fn (t &Transformer) node_type(id flat.NodeId) string {
 	if int(id) < 0 {
 		return ''
 	}
+	resolved := t.resolve_expr_type(id)
+	if resolved.len > 0 {
+		return resolved
+	}
 	if !isnil(t.tc) {
 		if typ := t.tc.expr_type(id) {
 			name := typ.name()
-			if name.len > 0 && name != 'void' {
+			if name.len > 0 && name != 'void' && name != 'int' {
 				return name
 			}
 		}
 	}
-	return t.resolve_expr_type(id)
+	return ''
 }
 
 // lvalue_type returns the v-type string for an assignable expression, handling

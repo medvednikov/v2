@@ -89,6 +89,9 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 	g.gen_defers()
 	if node.value == 'main' {
 		g.writeln('return 0;')
+	} else if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+		ct := g.optional_type_name(g.cur_fn_ret)
+		g.writeln('return (${ct}){.ok = true};')
 	}
 	g.indent--
 	g.writeln('}')

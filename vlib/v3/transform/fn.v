@@ -124,25 +124,37 @@ fn (mut t Transformer) wrap_string_conversion(expr flat.NodeId, typ string) flat
 	}
 	match clean_typ {
 		'bool' {
-			return t.make_call('bool_str', arr1(expr))
+			return t.make_call_typed('bool_str', arr1(expr), 'string')
 		}
 		'u8', 'byte', 'u16', 'u32', 'u64' {
-			return t.make_call('strconv__format_uint', arr2(expr, t.make_int_literal(10)))
+			return t.make_call_typed('strconv__format_uint', arr2(expr, t.make_int_literal(10)), 'string')
 		}
 		'int', 'i8', 'i16', 'i32', 'i64', 'isize', 'usize' {
-			return t.make_call('strconv__format_int', arr2(expr, t.make_int_literal(10)))
+			return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)), 'string')
 		}
 		'f32' {
-			return t.make_call('strconv__f32_to_str_l', arr1(expr))
+			return t.make_call_typed('strconv__f32_to_str_l', arr1(expr), 'string')
 		}
 		'f64' {
-			return t.make_call('strconv__f64_to_str_l', arr1(expr))
+			return t.make_call_typed('strconv__f64_to_str_l', arr1(expr), 'string')
 		}
 		else {
 			if clean_typ in t.structs || clean_typ in t.sum_types {
-				return t.make_call('${c_name(clean_typ)}__str', arr1(expr))
+				mut qualified := clean_typ
+				if !clean_typ.contains('.') && t.cur_module.len > 0
+					&& t.cur_module != 'main' && t.cur_module != 'builtin' {
+					q := '${t.cur_module}.${clean_typ}'
+					if q in t.structs || q in t.sum_types {
+						qualified = q
+					}
+				}
+				return t.make_call_typed('${c_name(qualified)}__str', arr1(expr), 'string')
+			} else if clean_typ.len > 0 && clean_typ.starts_with('[]') {
+				return t.make_call_typed('Array_str', arr1(expr), 'string')
+			} else if clean_typ == 'rune' {
+				return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)), 'string')
 			} else {
-				return t.make_call('strconv__format_int', arr2(expr, t.make_int_literal(10)))
+				return expr
 			}
 		}
 	}

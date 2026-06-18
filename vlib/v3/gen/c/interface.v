@@ -98,7 +98,7 @@ fn (g &FlatGen) sum_field_name(variant string) string {
 		return '_Array_${c_name(variant[2..])}'
 	}
 	if variant.starts_with('map[') {
-		return '_Map_${c_name(variant[4..])}'
+		return '_Map_${c_name(variant[4..].replace(']', '_'))}'
 	}
 	return match variant {
 		'int' { '_int' }
