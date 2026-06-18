@@ -71,8 +71,6 @@ pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 	}
 	t.collect_types()
 	t.transform_all()
-	t.lower_match_stmts()
-	t.lower_array_appends()
 }
 
 // --- type collection ---
@@ -312,6 +310,9 @@ pub fn (mut t Transformer) transform_stmt(id flat.NodeId) []flat.NodeId {
 		.if_expr {
 			return t.transform_if_stmt(id, node)
 		}
+		.match_stmt {
+			return arr1(t.lower_one_match(node))
+		}
 		.defer_stmt {
 			return t.transform_children_stmt(id, node)
 		}
@@ -381,6 +382,9 @@ pub fn (mut t Transformer) transform_expr(id flat.NodeId) flat.NodeId {
 		.is_expr {
 			return t.transform_is_expr(id, node)
 		}
+		.match_stmt {
+			return t.lower_one_match(node)
+		}
 		.ident, .int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
 		.nil_literal, .none_expr, .enum_val, .sizeof_expr, .typeof_expr {
 			// leaf/simple nodes - pass through unchanged
@@ -445,7 +449,7 @@ fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []f
 	for nc in new_children {
 		t.a.children << nc
 	}
-	return arr1(t.a.add_node(flat.Node{
+	new_id := t.a.add_node(flat.Node{
 		kind:           node.kind
 		op:             node.op
 		children_start: start
@@ -453,7 +457,11 @@ fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []f
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
-	}))
+	})
+	if node.kind == .assign && node.op == .left_shift_assign {
+		t.annotate_left_shift_assign(new_id)
+	}
+	return arr1(new_id)
 }
 
 fn (mut t Transformer) try_lower_string_compound_assign(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
@@ -629,7 +637,7 @@ fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat
 		start := t.a.children.len
 		t.a.children << lhs_id
 		t.a.children << new_rhs
-		return t.a.add_node(flat.Node{
+		new_id := t.a.add_node(flat.Node{
 			kind:           .infix
 			op:             node.op
 			children_start: start
@@ -638,6 +646,8 @@ fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat
 			value:          node.value
 			typ:            node.typ
 		})
+		t.annotate_left_shift(new_id)
+		return new_id
 	}
 	if str_result := t.transform_infix_string_ops(id, node) {
 		return str_result
@@ -1729,6 +1739,33 @@ fn (mut t Transformer) annotate_left_shift(node_id flat.NodeId) {
 			value:          'push'
 			typ:            lhs_type[2..]
 		}
+	}
+}
+
+fn (mut t Transformer) annotate_left_shift_assign(node_id flat.NodeId) {
+	node := t.a.nodes[int(node_id)]
+	if node.kind != .assign || node.op != .left_shift_assign || node.children_count < 2 {
+		return
+	}
+	lhs_id := t.a.child(&node, 0)
+	lhs := t.a.nodes[int(lhs_id)]
+	if lhs.kind != .ident {
+		return
+	}
+	lhs_type := t.lvalue_type(lhs_id)
+	if !lhs_type.starts_with('[]') {
+		return
+	}
+	rhs_id := t.a.child(&node, 1)
+	rhs_type := t.lvalue_type(rhs_id)
+	val := if rhs_type.starts_with('[]') { 'push_many' } else { 'push' }
+	t.a.nodes[int(node_id)] = flat.Node{
+		kind:           node.kind
+		op:             node.op
+		children_start: node.children_start
+		children_count: node.children_count
+		value:          val
+		typ:            lhs_type[2..]
 	}
 }
 
