@@ -1,19 +1,20 @@
 module arm64
 
 import v3.ssa
-import encoding.binary
 
 pub struct Gen {
 mut:
-	m             &ssa.Module  = unsafe { nil }
-	macho         &MachOObject = unsafe { nil }
-	stack_map     map[int]int
-	alloca_offset map[int]int
-	stack_size    int
-	block_offsets []int
-	pending_jmps  []PendingJmp
-	fn_offsets    map[string]int
-	string_cache  map[string]int
+	m                    &ssa.Module  = unsafe { nil }
+	macho                &MachOObject = unsafe { nil }
+	stack_map            map[int]int
+	alloca_offset        map[int]int
+	stack_size           int
+	block_offsets        []int
+	pending_jmps         []PendingJmp
+	fn_offsets           map[string]int
+	string_cache         map[string]int
+	cur_func_ret_type    ssa.TypeID
+	cur_func_sret_offset int
 }
 
 struct PendingJmp {
@@ -100,14 +101,20 @@ fn (mut g Gen) gen_func(func_idx int) {
 	// fp + 8: saved lr
 	// fp - 8: first local slot
 	// fp - 16: second local slot ...
-	mut slot_offset := 8
+	mut slot_offset := 0
+	g.cur_func_ret_type = func.typ
+	g.cur_func_sret_offset = 0
+	if g.is_large_struct_type(func.typ) {
+		slot_offset += 8
+		g.cur_func_sret_offset = -slot_offset
+	}
 
 	for _, pid in func.params {
 		param_val := g.m.values[pid]
 		param_size := g.m.type_size(param_val.typ)
 		alloc_size := if param_size > 8 { (param_size + 7) & ~7 } else { 8 }
-		g.stack_map[pid] = -slot_offset
 		slot_offset += alloc_size
+		g.stack_map[pid] = -slot_offset
 	}
 
 	for blk_id in func.blocks {
@@ -142,14 +149,16 @@ fn (mut g Gen) gen_func(func_idx int) {
 				g.alloca_offset[val_id] = -slot_offset
 				slot_offset += 8
 			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp {
-				g.stack_map[val_id] = -slot_offset
 				result_size := g.m.type_size(val.typ)
-				if result_size > 8 && val.typ > 0 && val.typ < g.m.type_store.types.len
+				alloc_size := if result_size > 8 && val.typ > 0
+					&& val.typ < g.m.type_store.types.len
 					&& g.m.type_store.types[val.typ].kind == .struct_t {
-					slot_offset += (result_size + 7) & ~7
+					(result_size + 7) & ~7
 				} else {
-					slot_offset += 8
+					8
 				}
+				slot_offset += alloc_size
+				g.stack_map[val_id] = -slot_offset
 			}
 		}
 	}
@@ -157,8 +166,8 @@ fn (mut g Gen) gen_func(func_idx int) {
 	// Allocate stack slots for string literals used by this function
 	for val in g.m.values {
 		if val.kind == .string_literal && val.id !in g.stack_map {
-			g.stack_map[val.id] = -slot_offset
 			slot_offset += 16
+			g.stack_map[val.id] = -slot_offset
 		}
 	}
 
@@ -175,6 +184,14 @@ fn (mut g Gen) gen_func(func_idx int) {
 	if g.stack_size > 0 {
 		g.emit_sub_sp(g.stack_size)
 	}
+	if g.cur_func_sret_offset != 0 {
+		g.emit_store_fp(8, g.cur_func_sret_offset)
+	}
+
+	if func.name == 'main' {
+		g.store_entry_arg_to_global(0, 'g_main_argc')
+		g.store_entry_arg_to_global(1, 'g_main_argv')
+	}
 
 	// Spill params from registers to stack
 	mut reg_idx := 0
@@ -186,13 +203,13 @@ fn (mut g Gen) gen_func(func_idx int) {
 		off := g.stack_map[pid]
 		if reg_idx + n_words <= 8 {
 			for wi in 0 .. n_words {
-				g.emit_store_fp(reg_idx, off - wi * 8)
+				g.emit_store_fp(reg_idx, off + wi * 8)
 				reg_idx++
 			}
 		} else {
 			for wi in 0 .. n_words {
 				g.emit_load_fp(8, stack_arg_off + wi * 8)
-				g.emit_store_fp(8, off - wi * 8)
+				g.emit_store_fp(8, off + wi * 8)
 			}
 			stack_arg_off += n_words * 8
 		}
@@ -209,6 +226,38 @@ fn (mut g Gen) gen_func(func_idx int) {
 	}
 
 	g.resolve_all_pending()
+}
+
+fn (g &Gen) is_large_struct_type(typ_id ssa.TypeID) bool {
+	if typ_id <= 0 || typ_id >= g.m.type_store.types.len {
+		return false
+	}
+	typ := g.m.type_store.types[typ_id]
+	return typ.kind == .struct_t && g.m.type_size(typ_id) > 16
+}
+
+fn (g &Gen) is_aggregate_type(typ_id ssa.TypeID) bool {
+	if typ_id <= 0 || typ_id >= g.m.type_store.types.len {
+		return false
+	}
+	typ := g.m.type_store.types[typ_id]
+	return typ.kind == .struct_t && g.m.type_size(typ_id) > 8
+}
+
+fn (g &Gen) is_zero_const(val_id int) bool {
+	if val_id <= 0 || val_id >= g.m.values.len {
+		return false
+	}
+	val := g.m.values[val_id]
+	return val.kind == .constant && parse_int(val.name) == 0
+}
+
+fn (mut g Gen) emit_zero_aggregate(ptr_reg int, typ_id ssa.TypeID) {
+	size := g.m.type_size(typ_id)
+	n_words := (size + 7) / 8
+	for wi in 0 .. n_words {
+		g.emit32(asm_str_imm(xzr, Reg(ptr_reg), u32(wi)))
+	}
 }
 
 fn (mut g Gen) gen_instr(val_id int) {
@@ -248,7 +297,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 						ptr_reg := g.load_val(ptr_id, 9)
 						n_words := (src_size + 7) / 8
 						for wi in 0 .. n_words {
-							g.emit_load_fp(8, src_off - wi * 8)
+							g.emit_load_fp(8, src_off + wi * 8)
 							g.emit32(asm_str_imm(Reg(8), Reg(ptr_reg), u32(wi)))
 						}
 					} else {
@@ -257,9 +306,13 @@ fn (mut g Gen) gen_instr(val_id int) {
 						g.emit32(asm_str(Reg(src_reg), Reg(ptr_reg)))
 					}
 				} else {
-					src_reg := g.load_val(src_id, 8)
 					ptr_reg := g.load_val(ptr_id, 9)
 					dest_type := g.ptr_elem_type(ptr_id)
+					if g.is_zero_const(src_id) && g.is_aggregate_type(dest_type) {
+						g.emit_zero_aggregate(ptr_reg, dest_type)
+						return
+					}
+					src_reg := g.load_val(src_id, 8)
 					store_typ := if int(dest_type) > 0 { dest_type } else { src_val.typ }
 					g.emit_store_typed(src_reg, ptr_reg, store_typ)
 				}
@@ -280,7 +333,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.materialize_string(ptr_id, 8)
 				g.store_val(8, val_id)
 				if off := g.stack_map[val_id] {
-					g.emit_store_fp(10, off - 8)
+					g.emit_store_fp(10, off + 8)
 				}
 			} else {
 				ptr_reg := g.load_val(ptr_id, 9)
@@ -292,7 +345,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 							n_words := (result_size + 7) / 8
 							for wi in 0 .. n_words {
 								g.emit32(asm_ldr_imm(Reg(8), Reg(ptr_reg), u32(wi)))
-								g.emit_store_fp(8, off - wi * 8)
+								g.emit_store_fp(8, off + wi * 8)
 							}
 						}
 						return
@@ -406,6 +459,36 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.gen_call(val_id, instr)
 		}
 		.ret {
+			if g.cur_func_sret_offset != 0 {
+				ret_size := g.m.type_size(g.cur_func_ret_type)
+				n_words := (ret_size + 7) / 8
+				g.emit_load_fp(9, g.cur_func_sret_offset)
+				if instr.operands.len > 0 && instr.operands[0] > 0 {
+					ret_id := instr.operands[0]
+					if off := g.stack_map[ret_id] {
+						for wi in 0 .. n_words {
+							g.emit_load_fp(8, off + wi * 8)
+							g.emit32(asm_str_imm(Reg(8), Reg(9), u32(wi)))
+						}
+					} else {
+						g.emit_mov_imm(8, 0)
+						for wi in 0 .. n_words {
+							g.emit32(asm_str_imm(Reg(8), Reg(9), u32(wi)))
+						}
+					}
+				} else {
+					g.emit_mov_imm(8, 0)
+					for wi in 0 .. n_words {
+						g.emit32(asm_str_imm(Reg(8), Reg(9), u32(wi)))
+					}
+				}
+				if g.stack_size > 0 {
+					g.emit_add_sp(g.stack_size)
+				}
+				g.emit32(asm_ldp_fp_lr_post())
+				g.emit32(asm_ret())
+				return
+			}
 			if instr.operands.len > 0 && instr.operands[0] > 0 {
 				ret_id := instr.operands[0]
 				ret_val := g.m.values[ret_id]
@@ -420,7 +503,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 							n_words := (ret_size + 7) / 8
 							for wi in 0 .. n_words {
 								if wi < 8 {
-									g.emit_load_fp(wi, off - wi * 8)
+									g.emit_load_fp(wi, off + wi * 8)
 								}
 							}
 						}
@@ -471,6 +554,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 	fn_ref_id := instr.operands[0]
 	fn_ref := g.m.values[fn_ref_id]
 	fn_name := fn_ref.name
+	ret_indirect := g.is_large_struct_type(instr.typ)
 
 	out_stack_size := g.call_stack_arg_size(instr)
 	if out_stack_size > 0 {
@@ -504,7 +588,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 					if arg_reg + n_words <= 8 {
 						if off := g.stack_map[arg_id] {
 							for wi in 0 .. n_words {
-								g.emit_load_fp(arg_reg + wi, off - wi * 8)
+								g.emit_load_fp(arg_reg + wi, off + wi * 8)
 							}
 						} else {
 							src_reg := g.load_val(arg_id, arg_reg)
@@ -516,7 +600,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 					} else {
 						if off := g.stack_map[arg_id] {
 							for wi in 0 .. n_words {
-								g.emit_load_fp(8, off - wi * 8)
+								g.emit_load_fp(8, off + wi * 8)
 								g.emit_store_sp(8, stack_off + wi * 8)
 							}
 						} else {
@@ -560,6 +644,12 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		}
 	}
 
+	if ret_indirect {
+		if off := g.stack_map[val_id] {
+			g.emit_lea_fp(8, off)
+		}
+	}
+
 	if fn_name in g.fn_offsets {
 		target := g.fn_offsets[fn_name]
 		offset := (target - g.macho.text_data.len) / 4
@@ -574,6 +664,10 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		g.emit_add_sp(out_stack_size)
 	}
 
+	if ret_indirect {
+		return
+	}
+
 	if instr.typ != 0 {
 		ret_size := g.m.type_size(instr.typ)
 		if ret_size > 8 && instr.typ > 0 && instr.typ < g.m.type_store.types.len {
@@ -583,7 +677,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 					n_words := (ret_size + 7) / 8
 					for wi in 0 .. n_words {
 						if wi < 8 {
-							g.emit_store_fp(wi, off - wi * 8)
+							g.emit_store_fp(wi, off + wi * 8)
 						}
 					}
 				}
@@ -728,6 +822,24 @@ fn (mut g Gen) emit_global_addr(reg int, name string) {
 	g.emit32(asm_add_pageoff(Reg(reg)))
 }
 
+fn (g &Gen) find_global_idx_by_name(name string) int {
+	for i, global in g.m.globals {
+		if global.name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+fn (mut g Gen) store_entry_arg_to_global(reg int, global_name string) {
+	global_idx := g.find_global_idx_by_name(global_name)
+	if global_idx < 0 {
+		return
+	}
+	g.emit_global_addr(9, global_name)
+	g.emit_store_typed(reg, 9, g.m.globals[global_idx].typ)
+}
+
 // ==================== Branch handling ====================
 
 fn (mut g Gen) emit_branch_to_block(blk_id int) {
@@ -770,14 +882,11 @@ fn (mut g Gen) resolve_all_pending() {
 }
 
 fn (mut g Gen) patch_branch(text_pos int, offset int) {
-	existing := binary.little_endian_u32(g.macho.text_data[text_pos..text_pos + 4])
+	existing := read_u32_le(g.macho.text_data, text_pos)
 	opcode := existing & 0xFC000000
 	imm26 := u32(offset) & 0x03FFFFFF
 	patched := opcode | imm26
-	g.macho.text_data[text_pos] = u8(patched)
-	g.macho.text_data[text_pos + 1] = u8(patched >> 8)
-	g.macho.text_data[text_pos + 2] = u8(patched >> 16)
-	g.macho.text_data[text_pos + 3] = u8(patched >> 24)
+	write_u32_le_at_arr(mut g.macho.text_data, text_pos, patched)
 }
 
 // ==================== Low-level emission helpers ====================
@@ -923,46 +1032,35 @@ fn parse_int(s string) i64 {
 		neg = true
 		start = 1
 	}
+	mut base := u64(10)
+	mut digits_start := start
 	if s.len > start + 2 && s[start] == `0` {
 		if s[start + 1] == `x` || s[start + 1] == `X` {
-			mut n := i64(0)
-			for i in start + 2 .. s.len {
-				c := s[i]
-				if c >= `0` && c <= `9` {
-					n = n * 16 + i64(c - `0`)
-				} else if c >= `a` && c <= `f` {
-					n = n * 16 + i64(c - `a` + 10)
-				} else if c >= `A` && c <= `F` {
-					n = n * 16 + i64(c - `A` + 10)
-				}
-			}
-			return if neg { -n } else { n }
+			base = 16
+			digits_start = start + 2
 		} else if s[start + 1] == `b` || s[start + 1] == `B` {
-			mut n := i64(0)
-			for i in start + 2 .. s.len {
-				c := s[i]
-				if c == `0` || c == `1` {
-					n = n * 2 + i64(c - `0`)
-				}
-			}
-			return if neg { -n } else { n }
+			base = 2
+			digits_start = start + 2
 		} else if s[start + 1] == `o` || s[start + 1] == `O` {
-			mut n := i64(0)
-			for i in start + 2 .. s.len {
-				c := s[i]
-				if c >= `0` && c <= `7` {
-					n = n * 8 + i64(c - `0`)
-				}
-			}
-			return if neg { -n } else { n }
+			base = 8
+			digits_start = start + 2
 		}
 	}
-	mut n := i64(0)
-	for i in start .. s.len {
+	mut n := u64(0)
+	for i in digits_start .. s.len {
 		c := s[i]
+		mut digit := u64(base)
 		if c >= `0` && c <= `9` {
-			n = n * 10 + i64(c - `0`)
+			digit = u64(c - `0`)
+		} else if c >= `a` && c <= `f` {
+			digit = u64(c - `a` + 10)
+		} else if c >= `A` && c <= `F` {
+			digit = u64(c - `A` + 10)
+		}
+		if digit < base {
+			n = n * base + digit
 		}
 	}
-	return if neg { -n } else { n }
+	wrapped := i64(n)
+	return if neg { -wrapped } else { wrapped }
 }

@@ -71,7 +71,8 @@ fn main() {
 	println('=== v3 benchmark ===')
 
 	// Parse directly to flat AST
-	prefs := pref.new_preferences()
+	mut prefs := pref.new_preferences()
+	prefs.backend = backend
 	mut p := parser.Parser.new(prefs)
 
 	mut files := []string{}

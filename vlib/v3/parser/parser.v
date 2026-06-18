@@ -234,8 +234,7 @@ fn (mut p Parser) top_level_stmt() flat.NodeId {
 			return flat.empty_node
 		}
 		else {
-			p.next()
-			return flat.empty_node
+			return p.stmt()
 		}
 	}
 }

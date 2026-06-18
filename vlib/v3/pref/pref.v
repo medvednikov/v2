@@ -8,6 +8,7 @@ pub mut:
 	output_file  string
 	target_os    string = os.user_os()
 	user_defines []string
+	backend      string = 'c'
 pub:
 	vroot string = detect_vroot()
 }
@@ -237,6 +238,18 @@ pub fn comptime_flag_value(p &Preferences, name string) bool {
 				return true
 			}
 			return false
+		}
+		'native' {
+			return p.backend == 'arm64'
+		}
+		'builtin_write_buf_to_fd_should_use_c_write' {
+			return p.backend == 'arm64'
+		}
+		'tinyc' {
+			return p.backend == 'arm64'
+		}
+		'no_backtrace' {
+			return p.backend == 'arm64' || name in p.user_defines
 		}
 		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
 		'nofloat' {

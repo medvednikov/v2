@@ -475,14 +475,10 @@ fn (mut tc TypeChecker) register_map_callbacks() {
 	u64_type := tc.parse_type('u64')
 	bool_type := tc.parse_type('bool')
 	void_type := tc.parse_type('void')
-	for suffix in ['1', '2', '4', '8'] {
-		tc.fn_ret_types['v3_map_hash_int_${suffix}'] = u64_type
-		tc.fn_param_types['v3_map_hash_int_${suffix}'] = tarr1(voidptr_type)
-		tc.fn_ret_types['v3_map_eq_int_${suffix}'] = bool_type
-		tc.fn_param_types['v3_map_eq_int_${suffix}'] = tarr2(voidptr_type, voidptr_type)
-		tc.fn_ret_types['v3_map_clone_int_${suffix}'] = void_type
-		tc.fn_param_types['v3_map_clone_int_${suffix}'] = tarr2(voidptr_type, voidptr_type)
-	}
+	tc.register_int_map_callbacks('1', voidptr_type, u64_type, bool_type, void_type)
+	tc.register_int_map_callbacks('2', voidptr_type, u64_type, bool_type, void_type)
+	tc.register_int_map_callbacks('4', voidptr_type, u64_type, bool_type, void_type)
+	tc.register_int_map_callbacks('8', voidptr_type, u64_type, bool_type, void_type)
 	tc.fn_ret_types['v3_map_hash_string'] = u64_type
 	tc.fn_param_types['v3_map_hash_string'] = tarr1(voidptr_type)
 	tc.fn_ret_types['v3_map_eq_string'] = bool_type
@@ -493,6 +489,15 @@ fn (mut tc TypeChecker) register_map_callbacks() {
 	tc.fn_param_types['v3_map_free_string'] = tarr1(voidptr_type)
 	tc.fn_ret_types['v3_map_free_nop'] = void_type
 	tc.fn_param_types['v3_map_free_nop'] = tarr1(voidptr_type)
+}
+
+fn (mut tc TypeChecker) register_int_map_callbacks(suffix string, voidptr_type Type, u64_type Type, bool_type Type, void_type Type) {
+	tc.fn_ret_types['v3_map_hash_int_${suffix}'] = u64_type
+	tc.fn_param_types['v3_map_hash_int_${suffix}'] = tarr1(voidptr_type)
+	tc.fn_ret_types['v3_map_eq_int_${suffix}'] = bool_type
+	tc.fn_param_types['v3_map_eq_int_${suffix}'] = tarr2(voidptr_type, voidptr_type)
+	tc.fn_ret_types['v3_map_clone_int_${suffix}'] = void_type
+	tc.fn_param_types['v3_map_clone_int_${suffix}'] = tarr2(voidptr_type, voidptr_type)
 }
 
 // annotate_types performs a scope-aware walk over every function body, tracking

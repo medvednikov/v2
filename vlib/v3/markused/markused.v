@@ -201,12 +201,11 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			}
 			if !found_direct {
 				short := callee.all_after_last('.')
-				if suffix_candidates := suffix_map[short] {
-					for candidate in suffix_candidates {
-						if candidate in fn_decls || candidate in tc.fn_ret_types {
-							if enqueue(candidate, mut used, mut queue) {
-								suffix_hits++
-							}
+				suffix_candidates := suffix_map[short] or { []string{} }
+				for candidate in suffix_candidates {
+					if candidate in fn_decls || candidate in tc.fn_ret_types {
+						if enqueue(candidate, mut used, mut queue) {
+							suffix_hits++
 						}
 					}
 				}

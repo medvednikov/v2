@@ -14,6 +14,8 @@ struct Dog {
 
 type Animal = Cat | Dog
 
+type UserId104 = int
+
 struct Holder {
 mut:
 	pet Animal
@@ -189,11 +191,24 @@ fn maybe_review_value(ok bool) ?int {
 	return none
 }
 
+fn optional_arg_int104(x ?int) int {
+	return x or { -1 }
+}
+
+fn optional_arg_point104(p ?Point) int {
+	pt := p or { return -1 }
+	return pt.x + pt.y
+}
+
 fn make_review_animal() Animal {
 	return Cat{
 		name: 'Milo'
 		age:  4
 	}
+}
+
+fn (id UserId104) next() int {
+	return int(id) + 1
 }
 
 fn sum_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
@@ -4204,5 +4219,55 @@ fn main() {
 	}
 	print_str('transformer semantic lowering: ok')
 
-	print_str('=== ALL 103 TESTS PASSED ===')
+	print_str('--- 104. Review Regression Lowering ---')
+
+	mut map104 := map[string]int{}
+	map104['a'] = 1
+	map104['a'] += 2
+	map104['a']++
+	map104['a'] -= 1
+	map104['a']--
+	print_int(map104['a']) // 2
+
+	mut string_map104 := map[string]string{}
+	string_map104['name'] = 'v'
+	string_map104['name'] += '3'
+	print_str(string_map104['name']) // v3
+
+	mut array_map104 := map[string][]int{}
+	array_map104['nums'] << 4
+	array_map104['nums'] << 5
+	print_int(array_map104['nums'].len) // 2
+
+	mut int_map104 := map[int]int{}
+	int_map104[2] = 40
+	int_map104[3] = 60
+	print_int(int_map104[2] + int_map104[3]) // 100
+
+	mut holder104 := Holder{
+		pet: Animal(Cat{
+			name: 'Kit'
+			age:  6
+		})
+	}
+	holder104.pet = Animal(Dog{
+		name:   'Bolt'
+		tricks: 8
+	})
+	print_str(describe_holder(holder104)) // Bolt
+	print_int(holder_detail(holder104)) // 8
+
+	print_int(optional_arg_int104(7)) // 7
+	print_int(optional_arg_int104(none)) // -1
+	print_int(optional_arg_point104(Point{
+		x: 3
+		y: 4
+	})) // 7
+	print_int(optional_arg_point104(none)) // -1
+
+	id104 := UserId104(41)
+	print_int(id104.next()) // 42
+	print_str('review regression lowering: ok')
+
+	print_str('=== ALL 104 TESTS PASSED ===')
 }
