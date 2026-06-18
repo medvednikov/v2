@@ -893,6 +893,16 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 		})
 	}
 	qtyp := tc.qualify_name(typ)
+	if typ in tc.structs {
+		return Type(Struct{
+			name: typ
+		})
+	}
+	if qtyp in tc.structs {
+		return Type(Struct{
+			name: qtyp
+		})
+	}
 	if typ in tc.type_aliases {
 		return tc.parse_type(tc.type_aliases[typ])
 	}
@@ -949,11 +959,6 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	if qtyp in tc.interface_names {
 		return Type(Struct{
 			name: qtyp
-		})
-	}
-	if typ in tc.structs {
-		return Type(Struct{
-			name: typ
 		})
 	}
 	if qtyp != typ {

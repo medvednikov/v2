@@ -534,13 +534,13 @@ fn (t &Transformer) get_call_return_type(node flat.Node) string {
 	}
 	// Try exact name first
 	if ret := t.fn_ret_types[name] {
-		return ret
+		return t.normalize_type_alias(ret)
 	}
 	// Try qualified with current module
 	if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
 		qname := '${t.cur_module}.${name}'
 		if ret := t.fn_ret_types[qname] {
-			return ret
+			return t.normalize_type_alias(ret)
 		}
 	}
 	return ''

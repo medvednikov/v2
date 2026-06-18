@@ -81,10 +81,49 @@ fn (t &Transformer) lookup_struct_field_type(type_name string, field_name string
 	info := t.structs[lookup_type] or { return none }
 	for f in info.fields {
 		if f.name == field_name {
-			return f.typ
+			return t.normalize_type_alias(f.typ)
 		}
 	}
 	return none
+}
+
+fn (t &Transformer) normalize_type_alias(typ string) string {
+	if typ.len == 0 || isnil(t.tc) {
+		return typ
+	}
+	if typ.starts_with('&') {
+		return '&' + t.normalize_type_alias(typ[1..])
+	}
+	if typ.starts_with('[]') {
+		return '[]' + t.normalize_type_alias(typ[2..])
+	}
+	if typ.starts_with('?') {
+		return '?' + t.normalize_type_alias(typ[1..])
+	}
+	if typ.starts_with('!') {
+		return '!' + t.normalize_type_alias(typ[1..])
+	}
+	if typ in t.structs || typ in t.sum_types || typ in t.enum_types {
+		return typ
+	}
+	if !typ.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+		&& t.cur_module != 'builtin' {
+		qtyp := '${t.cur_module}.${typ}'
+		if qtyp in t.structs || qtyp in t.sum_types || qtyp in t.enum_types {
+			return typ
+		}
+	}
+	if target := t.tc.type_aliases[typ] {
+		return target
+	}
+	if !typ.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+		&& t.cur_module != 'builtin' {
+		qtyp := '${t.cur_module}.${typ}'
+		if target := t.tc.type_aliases[qtyp] {
+			return target
+		}
+	}
+	return typ
 }
 
 // resolve_index_elem_type determines the element type of an .index expression.
@@ -99,12 +138,12 @@ fn (t &Transformer) resolve_index_elem_type(node flat.Node) string {
 		return ''
 	}
 	if base_type.starts_with('[]') {
-		return base_type[2..]
+		return t.normalize_type_alias(base_type[2..])
 	}
 	if base_type.starts_with('map[') {
 		bracket_end := base_type.index(']') or { return '' }
 		if bracket_end + 1 < base_type.len {
-			return base_type[bracket_end + 1..]
+			return t.normalize_type_alias(base_type[bracket_end + 1..])
 		}
 		return ''
 	}
@@ -129,7 +168,31 @@ fn (t &Transformer) node_type(id flat.NodeId) string {
 	}
 	node := t.a.nodes[int(id)]
 	if node.typ.len > 0 {
-		return node.typ
+		return t.normalize_type_alias(node.typ)
+	}
+	if node.kind == .selector {
+		sel_type := t.resolve_selector_type(node)
+		if sel_type.len > 0 {
+			return sel_type
+		}
+	}
+	if node.kind == .index {
+		elem_type := t.resolve_index_elem_type(node)
+		if elem_type.len > 0 {
+			return elem_type
+		}
+	}
+	if node.kind == .struct_init && node.value.len > 0 {
+		if node.value in t.structs {
+			return node.value
+		}
+		if t.cur_module.len > 0 && t.cur_module != 'main' && t.cur_module != 'builtin' {
+			qname := '${t.cur_module}.${node.value}'
+			if qname in t.structs {
+				return qname
+			}
+		}
+		return node.value
 	}
 	if !isnil(t.tc) {
 		if typ := t.tc.expr_type(id) {

@@ -399,7 +399,8 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.gen_expr(lhs_id)
 				g.write('})')
 			} else {
-				panic('internal error: non-map membership reached C backend after transform')
+				rhs := g.a.nodes[int(rhs_id)]
+				panic('internal error: non-map membership reached C backend after transform: rhs=${rhs_type.name()} kind=${rhs.kind} value=${rhs.value}')
 			}
 		}
 		.postfix {
