@@ -596,8 +596,33 @@ fn (mut tc TypeChecker) insert_loop_var(id flat.NodeId, typ Type) {
 
 // expr_type returns the resolved type recorded for a node during annotate_types.
 pub fn (tc &TypeChecker) expr_type(id flat.NodeId) ?Type {
+	if int(id) >= 0 {
+		node := tc.a.nodes[int(id)]
+		if node.kind == .call && node.typ.len > 0 {
+			return tc.parse_type(node.typ)
+		}
+	}
+	if t := tc.resolved_call_type(id) {
+		return t
+	}
 	if t := tc.expr_types[int(id)] {
 		return t
+	}
+	return none
+}
+
+fn (tc &TypeChecker) resolved_call_type(id flat.NodeId) ?Type {
+	if int(id) < 0 {
+		return none
+	}
+	node := tc.a.nodes[int(id)]
+	if node.kind != .call {
+		return none
+	}
+	if name := tc.resolved_calls[int(id)] {
+		if t := tc.fn_ret_types[name] {
+			return t
+		}
 	}
 	return none
 }
@@ -2218,6 +2243,12 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		return Type(int_)
 	}
 	node := tc.a.nodes[int(id)]
+	if node.kind == .call && node.typ.len > 0 {
+		return tc.parse_type(node.typ)
+	}
+	if t := tc.resolved_call_type(id) {
+		return t
+	}
 	if node.kind == .or_expr {
 		inner := tc.resolve_type(tc.a.child(&node, 0))
 		if inner is OptionType {
@@ -2231,8 +2262,8 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 	if smart_type := tc.smartcast_type(id) {
 		return smart_type
 	}
-	if node.kind != .ident && node.kind != .infix && !(tc.smartcasts.len > 0
-		&& (node.kind == .ident || node.kind == .selector)) {
+	if node.kind != .ident && node.kind != .infix && node.kind != .selector
+		&& !(tc.smartcasts.len > 0 && (node.kind == .ident || node.kind == .selector)) {
 		if typ := tc.expr_types[int(id)] {
 			return typ
 		}
