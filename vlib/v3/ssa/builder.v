@@ -43,6 +43,7 @@ mut:
 	a                  &flat.FlatAst      = unsafe { nil }
 	tc                 &types.TypeChecker = unsafe { nil }
 	used_fns           map[string]bool
+	cur_module         string
 	cur_func           int
 	cur_block          BlockID
 	vars               map[string]ValueID
@@ -1457,20 +1458,45 @@ fn (mut b Builder) register_fixed_array_contains_stubs() {
 
 fn (mut b Builder) generate_fixed_array_contains_string_body(func_id int) {
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_i64 := b.m.type_store.get_ptr(b.i64_type)
+	ptr_string := b.m.type_store.get_ptr(b.str_type)
 	entry := b.m.add_block(func_id, 'entry')
 	arr := b.func_add_argument(func_id, ptr_i8, 'arr')
 	len := b.func_add_argument(func_id, b.i64_type, 'len')
 	needle := b.func_add_argument(func_id, b.str_type, 'needle')
-	_ = arr
-	_ = len
-	mut result := b.m.get_or_add_const(b.i1_type, '0')
+	alloca_i := b.block_instr0(.alloca, entry, ptr_i64)
+	zero := b.m.get_or_add_const(b.i64_type, '0')
+	one := b.m.get_or_add_const(b.i64_type, '1')
+	b.block_instr2(.store, entry, b.void_type, zero, alloca_i)
+
+	blk_loop := b.m.add_block(func_id, 'fixed_array_contains_string_loop')
+	blk_body := b.m.add_block(func_id, 'fixed_array_contains_string_body')
+	blk_next := b.m.add_block(func_id, 'fixed_array_contains_string_next')
+	blk_found := b.m.add_block(func_id, 'fixed_array_contains_string_found')
+	blk_not_found := b.m.add_block(func_id, 'fixed_array_contains_string_not_found')
+	b.block_instr1(.jmp, entry, b.void_type, ValueID(blk_loop))
+
+	i := b.block_instr1(.load, blk_loop, b.i64_type, alloca_i)
+	in_range := b.block_instr2(.lt, blk_loop, b.i1_type, i, len)
+	b.block_instr3(.br, blk_loop, b.void_type, in_range, ValueID(blk_body), ValueID(blk_not_found))
+
+	stride := b.m.get_or_add_const(b.i64_type, '${b.m.type_size(b.str_type)}')
+	offset := b.block_instr2(.mul, blk_body, b.i64_type, i, stride)
+	slot := b.block_instr2(.add, blk_body, ptr_i8, arr, offset)
+	slot_string_ptr := b.block_instr1(.bitcast, blk_body, ptr_string, slot)
+	slot_string := b.block_instr1(.load, blk_body, b.str_type, slot_string_ptr)
 	eq_ref := b.m.add_value(.func_ref, b.void_type, 'string__eq', b.fn_ids['string__eq'])
-	for sym in arm64_force_external_syms {
-		sym_lit := b.m.add_value(.string_literal, b.str_type, sym, 0)
-		is_sym := b.block_instr3(.call, entry, b.i1_type, eq_ref, needle, sym_lit)
-		result = b.block_instr2(.or_, entry, b.i1_type, result, is_sym)
-	}
-	b.block_instr1(.ret, entry, b.void_type, result)
+	is_eq := b.block_instr3(.call, blk_body, b.i1_type, eq_ref, slot_string, needle)
+	b.block_instr3(.br, blk_body, b.void_type, is_eq, ValueID(blk_found), ValueID(blk_next))
+
+	next_i := b.block_instr2(.add, blk_next, b.i64_type, i, one)
+	b.block_instr2(.store, blk_next, b.void_type, next_i, alloca_i)
+	b.block_instr1(.jmp, blk_next, b.void_type, ValueID(blk_loop))
+
+	true_value := b.m.get_or_add_const(b.i1_type, '1')
+	false_value := b.m.get_or_add_const(b.i1_type, '0')
+	b.block_instr1(.ret, blk_found, b.void_type, true_value)
+	b.block_instr1(.ret, blk_not_found, b.void_type, false_value)
 }
 
 fn (mut b Builder) generate_const_bool_body(func_id int, value bool) {
@@ -2659,6 +2685,7 @@ fn (b &Builder) fn_is_used(name string) bool {
 
 fn (mut b Builder) build_function(node flat.Node, module_name string) {
 	func_id := b.fn_ids[node.value]
+	b.cur_module = module_name
 	b.cur_func = func_id
 	b.vars = map[string]ValueID{}
 	b.var_type_names = map[string]string{}
@@ -2704,6 +2731,7 @@ fn (mut b Builder) build_function(node flat.Node, module_name string) {
 
 fn (mut b Builder) build_top_level_main() {
 	func_id := b.fn_ids['main'] or { return }
+	b.cur_module = 'main'
 	b.cur_func = func_id
 	b.vars = map[string]ValueID{}
 	b.var_type_names = map[string]string{}
@@ -4126,8 +4154,8 @@ fn (mut b Builder) index_elem_type(id flat.NodeId, node flat.Node) TypeID {
 }
 
 fn (mut b Builder) build_struct_init(node flat.Node) ValueID {
-	struct_name := node.value
-	if typ_id := b.struct_types[struct_name] {
+	typ_id, struct_name := b.struct_literal_type(node.value)
+	if typ_id > 0 {
 		alloca := b.emit0(.alloca, b.m.type_store.get_ptr(typ_id))
 		typ := b.m.type_store.types[typ_id]
 		mut initialized := map[string]bool{}
@@ -4213,9 +4241,27 @@ fn (b &Builder) field_type_name(struct_name string, field_name string) string {
 	return ''
 }
 
+fn (b &Builder) struct_literal_type(name string) (TypeID, string) {
+	short_name := name.all_after('.')
+	if !name.contains('.') && b.cur_module.len > 0 && b.cur_module != 'main'
+		&& b.cur_module != 'builtin' {
+		qualified_name := b.cur_module + '.' + short_name
+		if typ := b.struct_types[qualified_name] {
+			return typ, qualified_name
+		}
+	}
+	if typ := b.struct_types[name] {
+		return typ, name
+	}
+	if typ := b.struct_types[short_name] {
+		return typ, short_name
+	}
+	return TypeID(0), name
+}
+
 fn (mut b Builder) build_heap_struct_init(node flat.Node) ValueID {
-	struct_name := node.value
-	if typ_id := b.struct_types[struct_name] {
+	typ_id, struct_name := b.struct_literal_type(node.value)
+	if typ_id > 0 {
 		alloca := b.emit0(.alloca, b.m.type_store.get_ptr(typ_id))
 		typ := b.m.type_store.types[typ_id]
 		mut initialized := map[string]bool{}
