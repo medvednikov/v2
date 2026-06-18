@@ -135,7 +135,14 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						} else {
 							base_ct := g.tc.c_type(base)
 							expr_ct := g.tc.c_type(expr_type)
-							if expr_ct != base_ct && expr_type !is types.Primitive {
+							struct_init_ct := if ret_node.kind == .struct_init {
+								g.struct_init_c_type_name(ret_node.value)
+							} else {
+								''
+							}
+							if expr_ct != base_ct && struct_init_ct != base_ct
+								&& !g.type_names_match(expr_type, base)
+								&& !g.call_constructs_type(ret_id, base) && expr_type !is types.Primitive {
 								g.writeln('return (${ct}){.ok = false};')
 							} else {
 								g.write('return (${ct}){.ok = true, .value = ')
@@ -263,6 +270,38 @@ fn (g &FlatGen) expr_really_returns_optional(id flat.NodeId) bool {
 		}
 	}
 	return false
+}
+
+fn (g &FlatGen) type_names_match(a types.Type, b types.Type) bool {
+	a_name := a.name()
+	b_name := b.name()
+	if a_name.len == 0 || b_name.len == 0 {
+		return false
+	}
+	if a_name == b_name {
+		return true
+	}
+	return a_name.all_after_last('.') == b_name.all_after_last('.')
+}
+
+fn (g &FlatGen) call_constructs_type(id flat.NodeId, target types.Type) bool {
+	if int(id) < 0 {
+		return false
+	}
+	node := g.a.nodes[int(id)]
+	if node.kind != .call || node.children_count == 0 {
+		return false
+	}
+	fn_node := g.a.child_node(&node, 0)
+	if fn_node.kind != .ident {
+		return false
+	}
+	target_name := target.name()
+	if target_name.len == 0 {
+		return false
+	}
+	short_target := target_name.all_after_last('.')
+	return fn_node.value == target_name || fn_node.value == short_target
 }
 
 fn (g &FlatGen) is_runtime_array_flags_stmt(id flat.NodeId) bool {
@@ -503,6 +542,17 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 				g.writeln('});')
 			} else {
 				lhs_type := g.tc.resolve_type(g.a.child(&node, i))
+				rhs_type := g.tc.resolve_type(rhs_id)
+				if node.op == .plus_assign && (lhs_type is types.String || rhs_type is types.String) {
+					g.gen_expr(g.a.child(&node, i))
+					g.write(' = string__plus(')
+					g.gen_expr(g.a.child(&node, i))
+					g.write(', ')
+					g.gen_expr(rhs_id)
+					g.writeln(');')
+					i += 2
+					continue
+				}
 				if lhs_type is types.Enum {
 					g.expected_enum = lhs_type.name
 				}

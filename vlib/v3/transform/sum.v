@@ -13,20 +13,67 @@ fn (t &Transformer) resolve_variant(sum_name string, variant string) string {
 	if variant.contains('.') {
 		return variant
 	}
+	resolved_sum := t.resolve_sum_name(sum_name)
+	if resolved_sum.contains('.') {
+		return '${resolved_sum.all_before_last('.')}.${variant}'
+	}
 	if sum_name.contains('.') {
 		return '${sum_name.all_before_last('.')}.${variant}'
 	}
 	return variant
 }
 
-fn (t &Transformer) sum_type_index(sum_name string, variant string) int {
-	variants := t.sum_types[sum_name] or {
-		short_sum := if sum_name.contains('.') { sum_name.all_after_last('.') } else { sum_name }
+fn (t &Transformer) resolve_sum_name(sum_name string) string {
+	if sum_name in t.sum_types {
+		return sum_name
+	}
+	if sum_name.contains('.') {
+		short_sum := sum_name.all_after_last('.')
 		if short_sum in t.sum_types {
-			return t.sum_type_index(short_sum, variant)
+			return short_sum
+		}
+	}
+	if !sum_name.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+		&& t.cur_module != 'builtin' {
+		qsum := '${t.cur_module}.${sum_name}'
+		if qsum in t.sum_types {
+			return qsum
+		}
+	}
+	if !isnil(t.tc) {
+		if sum_name in t.tc.sum_types {
+			return sum_name
+		}
+		if sum_name.contains('.') {
+			short_sum := sum_name.all_after_last('.')
+			if short_sum in t.tc.sum_types {
+				return short_sum
+			}
+		}
+		if !sum_name.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+			&& t.cur_module != 'builtin' {
+			qsum := '${t.cur_module}.${sum_name}'
+			if qsum in t.tc.sum_types {
+				return qsum
+			}
+		}
+	}
+	return sum_name
+}
+
+fn (t &Transformer) sum_type_index(sum_name string, variant string) int {
+	resolved_sum := t.resolve_sum_name(sum_name)
+	variants := t.sum_types[resolved_sum] or {
+		if !isnil(t.tc) {
+			tc_variants := t.tc.sum_types[resolved_sum] or { return 0 }
+			return sum_type_index_in_variants(tc_variants, variant)
 		}
 		return 0
 	}
+	return sum_type_index_in_variants(variants, variant)
+}
+
+fn sum_type_index_in_variants(variants []string, variant string) int {
 	short_variant := if variant.contains('.') { variant.all_after_last('.') } else { variant }
 	for i, v in variants {
 		short_v := if v.contains('.') { v.all_after_last('.') } else { v }

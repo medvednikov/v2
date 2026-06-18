@@ -584,19 +584,28 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 			// For embedded structs followed by access modifier or another field,
 			// check if the next token could be a type
 			field_type := p.parse_type_name()
+			mut default_id := flat.empty_node
 			// default value
 			if p.tok == .assign {
 				p.next()
-				p.expr(.lowest) // consume value, don't store
+				default_id = p.expr(.lowest)
+			}
+			mut children_start := 0
+			mut children_count := 0
+			if int(default_id) >= 0 {
+				children_start = p.add_child(default_id)
+				children_count = 1
 			}
 			// trailing field attributes — skip
 			if p.tok == .attribute || p.tok == .lsbr {
 				p.skip_attrs()
 			}
 			ids << p.a.add_node(flat.Node{
-				kind:  .field_decl
-				value: field_name
-				typ:   field_type
+				kind:           .field_decl
+				value:          field_name
+				typ:            field_type
+				children_start: children_start
+				children_count: children_count
 			})
 			if p.tok == .semicolon {
 				p.next()

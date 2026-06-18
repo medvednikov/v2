@@ -283,12 +283,10 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			lhs_type := g.tc.resolve_type(lhs_id)
-			if lhs_type is types.String {
-				match node.op {
-					.plus, .eq, .ne, .lt, .gt, .le, .ge {
-						panic('internal error: string infix op reached C backend after transform')
-					}
-					else {}
+			rhs_type := g.tc.resolve_type(rhs_id)
+			if lhs_type is types.String || rhs_type is types.String {
+				if g.gen_string_infix_fallback(node, lhs_id, rhs_id) {
+					return
 				}
 			}
 			if lhs_type is types.Enum {
@@ -730,6 +728,70 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		}
 		.empty {}
 		else {}
+	}
+}
+
+fn (mut g FlatGen) gen_string_infix_fallback(node flat.Node, lhs_id flat.NodeId, rhs_id flat.NodeId) bool {
+	match node.op {
+		.plus {
+			g.write('string__plus(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
+			return true
+		}
+		.eq {
+			g.write('string__eq(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
+			return true
+		}
+		.ne {
+			g.write('!string__eq(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
+			return true
+		}
+		.lt {
+			g.write('string__lt(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
+			return true
+		}
+		.gt {
+			g.write('string__lt(')
+			g.gen_expr(rhs_id)
+			g.write(', ')
+			g.gen_expr(lhs_id)
+			g.write(')')
+			return true
+		}
+		.le {
+			g.write('!string__lt(')
+			g.gen_expr(rhs_id)
+			g.write(', ')
+			g.gen_expr(lhs_id)
+			g.write(')')
+			return true
+		}
+		.ge {
+			g.write('!string__lt(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
+			return true
+		}
+		else {
+			return false
+		}
 	}
 }
 
@@ -1566,6 +1628,15 @@ fn (g &FlatGen) is_runtime_assignable(id flat.NodeId) bool {
 		}
 		.ident {
 			true
+		}
+		.infix {
+			if node.children_count >= 2 {
+				lhs_type := g.tc.resolve_type(g.a.child(&node, 0))
+				rhs_type := g.tc.resolve_type(g.a.child(&node, 1))
+				lhs_type is types.String || rhs_type is types.String
+			} else {
+				false
+			}
 		}
 		.cast_expr, .prefix, .struct_init {
 			true

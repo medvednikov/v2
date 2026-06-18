@@ -202,13 +202,7 @@ fn (mut t Transformer) transform_const_decl(node flat.Node) {
 		if cf.kind == .const_field && cf.children_count >= 1 {
 			val_id := t.a.child(&cf, 0)
 			val := t.a.nodes[int(val_id)]
-			// Only lower string concatenation in const initializers (e.g. the
-			// prelude's chunked embedded-data tables: `"chunk" + "chunk" + ...`).
-			// Other const values are left byte-identical so backend const codegen
-			// is undisturbed.
-			is_string := t.is_string_type(t.a.child(&val, 0))
-				|| t.is_string_type(t.a.child(&val, 1))
-			if val.kind == .infix && val.children_count >= 2 && is_string {
+			if val.kind == .infix && val.children_count >= 2 {
 				new_val := t.transform_expr(val_id)
 				// Overwrite the field's value slot in place (each const_field owns
 				// its own single-element child range, so this is safe).
@@ -220,7 +214,7 @@ fn (mut t Transformer) transform_const_decl(node flat.Node) {
 
 fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 	t.cur_fn_name = fn_node.value
-	t.cur_fn_ret_type = fn_node.typ
+	t.cur_fn_ret_type = t.normalize_type_alias(fn_node.typ)
 	t.var_types = map[string]string{}
 	// Collect param types
 	for i in 0 .. fn_node.children_count {
@@ -230,7 +224,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 		}
 		child := t.a.nodes[int(child_id)]
 		if child.kind == .param && child.value.len > 0 && child.typ.len > 0 {
-			t.var_types[child.value] = child.typ
+			t.var_types[child.value] = t.normalize_type_alias(child.typ)
 		}
 	}
 	// Collect body statement ids (non-param children)
@@ -627,6 +621,23 @@ fn (mut t Transformer) transform_children_stmt(id flat.NodeId, node flat.Node) [
 fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat.NodeId {
 	if node.children_count < 2 {
 		return id
+	}
+	if node.op == .left_shift {
+		lhs_id := t.a.child(&node, 0)
+		rhs_id := t.a.child(&node, 1)
+		new_rhs := t.transform_expr(rhs_id)
+		start := t.a.children.len
+		t.a.children << lhs_id
+		t.a.children << new_rhs
+		return t.a.add_node(flat.Node{
+			kind:           .infix
+			op:             node.op
+			children_start: start
+			children_count: 2
+			pos:            node.pos
+			value:          node.value
+			typ:            node.typ
+		})
 	}
 	if str_result := t.transform_infix_string_ops(id, node) {
 		return str_result
@@ -1245,6 +1256,9 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 		.array_literal, .array_init {
 			return node.typ
 		}
+		.map_init {
+			return node.value
+		}
 		.string_literal, .string_interp {
 			return 'string'
 		}
@@ -1628,7 +1642,7 @@ fn (mut t Transformer) annotate_fn_body(fn_node flat.Node) {
 		}
 		child := t.a.nodes[int(child_id)]
 		if child.kind == .param && child.value.len > 0 && child.typ.len > 0 {
-			t.var_types[child.value] = child.typ
+			t.var_types[child.value] = t.normalize_type_alias(child.typ)
 		}
 		if child.kind == .decl_assign && child.children_count >= 2 {
 			lhs := t.a.child_node(&child, 0)

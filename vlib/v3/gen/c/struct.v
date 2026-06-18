@@ -4,8 +4,7 @@ import v3.flat
 import v3.types
 
 fn (mut g FlatGen) gen_struct_init(node flat.Node) {
-	stype := g.tc.parse_type(node.value)
-	name := g.tc.c_type(stype)
+	name := g.struct_init_c_type_name(node.value)
 	g.write('(${name}){')
 	mut set_fields := map[string]bool{}
 	mut has_field := false
@@ -22,6 +21,7 @@ fn (mut g FlatGen) gen_struct_init(node flat.Node) {
 	qname := g.tc.qualify_name(node.value)
 	sname := if qname in g.tc.structs { qname } else { node.value }
 	if sname in g.tc.structs {
+		has_field = g.gen_struct_default_fields(node.value, mut set_fields, has_field)
 		for f in g.tc.structs[sname] {
 			if f.name in set_fields {
 				continue
@@ -48,8 +48,7 @@ fn (mut g FlatGen) gen_struct_init(node flat.Node) {
 }
 
 fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
-	stype := g.tc.parse_type(node.value)
-	name := g.tc.c_type(stype)
+	name := g.struct_init_c_type_name(node.value)
 	g.write('(${name}*)memdup(&(${name}){')
 	mut set_fields := map[string]bool{}
 	mut has_field := false
@@ -66,6 +65,7 @@ fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
 	qname := g.tc.qualify_name(node.value)
 	sname := if qname in g.tc.structs { qname } else { node.value }
 	if sname in g.tc.structs {
+		has_field = g.gen_struct_default_fields(node.value, mut set_fields, has_field)
 		for f in g.tc.structs[sname] {
 			if f.name in set_fields {
 				continue
@@ -89,6 +89,94 @@ fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
 		}
 	}
 	g.write('}, sizeof(${name}))')
+}
+
+fn (mut g FlatGen) gen_struct_default_fields(type_name string, mut set_fields map[string]bool, has_field bool) bool {
+	mut has := has_field
+	info := g.find_struct_decl(type_name) or { return has }
+	old_module := g.tc.cur_module
+	g.tc.cur_module = info.module
+	for i in 0 .. info.node.children_count {
+		field := g.a.child_node(&info.node, i)
+		if field.kind != .field_decl || field.children_count == 0 || field.value in set_fields {
+			continue
+		}
+		if has {
+			g.write(', ')
+		}
+		g.write('.${c_name(field.value)} = ')
+		g.gen_expr(g.a.child(field, 0))
+		set_fields[field.value] = true
+		has = true
+	}
+	g.tc.cur_module = old_module
+	return has
+}
+
+struct StructDeclInfo {
+	node      flat.Node
+	module    string
+	full_name string
+}
+
+fn (g &FlatGen) struct_init_c_type_name(type_name string) string {
+	info := g.find_struct_decl(type_name) or { return g.tc.c_type(g.tc.parse_type(type_name)) }
+	return c_name(info.full_name)
+}
+
+fn (g &FlatGen) find_struct_decl(type_name string) ?StructDeclInfo {
+	short_name := if type_name.contains('.') { type_name.all_after_last('.') } else { type_name }
+	preferred_name := if !type_name.contains('.') && g.tc.cur_module.len > 0
+		&& g.tc.cur_module != 'main' && g.tc.cur_module != 'builtin' {
+		'${g.tc.cur_module}.${type_name}'
+	} else {
+		type_name
+	}
+	mut cur_module := ''
+	for node in g.a.nodes {
+		if node.kind == .module_decl {
+			cur_module = node.value
+			continue
+		}
+		if node.kind != .struct_decl || node.value != short_name {
+			continue
+		}
+		full_name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
+			'${cur_module}.${node.value}'
+		} else {
+			node.value
+		}
+		if preferred_name == full_name {
+			return StructDeclInfo{
+				node:      node
+				module:    cur_module
+				full_name: full_name
+			}
+		}
+	}
+	cur_module = ''
+	for node in g.a.nodes {
+		if node.kind == .module_decl {
+			cur_module = node.value
+			continue
+		}
+		if node.kind != .struct_decl || node.value != short_name {
+			continue
+		}
+		full_name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
+			'${cur_module}.${node.value}'
+		} else {
+			node.value
+		}
+		if type_name == node.value || type_name == full_name {
+			return StructDeclInfo{
+				node:      node
+				module:    cur_module
+				full_name: full_name
+			}
+		}
+	}
+	return none
 }
 
 fn (mut g FlatGen) gen_return_assoc(node flat.Node) {
@@ -137,7 +225,8 @@ fn (mut g FlatGen) gen_map_init(node flat.Node) {
 }
 
 fn (g &FlatGen) skip_builtin_struct(name string) bool {
-	return g.has_builtins && name in ['array', 'map', 'DenseArray', 'MapHashFn', 'MapEqFn', 'MapCloneFn', 'MapFreeFn', 'MapSlot', 'ArrayDataHeader']
+	return g.has_builtins
+		&& name in ['array', 'map', 'DenseArray', 'MapHashFn', 'MapEqFn', 'MapCloneFn', 'MapFreeFn', 'MapSlot', 'ArrayDataHeader']
 }
 
 fn (mut g FlatGen) struct_decls() {

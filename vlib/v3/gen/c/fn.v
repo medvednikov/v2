@@ -24,6 +24,9 @@ fn (mut g FlatGen) gen_fns() {
 				&& node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
 				continue
 			}
+			if g.is_runtime_provided_fn(node.value) {
+				continue
+			}
 			if node.value.starts_with('Gen.') && g.tc.cur_module == 'c' {
 				continue
 			}
@@ -49,6 +52,10 @@ fn (g &FlatGen) dotted_fn_name(name string) string {
 		return '${g.tc.cur_module}.${name}'
 	}
 	return name
+}
+
+fn (g &FlatGen) is_runtime_provided_fn(name string) bool {
+	return g.has_builtins && g.tc.cur_module == 'os' && name == 'getwd'
 }
 
 fn (mut g FlatGen) gen_fn(node flat.Node) {
@@ -333,17 +340,11 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 								g.write('${tname}_${fn_node.value}')
 							} else {
 								mut prim_found := false
-								for alias, target in g.tc.type_aliases {
-									if target == tname {
-										alias_method := '${alias}.${fn_node.value}'
-										if alias_method in g.tc.fn_param_types {
-											is_method = true
-											prim_found = true
-											base_id = g.a.child(fn_node, 0)
-											g.write(c_name(alias_method))
-											break
-										}
-									}
+								if alias_method := g.find_alias_method(tname, fn_node.value) {
+									is_method = true
+									prim_found = true
+									base_id = g.a.child(fn_node, 0)
+									g.write(c_name(alias_method))
 								}
 								if !prim_found {
 									alt_name := g.find_prim_method(fn_node.value)
@@ -493,17 +494,11 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							g.write('${tname}_${fn_node.value}')
 						} else {
 							mut prim_found := false
-							for alias, target in g.tc.type_aliases {
-								if target == tname {
-									alias_method := '${alias}.${fn_node.value}'
-									if alias_method in g.tc.fn_param_types {
-										is_method = true
-										prim_found = true
-										base_id = g.a.child(fn_node, 0)
-										g.write(c_name(alias_method))
-										break
-									}
-								}
+							if alias_method := g.find_alias_method(tname, fn_node.value) {
+								is_method = true
+								prim_found = true
+								base_id = g.a.child(fn_node, 0)
+								g.write(c_name(alias_method))
 							}
 							if !prim_found {
 								alt_name := g.find_prim_method(fn_node.value)
@@ -899,6 +894,29 @@ fn (g &FlatGen) find_prim_method(method string) string {
 	return ''
 }
 
+fn (g &FlatGen) find_alias_method(target string, method string) ?string {
+	mut fallback := ''
+	for alias, alias_target in g.tc.type_aliases {
+		if alias_target != target {
+			continue
+		}
+		alias_method := '${alias}.${method}'
+		if alias_method !in g.tc.fn_param_types {
+			continue
+		}
+		if alias.contains('.') {
+			return alias_method
+		}
+		if fallback.len == 0 {
+			fallback = alias_method
+		}
+	}
+	if fallback.len > 0 {
+		return fallback
+	}
+	return none
+}
+
 fn (mut g FlatGen) forward_decls() {
 	for i, node in g.a.nodes {
 		if node.kind == .module_decl {
@@ -918,6 +936,9 @@ fn (mut g FlatGen) forward_decls() {
 			}
 			if g.tc.cur_module == 'strings'
 				&& node.value in ['Builder.ensure_cap', 'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at', 'Builder.drain_builder', 'Builder.indent'] {
+				continue
+			}
+			if g.is_runtime_provided_fn(node.value) {
 				continue
 			}
 			params := g.fn_params_list(node)

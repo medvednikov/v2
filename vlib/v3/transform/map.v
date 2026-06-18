@@ -93,8 +93,8 @@ fn (mut t Transformer) transform_map_index_or_expr(id flat.NodeId, node flat.Nod
 		t.transform_expr(body_id)
 	}
 	start := t.a.children.len
-	t.a.children << new_index
-	t.a.children << new_body
+	t.a.add_child(new_index)
+	t.a.add_child(new_body)
 	return t.a.add_node(flat.Node{
 		kind:           .or_expr
 		op:             node.op

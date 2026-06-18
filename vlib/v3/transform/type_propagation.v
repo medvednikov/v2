@@ -146,15 +146,15 @@ fn (t &Transformer) normalize_type_alias(typ string) string {
 	if typ.starts_with('!') {
 		return '!' + t.normalize_type_alias(typ[1..])
 	}
-	if typ in t.structs || typ in t.sum_types || typ in t.enum_types {
-		return typ
-	}
 	if !typ.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
 		&& t.cur_module != 'builtin' {
 		qtyp := '${t.cur_module}.${typ}'
 		if qtyp in t.structs || qtyp in t.sum_types || qtyp in t.enum_types {
-			return typ
+			return qtyp
 		}
+	}
+	if typ in t.structs || typ in t.sum_types || typ in t.enum_types {
+		return typ
 	}
 	if target := t.tc.type_aliases[typ] {
 		return target

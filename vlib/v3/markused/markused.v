@@ -117,7 +117,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	eprintln(total_suffix_entries.str())
 
 	mut suffix_hits := 0
-	//mut suffix_misses := 0
+	// mut suffix_misses := 0
 	mut in_cg := 0
 	mut not_in_cg := 0
 	mut qi := 0
@@ -314,11 +314,63 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 					}
 				}
 			}
+			.struct_init {
+				collect_struct_default_calls(a, tc, child, imports, mut calls)
+			}
 			else {}
 		}
 
 		collect_calls(a, tc, child, cur_module, imports, receiver_name, receiver_struct, mut calls)
 	}
+}
+
+struct StructDeclInfo {
+	node   flat.Node
+	module string
+}
+
+fn collect_struct_default_calls(a &flat.FlatAst, tc &types.TypeChecker, init &flat.Node, imports map[string]string, mut calls []string) {
+	info := find_struct_decl(a, init.value) or { return }
+	mut set_fields := map[string]bool{}
+	for i in 0 .. init.children_count {
+		field := a.child_node(init, i)
+		if field.kind == .field_init {
+			set_fields[field.value] = true
+		}
+	}
+	for i in 0 .. info.node.children_count {
+		field := a.child_node(&info.node, i)
+		if field.kind != .field_decl || field.children_count == 0 || field.value in set_fields {
+			continue
+		}
+		collect_calls(a, tc, field, info.module, imports, '', '', mut calls)
+	}
+}
+
+fn find_struct_decl(a &flat.FlatAst, type_name string) ?StructDeclInfo {
+	short_name := if type_name.contains('.') { type_name.all_after_last('.') } else { type_name }
+	mut cur_module := ''
+	for node in a.nodes {
+		if node.kind == .module_decl {
+			cur_module = node.value
+			continue
+		}
+		if node.kind != .struct_decl || node.value != short_name {
+			continue
+		}
+		full_name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
+			'${cur_module}.${node.value}'
+		} else {
+			node.value
+		}
+		if type_name == node.value || type_name == full_name {
+			return StructDeclInfo{
+				node:   node
+				module: cur_module
+			}
+		}
+	}
+	return none
 }
 
 fn resolve_type_name(t types.Type) string {
