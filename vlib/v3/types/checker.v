@@ -1167,7 +1167,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		.array_init {
 			t := tc.parse_type(node.value)
 			if t is ArrayFixed {
-				return Type(t)
+				return t
 			}
 			return Type(Array{
 				elem_type: t

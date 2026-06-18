@@ -111,7 +111,7 @@ fn main() {
 	b.step('transform')
 
 	// Type check — shared phase before backend selection
-	mut tc := types.TypeChecker{}
+	mut tc := types.TypeChecker.new(a)
 	tc.collect(a)
 	b.step('check')
 
@@ -173,10 +173,15 @@ fn main() {
 		if !is_prod {
 			tcc_path := os.join_path(os.home_dir(), 'code', 'v', 'thirdparty', 'tcc', 'tcc.exe')
 			cc_cmd = '${tcc_path} ${warn_flags} -o ${bin_file} ${output_file} -lm'
+			println('  > ${cc_cmd}')
 			result = os.execute(cc_cmd)
 		}
 		if is_prod || result.exit_code != 0 {
+			if result.exit_code != 0 && result.output.len > 0 {
+				eprintln('  tcc error: ${result.output.trim_space()}')
+			}
 			cc_cmd = 'cc -std=gnu11 ${opt_flag}${warn_flags} -Wno-int-conversion -o ${bin_file} ${output_file} -lm'
+			println('  > ${cc_cmd}')
 			result = os.execute(cc_cmd)
 			if result.exit_code != 0 {
 				eprintln('C compilation failed:')
@@ -185,7 +190,6 @@ fn main() {
 			}
 		}
 		b.step('cc')
-		println('  ${cc_cmd}')
 	}
 
 	b.print_report()

@@ -966,6 +966,7 @@ fn (mut g FlatGen) runtime_fns() {
 	g.writeln('string tos(u8* s, int len) { return (string){(char*)s, len, 0}; }')
 	g.writeln('string tos3(char* s) { return (string){s, s ? (int)strlen(s) : 0, 0}; }')
 	g.writeln('string tos_clone(u8* s) { if (!s) return (string){0}; int n = (int)strlen((char*)s); char* p = malloc(n+1); memcpy(p,s,n); p[n]=0; return (string){p,n,0}; }')
+	g.writeln('string cstring_to_vstring(char* s) { return tos_clone((u8*)s); }')
 	g.writeln('string string__clone(string s) {')
 	g.writeln('\tchar* p = malloc(s.len + 1); memcpy(p, s.str, s.len); p[s.len] = 0;')
 	g.writeln('\treturn (string){p, s.len, 0};')
