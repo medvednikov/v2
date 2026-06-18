@@ -10,17 +10,18 @@ import v3.token
 pub struct Parser {
 	prefs &pref.Preferences
 mut:
-	s            &scanner.Scanner
-	tok          token.Token
-	lit          string
-	prev_tok     token.Token
-	peek_tok     token.Token = .eof
-	peek_lit     string
-	has_peek     bool
-	a            flat.FlatAst
-	cur_file     string
-	cur_module   string
-	pending_flag bool
+	s              &scanner.Scanner
+	tok            token.Token
+	lit            string
+	prev_tok       token.Token
+	peek_tok       token.Token = .eof
+	peek_lit       string
+	has_peek       bool
+	a              flat.FlatAst
+	cur_file       string
+	cur_module     string
+	pending_flag   bool
+	skip_next_decl bool
 }
 
 pub fn Parser.new(prefs &pref.Preferences) Parser {
@@ -203,10 +204,20 @@ fn (mut p Parser) top_level_stmt() flat.NodeId {
 		}
 		.attribute {
 			p.skip_attrs()
+			if p.skip_next_decl {
+				p.skip_next_decl = false
+				p.skip_top_level_stmt()
+				return flat.empty_node
+			}
 			return p.top_level_stmt()
 		}
 		.lsbr {
 			p.skip_attrs()
+			if p.skip_next_decl {
+				p.skip_next_decl = false
+				p.skip_top_level_stmt()
+				return flat.empty_node
+			}
 			return p.top_level_stmt()
 		}
 		.dollar {
@@ -318,7 +329,11 @@ fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type strin
 		p.next()
 	}
 	for p.tok != .rpar && p.tok != .eof {
+		start_offset := p.s.offset
 		param_ids << p.parse_param_group()
+		if p.s.offset == start_offset && p.tok != .rpar && p.tok != .eof {
+			p.next()
+		}
 	}
 	p.check(.rpar)
 
@@ -376,7 +391,11 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 		})
 	}
 	for p.tok != .rpar && p.tok != .eof {
+		start_offset := p.s.offset
 		param_ids << p.parse_param_group()
+		if p.s.offset == start_offset && p.tok != .rpar && p.tok != .eof {
+			p.next()
+		}
 	}
 	p.check(.rpar)
 
@@ -1071,6 +1090,21 @@ fn (mut p Parser) skip_attrs() {
 		if p.tok == .name && p.lit == 'flag' {
 			p.pending_flag = true
 		}
+		if p.tok == .key_if {
+			p.next()
+			mut cond := strings.new_builder(32)
+			for p.tok != .rsbr && p.tok != .eof {
+				tok_str := if p.lit.len > 0 { p.lit } else { p.tok.str() }
+				if cond.len > 0 && tok_str != '?' {
+					cond.write_string(' ')
+				}
+				cond.write_string(tok_str)
+				p.next()
+			}
+			if !eval_comptime_cond(p.prefs, cond.str()) {
+				p.skip_next_decl = true
+			}
+		}
 		for p.tok != .rsbr && p.tok != .eof {
 			p.next()
 		}
@@ -1079,6 +1113,46 @@ fn (mut p Parser) skip_attrs() {
 	}
 	if p.tok == .lsbr {
 		p.skip_brackets()
+	}
+}
+
+fn (mut p Parser) skip_top_level_stmt() {
+	for p.tok == .attribute || p.tok == .lsbr {
+		p.skip_attrs()
+	}
+	if p.tok == .key_pub {
+		p.next()
+	}
+	match p.tok {
+		.key_fn {
+			p.next()
+			for p.tok != .lcbr && p.tok != .semicolon && p.tok != .eof {
+				p.next()
+			}
+			if p.tok == .lcbr {
+				p.skip_block()
+			} else if p.tok == .semicolon {
+				p.next()
+			}
+		}
+		.key_struct, .key_union, .key_enum, .key_interface, .key_const, .key_global {
+			for p.tok != .lcbr && p.tok != .semicolon && p.tok != .eof {
+				p.next()
+			}
+			if p.tok == .lcbr {
+				p.skip_block()
+			} else if p.tok == .semicolon {
+				p.next()
+			}
+		}
+		else {
+			for p.tok != .semicolon && p.tok != .eof {
+				p.next()
+			}
+			if p.tok == .semicolon {
+				p.next()
+			}
+		}
 	}
 }
 
@@ -1694,6 +1768,9 @@ fn (mut p Parser) match_branch_cond() flat.NodeId {
 		if p.tok == .name {
 			p.next()
 		}
+		if p.tok != .lcbr && p.tok != .comma {
+			return p.expr_with_lhs(sel, .lowest)
+		}
 		return sel
 	}
 	return p.expr(.lowest)
@@ -1955,8 +2032,12 @@ fn (mut p Parser) asm_stmt() flat.NodeId {
 // ==================== expressions (Pratt parser) ====================
 
 fn (mut p Parser) expr(min_bp token.BindingPower) flat.NodeId {
-	mut lhs := p.prefix_expr()
+	lhs := p.prefix_expr()
+	return p.expr_with_lhs(lhs, min_bp)
+}
 
+fn (mut p Parser) expr_with_lhs(first flat.NodeId, min_bp token.BindingPower) flat.NodeId {
+	mut lhs := first
 	for {
 		// selector / method call
 		if p.tok == .dot {
@@ -2263,6 +2344,9 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 			if name == '@FN' {
 				return p.a.add_val(.string_literal, '')
 			}
+			if name == '@VCURRENTHASH' || name == '@VHASH' {
+				return p.a.add_val(.string_literal, '')
+			}
 			// map init: map[K]V{} or map[K]V{k1: v1, ...}
 			if name == 'map' && p.tok == .lsbr {
 				p.next() // skip [
@@ -2333,7 +2417,102 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 				children_count: 1
 			})
 		}
-		.minus, .not, .bit_not, .amp, .mul {
+		.amp {
+			p.next()
+			if p.tok == .amp {
+				p.next()
+				if p.tok == .name && is_builtin_type(p.lit) {
+					type_name := '&&${p.lit}'
+					p.next()
+					if p.tok == .lpar {
+						p.next()
+						inner := p.expr(.lowest)
+						p.check(.rpar)
+						cstart := p.add_child(inner)
+						return p.a.add_node(flat.Node{
+							kind:           .cast_expr
+							value:          type_name
+							children_start: cstart
+							children_count: 1
+						})
+					}
+					id := p.a.add_val(.ident, type_name[2..])
+					first := p.a.add_node(flat.Node{
+						kind:           .prefix
+						op:             .amp
+						children_start: p.add_child(id)
+						children_count: 1
+					})
+					return p.a.add_node(flat.Node{
+						kind:           .prefix
+						op:             .amp
+						children_start: p.add_child(first)
+						children_count: 1
+					})
+				}
+			} else if p.tok == .name && is_builtin_type(p.lit) {
+				name := p.lit
+				type_name := '&${name}'
+				p.next()
+				if p.tok == .lpar {
+					p.next()
+					inner := p.expr(.lowest)
+					p.check(.rpar)
+					cstart := p.add_child(inner)
+					return p.a.add_node(flat.Node{
+						kind:           .cast_expr
+						value:          type_name
+						children_start: cstart
+						children_count: 1
+					})
+				}
+				if p.tok == .lcbr {
+					inner := p.struct_init(name)
+					return p.a.add_node(flat.Node{
+						kind:           .prefix
+						op:             .amp
+						children_start: p.add_child(inner)
+						children_count: 1
+					})
+				}
+				id := p.a.add_val(.ident, name)
+				return p.a.add_node(flat.Node{
+					kind:           .prefix
+					op:             .amp
+					children_start: p.add_child(id)
+					children_count: 1
+				})
+			}
+			operand := p.expr(.highest)
+			pstart := p.add_child(operand)
+			return p.a.add_node(flat.Node{
+				kind:           .prefix
+				op:             .amp
+				children_start: pstart
+				children_count: 1
+			})
+		}
+		.and {
+			p.next()
+			if p.tok == .name && is_builtin_type(p.lit) {
+				type_name := '&&${p.lit}'
+				p.next()
+				if p.tok == .lpar {
+					p.next()
+					inner := p.expr(.lowest)
+					p.check(.rpar)
+					cstart := p.add_child(inner)
+					return p.a.add_node(flat.Node{
+						kind:           .cast_expr
+						value:          type_name
+						children_start: cstart
+						children_count: 1
+					})
+				}
+			}
+			return p.a.add(.empty)
+		}
+		.minus, .not, .bit_not, .mul {
 			op := p.tok
 			p.next()
 			operand := p.expr(.highest)
@@ -2729,6 +2908,18 @@ fn (mut p Parser) array_literal() flat.NodeId {
 	if p.tok == .rsbr {
 		p.next()
 		elem_type := p.parse_type_name()
+		if p.tok == .lpar {
+			p.next()
+			inner := p.expr(.lowest)
+			p.check(.rpar)
+			cstart := p.add_child(inner)
+			return p.a.add_node(flat.Node{
+				kind:           .cast_expr
+				value:          '[]${elem_type}'
+				children_start: cstart
+				children_count: 1
+			})
+		}
 		// array init: []Type{len: n, cap: c, init: v}
 		if p.tok == .lcbr {
 			p.next()
@@ -2867,7 +3058,11 @@ fn (mut p Parser) fn_literal() flat.NodeId {
 	p.check(.lpar)
 	mut param_ids := []flat.NodeId{}
 	for p.tok != .rpar && p.tok != .eof {
+		start_offset := p.s.offset
 		param_ids << p.parse_param_group()
+		if p.s.offset == start_offset && p.tok != .rpar && p.tok != .eof {
+			p.next()
+		}
 	}
 	p.check(.rpar)
 	// return type
@@ -3036,6 +3231,15 @@ fn (mut p Parser) offsetof_expr() flat.NodeId {
 
 // ==================== types ====================
 
+fn (mut p Parser) parse_type_name_progress() string {
+	start_offset := p.s.offset
+	typ := p.parse_type_name()
+	if p.s.offset == start_offset && p.tok != .eof {
+		p.next()
+	}
+	return typ
+}
+
 fn (mut p Parser) parse_type_name() string {
 	// option ?T
 	if p.tok == .question {
@@ -3099,9 +3303,9 @@ fn (mut p Parser) parse_type_name() string {
 		p.next()
 		mut ptypes := []string{}
 		for p.tok != .rpar && p.tok != .eof {
-			typ := p.parse_type_name()
+			typ := p.parse_type_name_progress()
 			if p.tok != .comma && p.tok != .rpar && p.tok != .eof {
-				ptypes << p.parse_type_name()
+				ptypes << p.parse_type_name_progress()
 			} else {
 				ptypes << typ
 			}
@@ -3283,7 +3487,8 @@ fn unescape_string(s string) string {
 
 fn is_builtin_type(name string) bool {
 	return name in ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'u16', 'u32', 'u64', 'f32', 'f64',
-		'byte', 'bool', 'string', 'rune', 'char', 'voidptr', 'charptr', 'usize', 'isize']
+		'byte', 'bool', 'string', 'rune', 'char', 'voidptr', 'charptr', 'byteptr', 'usize', 'isize',
+		'array', 'map', 'mapnode', '_result', '_option']
 }
 
 fn token_to_op(tok token.Token) flat.Op {

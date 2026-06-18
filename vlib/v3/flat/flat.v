@@ -6,6 +6,8 @@ pub type NodeId = int
 
 pub const empty_node = NodeId(-1)
 
+const empty_node_value = Node{}
+
 pub enum NodeKind {
 	empty
 	// expressions
@@ -189,20 +191,37 @@ pub fn (mut a FlatAst) add_child(id NodeId) {
 }
 
 pub fn (a &FlatAst) child(node &Node, index int) NodeId {
-	return a.children[node.children_start + index]
+	child_index := node.children_start + index
+	if index < 0 || index >= node.children_count || child_index < 0 || child_index >= a.children.len {
+		return empty_node
+	}
+	return a.children[child_index]
 }
 
 pub fn (a &FlatAst) child_node(node &Node, index int) &Node {
-	return &a.nodes[int(a.children[node.children_start + index])]
+	id := a.child(node, index)
+	if int(id) < 0 || int(id) >= a.nodes.len {
+		return &empty_node_value
+	}
+	return &a.nodes[int(id)]
 }
 
 pub fn (a &FlatAst) node(id NodeId) &Node {
+	if int(id) < 0 || int(id) >= a.nodes.len {
+		return &empty_node_value
+	}
 	return &a.nodes[int(id)]
 }
 
 pub fn (a &FlatAst) children_of(node &Node) []NodeId {
 	if node.children_count == 0 {
 		return []
+	}
+	if node.children_start < 0 || node.children_start >= a.children.len {
+		return []
+	}
+	if node.children_start + node.children_count > a.children.len {
+		return a.children[node.children_start..]
 	}
 	return a.children[node.children_start..node.children_start + node.children_count]
 }

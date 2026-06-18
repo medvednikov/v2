@@ -89,7 +89,11 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	used['Time.new'] = true
 	for seed in ['__new_array', 'new_array_from_c_array', 'array.get', 'array.set', 'array.push',
 		'array.push_many', 'array.slice', 'array.clone', 'array.delete', 'array.ensure_cap',
-		'string.==', 'string.<', 'strings.Builder.free'] {
+		'string.==', 'string.<', 'string.free', 'string.all_before', 'string.all_before_last',
+		'string.all_after', 'string.all_after_last', 'u8.vstring', '[]rune.string', 'map.set',
+		'map.exists', 'map.get', 'map.get_check', 'map.get_and_set', 'map.delete', 'map.clone',
+		'map.clear', 'strings.Builder.write_ptr', 'strings.Builder.write_runes',
+		'strings.Builder.free', 'strconv.format_int', 'strconv.format_uint'] {
 		queue << seed
 		used[seed] = true
 	}
@@ -172,7 +176,18 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 					}
 				}
 			}
-			_ = found_direct
+			if !found_direct {
+				short := callee.all_after_last('.')
+				if suffix_candidates := suffix_map[short] {
+					for candidate in suffix_candidates {
+						if candidate in fn_decls || candidate in tc.fn_ret_types {
+							if enqueue(candidate, mut used, mut queue) {
+								suffix_hits++
+							}
+						}
+					}
+				}
+			}
 		}
 		new_added := queue.len - prev_len
 		if trace_markused && qi <= 10 {

@@ -72,23 +72,26 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 			} else {
 				var_name
 			}
-			if container_type is types.Map {
-				c_key := g.tc.c_type(container_type.key_type)
-				c_val := g.tc.c_type(container_type.value_type)
+			clean_container_type := types.unwrap_pointer(container_type)
+			if clean_container_type is types.Map {
+				c_key := g.tc.c_type(clean_container_type.key_type)
+				c_val := g.tc.c_type(clean_container_type.value_type)
 				container_str := g.expr_to_string(g.a.child(&node, 2))
 				iter_var := '__mi_${g.tmp_count}'
 				g.tmp_count++
 				key_var := if has_index { idx_var } else { '__mk_${g.tmp_count}' }
 				val_var_ := if has_index { elem_var } else { var_name }
-				g.writeln('for (int ${iter_var} = 0; ${iter_var} < ${container_str}.cap; ${iter_var}++) {')
+				access := if container_type is types.Pointer { '->' } else { '.' }
+				key_values := '${container_str}${access}key_values'
+				g.writeln('for (int ${iter_var} = 0; ${iter_var} < ${key_values}.len; ${iter_var}++) {')
 				g.indent++
-				g.writeln('if (!${container_str}.slots[${iter_var}].used) continue;')
-				g.writeln('${c_key} ${key_var} = *(${c_key}*)(${container_str}.keys + ${iter_var} * ${container_str}.key_size);')
-				g.writeln('${c_val} ${val_var_} = *(${c_val}*)(${container_str}.vals + ${iter_var} * ${container_str}.val_size);')
+				g.writeln('if (${key_values}.all_deleted && ${key_values}.all_deleted[${iter_var}]) continue;')
+				g.writeln('${c_key} ${key_var} = *(${c_key}*)(${key_values}.keys + ${iter_var} * ${key_values}.key_bytes);')
+				g.writeln('${c_val} ${val_var_} = *(${c_val}*)(${key_values}.values + ${iter_var} * ${key_values}.value_bytes);')
 				if has_index {
-					g.tc.cur_scope.insert(key_var, container_type.key_type)
+					g.tc.cur_scope.insert(key_var, clean_container_type.key_type)
 				}
-				g.tc.cur_scope.insert(val_var_, container_type.value_type)
+				g.tc.cur_scope.insert(val_var_, clean_container_type.value_type)
 			} else if container_type is types.Array {
 				c_elem := g.tc.c_type(container_type.elem_type)
 				container_str := g.expr_to_string(g.a.child(&node, 2))

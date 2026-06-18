@@ -154,7 +154,7 @@ pub fn (t Token) is_keyword() bool {
 
 @[inline]
 pub fn (t Token) is_prefix() bool {
-	return t in [.minus, .amp, .mul, .not, .bit_not, .arrow]
+	return t in [.minus, .amp, .and, .mul, .not, .bit_not, .arrow]
 }
 
 @[inline]

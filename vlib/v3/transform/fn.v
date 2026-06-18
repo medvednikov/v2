@@ -293,7 +293,7 @@ fn (mut t Transformer) wrap_string_conversion(expr flat.NodeId, typ string) flat
 	}
 	match clean_typ {
 		'bool' {
-			return t.make_call_typed('bool_str', arr1(expr), 'string')
+			return t.make_call_typed('bool.str', arr1(expr), 'string')
 		}
 		'u8', 'byte', 'u16', 'u32', 'u64' {
 			return t.make_call_typed('strconv__format_uint', arr2(expr, t.make_int_literal(10)),

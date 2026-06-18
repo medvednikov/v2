@@ -27,12 +27,11 @@ fn (mut g FlatGen) gen_struct_init(node flat.Node) {
 				continue
 			}
 			if f.typ is types.Map {
-				c_key := g.tc.c_type(f.typ.key_type)
-				c_val := g.tc.c_type(f.typ.value_type)
 				if has_field {
 					g.write(', ')
 				}
-				g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+				g.write('.${c_name(f.name)} = ')
+				g.write_new_map(f.typ.key_type, f.typ.value_type)
 				has_field = true
 			} else if f.typ is types.Array {
 				c_elem := g.tc.c_type(f.typ.elem_type)
@@ -71,12 +70,11 @@ fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
 				continue
 			}
 			if f.typ is types.Map {
-				c_key := g.tc.c_type(f.typ.key_type)
-				c_val := g.tc.c_type(f.typ.value_type)
 				if has_field {
 					g.write(', ')
 				}
-				g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+				g.write('.${c_name(f.name)} = ')
+				g.write_new_map(f.typ.key_type, f.typ.value_type)
 				has_field = true
 			} else if f.typ is types.Array {
 				c_elem := g.tc.c_type(f.typ.elem_type)
@@ -126,12 +124,11 @@ fn (mut g FlatGen) gen_default_value_for_type(typ types.Type) {
 					continue
 				}
 				if f.typ is types.Map {
-					c_key := g.tc.c_type(f.typ.key_type)
-					c_val := g.tc.c_type(f.typ.value_type)
 					if has_field {
 						g.write(', ')
 					}
-					g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+					g.write('.${c_name(f.name)} = ')
+					g.write_new_map(f.typ.key_type, f.typ.value_type)
 					has_field = true
 				} else if f.typ is types.Array {
 					c_elem := g.tc.c_type(f.typ.elem_type)
@@ -253,12 +250,32 @@ fn (mut g FlatGen) gen_assoc_expr(node flat.Node) {
 fn (mut g FlatGen) gen_map_init(node flat.Node) {
 	map_type := g.tc.parse_type(node.value)
 	if map_type is types.Map {
-		c_key := g.tc.c_type(map_type.key_type)
-		c_val := g.tc.c_type(map_type.value_type)
-		g.write('new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+		g.write_new_map(map_type.key_type, map_type.value_type)
 	} else {
 		g.write('new_map(sizeof(int), sizeof(int), 0, 0, 0, 0)')
 	}
+}
+
+fn (mut g FlatGen) write_new_map(key_type types.Type, value_type types.Type) {
+	c_key := g.tc.c_type(key_type)
+	c_val := g.tc.c_type(value_type)
+	hash_fn, eq_fn, clone_fn, free_fn := g.map_callback_names(key_type)
+	g.write('new_map(sizeof(${c_key}), sizeof(${c_val}), ${hash_fn}, ${eq_fn}, ${clone_fn}, ${free_fn})')
+}
+
+fn (g &FlatGen) map_callback_names(key_type types.Type) (string, string, string, string) {
+	if key_type is types.String {
+		return 'v3_map_hash_string', 'v3_map_eq_string', 'v3_map_clone_string', 'v3_map_free_string'
+	}
+	c_key := g.tc.c_type(key_type)
+	size_suffix := match c_key {
+		'u8', 'i8', 'bool', 'char' { '1' }
+		'u16', 'i16' { '2' }
+		'i64', 'u64', 'isize', 'usize', 'voidptr' { '8' }
+		else { '4' }
+	}
+
+	return 'v3_map_hash_int_${size_suffix}', 'v3_map_eq_int_${size_suffix}', 'v3_map_clone_int_${size_suffix}', 'v3_map_free_nop'
 }
 
 fn (g &FlatGen) skip_builtin_struct(name string) bool {

@@ -3,6 +3,17 @@ module c
 import v3.flat
 import v3.types
 
+fn array_like_type(t types.Type) ?types.Array {
+	if t is types.Array {
+		arr := t as types.Array
+		return arr
+	}
+	if t is types.Alias && t.base_type is types.Array {
+		return t.base_type as types.Array
+	}
+	return none
+}
+
 fn (mut g FlatGen) gen_slice_expr(node flat.Node, base_id flat.NodeId, base_type types.Type) {
 	start_node := g.a.child_node(&node, 1)
 	has_start := start_node.kind != .empty
@@ -91,9 +102,12 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.write(')')
 		}
 		'free' {
-			g.write('free(')
+			g.write('array__free(')
+			if !is_ptr {
+				g.write('&')
+			}
 			g.gen_expr(base_id)
-			g.write('${dot}data)')
+			g.write(')')
 		}
 		'str' {
 			amp := if is_ptr { '' } else { '&' }

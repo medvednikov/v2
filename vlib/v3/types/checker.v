@@ -3159,6 +3159,19 @@ fn (tc &TypeChecker) resolve_index_type(node flat.Node) Type {
 	if base_type is ArrayFixed {
 		return base_type.elem_type
 	}
+	if base_type is Pointer {
+		mut inner := base_type.base_type
+		if inner is Alias {
+			inner = inner.base_type
+		}
+		if inner is Array {
+			return inner.elem_type
+		}
+		if inner is ArrayFixed {
+			return inner.elem_type
+		}
+		return inner
+	}
 	if base_type is String {
 		return Type(u8_)
 	}
