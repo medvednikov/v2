@@ -62,7 +62,8 @@ fn (g &FlatGen) is_string_node(id flat.NodeId) bool {
 
 fn (mut g FlatGen) string_literals() {
 	for i, s in g.str_lits {
-		escaped := s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t').replace('\r', '\\r')
+		escaped := s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t',
+			'\\t').replace('\r', '\\r')
 		g.writeln('string _str_${i} = {"${escaped}", ${s.len}, 1};')
 	}
 	if g.str_lits.len > 0 {
@@ -71,12 +72,11 @@ fn (mut g FlatGen) string_literals() {
 }
 
 fn (mut g FlatGen) intern_string(s string) int {
-	for i, existing in g.str_lits {
-		if existing == s {
-			return i
-		}
+	if s in g.str_lit_ids {
+		return g.str_lit_ids[s]
 	}
 	id := g.str_lits.len
 	g.str_lits << s
+	g.str_lit_ids[s] = id
 	return id
 }

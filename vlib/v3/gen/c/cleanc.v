@@ -11,6 +11,7 @@ mut:
 	a                      &flat.FlatAst = unsafe { nil }
 	used_fns               map[string]bool
 	str_lits               []string
+	str_lit_ids            map[string]int
 	global_types           map[string]types.Type
 	enum_vals              map[string]int
 	defers                 []flat.NodeId
@@ -30,6 +31,7 @@ mut:
 	expected_enum          string
 	needed_optional_types  map[string]string
 	emitted_fns            map[string]bool
+	array_method_cache     map[string]string
 }
 
 pub fn FlatGen.new() FlatGen {

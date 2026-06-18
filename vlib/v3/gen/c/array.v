@@ -133,14 +133,7 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.write(')')
 		}
 		else {
-			mut best_mname := ''
-			for mname, _ in g.tc.fn_param_types {
-				if mname.ends_with('.${fn_node.value}') {
-					if best_mname.len == 0 || mname.len > best_mname.len {
-						best_mname = mname
-					}
-				}
-			}
+			best_mname := g.array_method_fallback(fn_node.value)
 			if best_mname.len > 0 {
 				g.write(c_name(best_mname))
 				g.write('(')
@@ -163,6 +156,23 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			}
 		}
 	}
+}
+
+fn (mut g FlatGen) array_method_fallback(method string) string {
+	if method in g.array_method_cache {
+		return g.array_method_cache[method]
+	}
+	suffix := '.${method}'
+	mut best_mname := ''
+	for mname, _ in g.tc.fn_param_types {
+		if mname.ends_with(suffix) {
+			if best_mname.len == 0 || mname.len > best_mname.len {
+				best_mname = mname
+			}
+		}
+	}
+	g.array_method_cache[method] = best_mname
+	return best_mname
 }
 
 fn (mut g FlatGen) gen_map_delete(node flat.Node, fn_node &flat.Node, m types.Map) {
@@ -208,7 +218,8 @@ fn (mut g FlatGen) gen_index_assign(node flat.Node) {
 			g.writeln(';')
 			return
 		}
-		if base_type is types.Array || (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
+		if base_type is types.Array
+			|| (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
 			arr_type := if base_type is types.Array {
 				base_type as types.Array
 			} else if base_type is types.Pointer {
