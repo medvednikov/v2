@@ -2595,25 +2595,6 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		.is_expr {
 			return Type(bool_)
 		}
-		.match_stmt {
-			for i in 0 .. node.children_count {
-				branch_id := tc.a.child(&node, i)
-				branch := tc.a.nodes[int(branch_id)]
-				if branch.kind == .match_branch && branch.children_count > 0 {
-					last_id := tc.a.child(&branch, branch.children_count - 1)
-					last := tc.a.nodes[int(last_id)]
-					t := if last.kind == .expr_stmt {
-						tc.resolve_type(tc.a.child(&last, 0))
-					} else {
-						tc.resolve_type(last_id)
-					}
-					if t !is Void {
-						return t
-					}
-				}
-			}
-			return Type(int_)
-		}
 		else {
 			$if debug {
 				eprintln('warning: unhandled node kind .${node.kind} in resolve_type, recovering as int')
