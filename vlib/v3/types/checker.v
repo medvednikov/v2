@@ -42,24 +42,27 @@ pub enum TypeErrorKind {
 @[heap]
 pub struct TypeChecker {
 pub mut:
-	a               &flat.FlatAst = unsafe { nil }
-	fn_ret_types    map[string]Type
-	fn_param_types  map[string][]Type
-	structs         map[string][]StructField
-	type_aliases    map[string]string
-	sum_types       map[string][]string
-	enum_names      map[string]bool
-	flag_enums      map[string]bool
-	interface_names map[string]bool
-	const_types     map[string]Type
-	imports         map[string]string // alias -> short module name
-	file_scope      &Scope = unsafe { nil }
-	cur_scope       &Scope = unsafe { nil }
-	has_builtins    bool
-	cur_module      string
-	errors          []TypeError
-	resolved_calls  map[int]string // node_id -> resolved function name
-	expr_types      map[int]Type   // node_id -> resolved type (populated by annotate_types)
+	a                      &flat.FlatAst = unsafe { nil }
+	fn_ret_types           map[string]Type
+	fn_param_types         map[string][]Type
+	structs                map[string][]StructField
+	type_aliases           map[string]string
+	sum_types              map[string][]string
+	enum_names             map[string]bool
+	flag_enums             map[string]bool
+	interface_names        map[string]bool
+	const_types            map[string]Type
+	imports                map[string]string // alias -> short module name
+	file_scope             &Scope = unsafe { nil }
+	cur_scope              &Scope = unsafe { nil }
+	has_builtins           bool
+	cur_module             string
+	cur_file               string
+	errors                 []TypeError
+	resolved_calls         map[int]string // node_id -> resolved function name
+	expr_types             map[int]Type   // node_id -> resolved type (populated by annotate_types)
+	diagnose_unknown_calls bool
+	diagnostic_files       map[string]bool
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -102,6 +105,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 		match node.kind {
 			.file {
 				tc.cur_module = ''
+				tc.cur_file = node.value
 			}
 			.module_decl {
 				tc.cur_module = node.value
@@ -143,6 +147,9 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 	tc.cur_module = ''
 	for node in a.nodes {
 		match node.kind {
+			.file {
+				tc.cur_file = node.value
+			}
 			.module_decl {
 				tc.cur_module = node.value
 			}
@@ -543,8 +550,12 @@ pub fn (tc &TypeChecker) expr_type(id flat.NodeId) ?Type {
 
 pub fn (mut tc TypeChecker) check_semantics() {
 	tc.cur_module = ''
+	tc.cur_file = ''
 	for i, node in tc.a.nodes {
 		match node.kind {
+			.file {
+				tc.cur_file = node.value
+			}
 			.module_decl {
 				tc.cur_module = node.value
 			}
@@ -636,7 +647,128 @@ fn (mut tc TypeChecker) check_call(id flat.NodeId, node flat.Node) {
 	}
 	if resolved.len > 0 {
 		tc.resolved_calls[int(id)] = resolved
+		return
 	}
+	if tc.should_diagnose_unknown_call(id) && !tc.is_known_call(node) {
+		tc.record_error(.unknown_fn, 'unknown function `${tc.call_display_name(node)}`', id)
+	}
+}
+
+fn (tc &TypeChecker) should_diagnose_unknown_call(id flat.NodeId) bool {
+	if !tc.diagnose_unknown_calls || int(id) < tc.a.user_code_start {
+		return false
+	}
+	if tc.diagnostic_files.len == 0 {
+		return true
+	}
+	return tc.cur_file in tc.diagnostic_files
+}
+
+fn (tc &TypeChecker) is_known_call(node flat.Node) bool {
+	if node.children_count == 0 {
+		return true
+	}
+	if node.typ.len > 0 {
+		return true
+	}
+	fn_node := tc.a.child_node(&node, 0)
+	if fn_node.kind == .selector {
+		base_node := tc.a.child_node(fn_node, 0)
+		if base_node.kind == .ident {
+			if base_node.value == 'C' {
+				return true
+			}
+			resolved_mod := if base_node.value in tc.imports {
+				tc.imports[base_node.value]
+			} else {
+				base_node.value
+			}
+			mod_name := '${resolved_mod}.${fn_node.value}'
+			if mod_name in tc.fn_ret_types || mod_name in tc.sum_types || mod_name in tc.structs
+				|| mod_name in tc.enum_names {
+				return true
+			}
+			if base_node.value in tc.structs || base_node.value in tc.enum_names {
+				qname := tc.qualify_name(base_node.value)
+				if '${qname}.${fn_node.value}' in tc.fn_ret_types {
+					return true
+				}
+			} else {
+				qname := tc.qualify_name(base_node.value)
+				if qname in tc.structs || qname in tc.enum_names {
+					if '${qname}.${fn_node.value}' in tc.fn_ret_types {
+						return true
+					}
+				}
+			}
+		} else if base_node.kind == .selector {
+			inner := tc.a.child_node(base_node, 0)
+			if inner.kind == .ident {
+				mod_name := if inner.value in tc.imports {
+					tc.imports[inner.value]
+				} else {
+					inner.value
+				}
+				if '${mod_name}.${base_node.value}.${fn_node.value}' in tc.fn_ret_types {
+					return true
+				}
+			}
+		}
+		base_type := tc.resolve_type(tc.a.child(fn_node, 0))
+		clean_type := unwrap_pointer(base_type)
+		if clean_type is Array || clean_type is ArrayFixed || clean_type is Map {
+			return true
+		}
+		if clean_type is String {
+			return 'string.${fn_node.value}' in tc.fn_ret_types
+		}
+		if clean_type is Struct {
+			return '${clean_type.name}.${fn_node.value}' in tc.fn_ret_types
+		}
+		if clean_type is SumType {
+			return '${clean_type.name}.${fn_node.value}' in tc.fn_ret_types
+		}
+		if clean_type is Enum {
+			return '${clean_type.name}.${fn_node.value}' in tc.fn_ret_types
+		}
+		if clean_type is Primitive {
+			mname := '${prim_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
+			return mname in tc.fn_ret_types
+		}
+		return false
+	}
+	if fn_node.kind == .ident {
+		if typ := tc.cur_scope.lookup(fn_node.value) {
+			return typ is FnType
+		}
+		qfn := tc.qualify_fn_name(fn_node.value)
+		if qfn in tc.fn_ret_types || fn_node.value in tc.fn_ret_types {
+			return true
+		}
+		for _, imp in tc.imports {
+			if '${imp}.${fn_node.value}' in tc.fn_ret_types {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+fn (tc &TypeChecker) call_display_name(node flat.Node) string {
+	if node.children_count == 0 {
+		return '<missing>'
+	}
+	fn_node := tc.a.child_node(&node, 0)
+	if fn_node.kind == .ident {
+		return fn_node.value
+	}
+	if fn_node.kind == .selector && fn_node.children_count > 0 {
+		base := tc.a.child_node(fn_node, 0)
+		if base.value.len > 0 {
+			return '${base.value}.${fn_node.value}'
+		}
+	}
+	return fn_node.value
 }
 
 fn (mut tc TypeChecker) check_if_expr(id flat.NodeId, node flat.Node) {
@@ -861,6 +993,9 @@ fn (tc &TypeChecker) parse_fn_type(typ string) Type {
 pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 	if int(id) < 0 {
 		return Type(int_)
+	}
+	if typ := tc.expr_types[int(id)] {
+		return typ
 	}
 	node := tc.a.nodes[int(id)]
 	match node.kind {

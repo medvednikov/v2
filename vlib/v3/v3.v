@@ -105,6 +105,16 @@ fn main() {
 	mut pre_tc := types.TypeChecker.new(a)
 	pre_tc.collect(a)
 	pre_tc.annotate_types()
+	pre_tc.diagnose_unknown_calls = true
+	for uf in user_files {
+		pre_tc.diagnostic_files[uf] = true
+	}
+	pre_tc.check_semantics()
+	unknown_call_errors := errors_by_kind(pre_tc.errors, .unknown_fn)
+	if unknown_call_errors.len > 0 {
+		print_type_errors(unknown_call_errors)
+		exit(1)
+	}
 
 	// Transform (match lowering, string/in lowering, etc.)
 	transform.transform(mut a, &pre_tc)
@@ -118,14 +128,7 @@ fn main() {
 	tc.check_semantics()
 	if tc.errors.len > 0 {
 		if is_selfhost {
-			eprintln('type checker found ${tc.errors.len} error(s):')
-			max_errors := if tc.errors.len < 20 { tc.errors.len } else { 20 }
-			for ei in 0 .. max_errors {
-				eprintln('  ${tc.errors[ei].msg}')
-			}
-			if tc.errors.len > 20 {
-				eprintln('  ... and ${tc.errors.len - 20} more')
-			}
+			print_type_errors(tc.errors)
 			exit(1)
 		}
 	}
@@ -195,6 +198,27 @@ fn main() {
 	}
 
 	b.print_report()
+}
+
+fn errors_by_kind(errors []types.TypeError, kind types.TypeErrorKind) []types.TypeError {
+	mut found := []types.TypeError{}
+	for err in errors {
+		if err.kind == kind {
+			found << err
+		}
+	}
+	return found
+}
+
+fn print_type_errors(errors []types.TypeError) {
+	eprintln('type checker found ${errors.len} error(s):')
+	max_errors := if errors.len < 20 { errors.len } else { 20 }
+	for ei in 0 .. max_errors {
+		eprintln('  ${errors[ei].msg}')
+	}
+	if errors.len > 20 {
+		eprintln('  ... and ${errors.len - 20} more')
+	}
 }
 
 fn resolve_imports(mut a flat.FlatAst, mut p parser.Parser, prefs &pref.Preferences, initial_files []string) {
