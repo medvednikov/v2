@@ -25,10 +25,11 @@ fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]f
 	if lhs.kind != .ident || lhs.value.len == 0 {
 		return none
 	}
-	rhs_type := t.node_type(rhs_id)
+	mut rhs_type := t.node_type(rhs_id)
 	if !t.is_optional_type_name(rhs_type) {
 		return none
 	}
+	rhs_type = t.qualify_optional_type(rhs_type)
 	value_type := t.optional_base_type(rhs_type)
 	tmp_name := t.new_temp('if_guard')
 	tmp_decl := t.make_decl_assign_typed(tmp_name, t.transform_expr(rhs_id), rhs_type)
@@ -188,15 +189,9 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	has_else := node.children_count >= 3
 	else_id := if has_else { t.a.child(&node, 2) } else { flat.empty_node }
 
-	// Determine if the condition involves an is_expr. It might be:
-	//   a) directly an is_expr
-	//   b) an && chain where one term is an is_expr
-	is_info := t.extract_is_expr(cond_id)
-
-	mut has_smartcast := false
-	if is_info.expr_name.len > 0 && is_info.sum_type_name.len > 0 {
-		t.push_smartcast(is_info.expr_name, is_info.variant_name, is_info.sum_type_name)
-		has_smartcast = true
+	all_is := t.extract_all_is_exprs(cond_id)
+	for info in all_is {
+		t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
 	}
 	new_cond_id := t.transform_expr(cond_id)
 	cond_pending := t.pending_stmts.clone()
@@ -220,8 +215,7 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 		then_id
 	}
 
-	// Pop smartcast before processing else-block.
-	if has_smartcast {
+	for _ in all_is {
 		t.pop_smartcast()
 	}
 
@@ -280,9 +274,37 @@ struct IsExprInfo {
 	sum_type_name string
 }
 
-// extract_is_expr searches a condition tree for an is_expr and returns
-// the expression name, variant, and owning sum type. Returns an empty
-// struct if no is_expr is found.
+fn (t &Transformer) extract_all_is_exprs(cond_id flat.NodeId) []IsExprInfo {
+	mut result := []IsExprInfo{}
+	t.collect_is_exprs(cond_id, mut result)
+	return result
+}
+
+fn (t &Transformer) collect_is_exprs(cond_id flat.NodeId, mut result []IsExprInfo) {
+	if int(cond_id) < 0 {
+		return
+	}
+	cond := t.a.nodes[int(cond_id)]
+	if cond.kind == .is_expr && cond.children_count >= 1 {
+		expr_id := t.a.child(&cond, 0)
+		ek := t.expr_key(expr_id)
+		if ek.len > 0 && cond.value.len > 0 {
+			stn := t.find_sum_type_for_variant(cond.value)
+			if stn.len > 0 {
+				result << IsExprInfo{
+					expr_name:     ek
+					variant_name:  cond.value
+					sum_type_name: stn
+				}
+			}
+		}
+	}
+	if cond.kind == .infix && cond.op == .logical_and && cond.children_count >= 2 {
+		t.collect_is_exprs(t.a.child(&cond, 0), mut result)
+		t.collect_is_exprs(t.a.child(&cond, 1), mut result)
+	}
+}
+
 fn (t &Transformer) extract_is_expr(cond_id flat.NodeId) IsExprInfo {
 	if int(cond_id) < 0 {
 		return IsExprInfo{}

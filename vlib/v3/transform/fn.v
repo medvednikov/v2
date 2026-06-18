@@ -73,6 +73,14 @@ fn (t &Transformer) resolve_receiver_method_name(base_id flat.NodeId, method str
 	}
 	mut candidates := []string{}
 	candidates << '${base_type}.${method}'
+	if base_type.starts_with('[]') {
+		elem_type := base_type[2..]
+		short_elem := if elem_type.contains('.') { elem_type.all_after_last('.') } else { elem_type }
+		candidates << '[]${short_elem}.${method}'
+		if elem_type.contains('.') {
+			candidates << '${elem_type.all_before_last('.')}.[]${short_elem}.${method}'
+		}
+	}
 	if base_type.contains('.') {
 		short_type := base_type.all_after_last('.')
 		candidates << '${short_type}.${method}'
@@ -526,8 +534,15 @@ fn (mut t Transformer) is_method_call(node flat.Node) bool {
 }
 
 // get_call_return_type looks up the return type for a resolved call.
-// Handles both simple and qualified names.
-fn (t &Transformer) get_call_return_type(node flat.Node) string {
+// Handles both checker-resolved calls and transform-time name resolution.
+fn (t &Transformer) get_call_return_type(id flat.NodeId, node flat.Node) string {
+	if !isnil(t.tc) {
+		if name := t.tc.resolved_calls[int(id)] {
+			if ret := t.tc.fn_ret_types[name] {
+				return t.normalize_type_alias(ret.name())
+			}
+		}
+	}
 	name := t.resolve_call_name(node)
 	if name.len == 0 {
 		return ''

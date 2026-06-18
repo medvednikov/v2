@@ -65,6 +65,7 @@ fn (t &Transformer) lookup_struct_field_type(type_name string, field_name string
 		return none
 	}
 	mut lookup_type := if type_name.starts_with('&') { type_name[1..] } else { type_name }
+	owner_type := lookup_type
 	if lookup_type !in t.structs && lookup_type.contains('.') {
 		short_type := lookup_type.all_after_last('.')
 		if short_type in t.structs {
@@ -81,10 +82,52 @@ fn (t &Transformer) lookup_struct_field_type(type_name string, field_name string
 	info := t.structs[lookup_type] or { return none }
 	for f in info.fields {
 		if f.name == field_name {
-			return t.normalize_type_alias(f.typ)
+			return t.normalize_field_type(f.typ, owner_type)
 		}
 	}
 	return none
+}
+
+fn (t &Transformer) normalize_field_type(typ string, owner_type string) string {
+	if typ.len == 0 {
+		return typ
+	}
+	if typ.starts_with('&') {
+		return '&' + t.normalize_field_type(typ[1..], owner_type)
+	}
+	if typ.starts_with('[]') {
+		return '[]' + t.normalize_field_type(typ[2..], owner_type)
+	}
+	if typ.starts_with('?') {
+		return '?' + t.normalize_field_type(typ[1..], owner_type)
+	}
+	if typ.starts_with('!') {
+		return '!' + t.normalize_field_type(typ[1..], owner_type)
+	}
+	if typ.starts_with('map[') {
+		bracket_end := typ.index(']') or { return t.normalize_type_alias(typ) }
+		key_type := t.normalize_field_type(typ[4..bracket_end], owner_type)
+		value_type := t.normalize_field_type(typ[bracket_end + 1..], owner_type)
+		return 'map[${key_type}]${value_type}'
+	}
+	if typ.starts_with('[') {
+		bracket_end := typ.index(']') or { return t.normalize_type_alias(typ) }
+		return typ[..bracket_end + 1] + t.normalize_field_type(typ[bracket_end + 1..], owner_type)
+	}
+	if typ.contains('.') || !owner_type.contains('.') {
+		return t.normalize_type_alias(typ)
+	}
+	owner_mod := owner_type.all_before_last('.')
+	qtyp := '${owner_mod}.${typ}'
+	if qtyp in t.structs || qtyp in t.sum_types || qtyp in t.enum_types {
+		return t.normalize_type_alias(qtyp)
+	}
+	if !isnil(t.tc) {
+		if qtyp in t.tc.type_aliases {
+			return t.normalize_type_alias(qtyp)
+		}
+	}
+	return t.normalize_type_alias(typ)
 }
 
 fn (t &Transformer) normalize_type_alias(typ string) string {
@@ -136,6 +179,14 @@ fn (t &Transformer) resolve_index_elem_type(node flat.Node) string {
 	base_type := t.resolve_expr_type(base_id)
 	if base_type.len == 0 {
 		return ''
+	}
+	if node.value == 'range' {
+		if base_type == 'string' {
+			return 'string'
+		}
+		if base_type.starts_with('[]') {
+			return base_type
+		}
 	}
 	if base_type.starts_with('[]') {
 		return t.normalize_type_alias(base_type[2..])

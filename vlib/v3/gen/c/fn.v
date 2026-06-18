@@ -54,6 +54,7 @@ fn (g &FlatGen) dotted_fn_name(name string) string {
 fn (mut g FlatGen) gen_fn(node flat.Node) {
 	g.tc.push_scope()
 	g.defers = []flat.NodeId{}
+	g.set_cur_fn_ret(types.Type(types.void_))
 	params := g.fn_params_list(node)
 	for p in params {
 		if p.value.len > 0 {
@@ -72,7 +73,7 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 		}
 	} else {
 		ret_type := g.tc.parse_type(node.typ)
-		g.cur_fn_ret = ret_type
+		g.set_cur_fn_ret(ret_type)
 		g.write(g.optional_type_name(ret_type))
 		g.write(' ')
 		g.write(g.qualified_fn_name(node.value))
@@ -89,7 +90,7 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 	g.gen_defers()
 	if node.value == 'main' {
 		g.writeln('return 0;')
-	} else if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+	} else if g.cur_fn_ret_is_optional {
 		ct := g.optional_type_name(g.cur_fn_ret)
 		g.writeln('return (${ct}){.ok = true};')
 	}
@@ -97,6 +98,19 @@ fn (mut g FlatGen) gen_fn(node flat.Node) {
 	g.writeln('}')
 	g.writeln('')
 	g.tc.pop_scope()
+}
+
+fn (mut g FlatGen) set_cur_fn_ret(ret_type types.Type) {
+	g.cur_fn_ret = ret_type
+	g.cur_fn_ret_is_optional = false
+	g.cur_fn_ret_base = types.Type(types.void_)
+	if ret_type is types.OptionType {
+		g.cur_fn_ret_is_optional = true
+		g.cur_fn_ret_base = ret_type.base_type
+	} else if ret_type is types.ResultType {
+		g.cur_fn_ret_is_optional = true
+		g.cur_fn_ret_base = ret_type.base_type
+	}
 }
 
 fn (mut g FlatGen) gen_defers() {
@@ -152,7 +166,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			return
 		}
 		'error' {
-			if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+			if g.cur_fn_ret_is_optional {
 				ct := g.optional_type_name(g.cur_fn_ret)
 				g.write('(${ct}){.ok = false}')
 			} else {
@@ -162,7 +176,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			return
 		}
 		'error_with_code' {
-			if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+			if g.cur_fn_ret_is_optional {
 				ct := g.optional_type_name(g.cur_fn_ret)
 				g.write('(${ct}){.ok = false}')
 			} else {
@@ -620,12 +634,6 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			} else {
 				[]types.Type{}
 			}
-			if fn_name == 'resolve_imports' {
-				eprintln('DBG resolve_imports: actual_fn=')
-				eprintln(actual_fn)
-				eprintln(' param_types.len=')
-				eprintln(param_types.len.str())
-			}
 			mut arg_start := 1
 			if is_method {
 				base_type := g.tc.resolve_type(base_id)
@@ -650,17 +658,6 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer
 					&& !(arg_node.kind == .prefix && arg_node.op == .amp) {
 					arg_type := g.tc.resolve_type(arg_id)
-					if fn_name == 'resolve_imports' {
-						eprintln('  DBG arg ')
-						eprintln(arg_idx.str())
-						eprintln(' node_kind=')
-						eprintln(int(arg_node.kind).str())
-						eprintln(' arg_type=')
-						eprintln(arg_type.name())
-						is_arg_ptr := arg_type is types.Pointer
-						eprintln(' is_ptr=')
-						eprintln(is_arg_ptr.str())
-					}
 					if arg_type !is types.Pointer {
 						needs_addr = true
 					}
@@ -713,7 +710,9 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 	} else {
 		[]types.Type{}
 	}
-	variadic_idx := if param_types.len > 0 && param_types[param_types.len - 1] is types.Array {
+	is_variadic_fn := g.tc.fn_variadic[fn_name] or { false }
+	variadic_idx := if is_variadic_fn && param_types.len > 0
+		&& param_types[param_types.len - 1] is types.Array {
 		param_types.len - 1
 	} else {
 		-1
@@ -778,6 +777,16 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 				g.write('&')
 			}
 			g.gen_expr(arg_id)
+		}
+		if variadic_idx >= 0 && num_args == variadic_idx {
+			if node.children_count > start {
+				g.write(', ')
+			}
+			variadic_type := param_types[variadic_idx]
+			if variadic_type is types.Array {
+				c_elem := g.tc.c_type(variadic_type.elem_type)
+				g.write('new_array_from_c_array(0, 0, sizeof(${c_elem}), (${c_elem}[]){0})')
+			}
 		}
 	}
 	num_provided := node.children_count - start

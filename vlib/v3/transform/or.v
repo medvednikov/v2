@@ -56,6 +56,40 @@ fn (t &Transformer) is_optional_type_name(typ string) bool {
 	return typ.len > 0 && (typ[0] == `?` || typ[0] == `!`)
 }
 
+fn (t &Transformer) qualify_optional_type(typ string) string {
+	if typ.len < 2 || (typ[0] != `?` && typ[0] != `!`) {
+		return typ
+	}
+	base := typ[1..]
+	if base.contains('.') || base.len == 0 {
+		return typ
+	}
+	qualified := t.qualify_type(base)
+	if qualified != base {
+		return typ[..1] + qualified
+	}
+	return typ
+}
+
+fn (t &Transformer) qualify_type(name string) string {
+	if name.contains('.') || name.len == 0 {
+		return name
+	}
+	if !isnil(t.tc) {
+		for key, _ in t.tc.sum_types {
+			if key.ends_with('.${name}') {
+				return key
+			}
+		}
+		for key, _ in t.tc.structs {
+			if key.ends_with('.${name}') {
+				return key
+			}
+		}
+	}
+	return name
+}
+
 fn (mut t Transformer) make_decl_assign_typed(name string, rhs flat.NodeId, typ string) flat.NodeId {
 	decl := t.make_decl_assign(name, rhs)
 	if typ.len > 0 {

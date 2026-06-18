@@ -231,10 +231,6 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 		child := t.a.nodes[int(child_id)]
 		if child.kind == .param && child.value.len > 0 && child.typ.len > 0 {
 			t.var_types[child.value] = child.typ
-			if child.value == 'b'
-				&& fn_node.value in ['Builder.register_functions', 'Builder.build_functions'] {
-				eprintln('DBG fn ${fn_node.value} param b typ=${child.typ} cur_module=${t.cur_module}')
-			}
 		}
 	}
 	// Collect body statement ids (non-param children)
@@ -519,9 +515,6 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 			if typ.len > 0 {
 				t.var_types[lhs.value] = typ
 				inferred_typ = typ
-				if lhs.value == 'b' {
-					eprintln('DBG decl b typ=${typ} fn=${t.cur_fn_name} cur_module=${t.cur_module}')
-				}
 			}
 		}
 	}
@@ -1243,7 +1236,7 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 			return t.normalize_type_alias(t.var_types[node.value] or { '' })
 		}
 		.call {
-			ret := t.get_call_return_type(node)
+			ret := t.get_call_return_type(id, node)
 			if ret.len > 0 {
 				return ret
 			}
@@ -1302,7 +1295,7 @@ fn (t &Transformer) match_expr_type(node flat.Node) string {
 		if branch.kind != .match_branch {
 			continue
 		}
-		body_start := if branch.value == 'else' { 0 } else { t.count_conds(branch) }
+		body_start := if branch.value == 'else' { 0 } else { t.count_conds(*branch) }
 		if branch.children_count <= body_start {
 			continue
 		}

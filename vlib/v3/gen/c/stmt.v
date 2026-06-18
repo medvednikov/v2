@@ -105,7 +105,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 				if ret_node.kind == .call {
 					fn_n := g.a.child_node(&ret_node, 0)
 					if fn_n.value == 'error' || fn_n.value == 'error_with_code' {
-						if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+						if g.cur_fn_ret_is_optional {
 							ct := g.optional_type_name(g.cur_fn_ret)
 							g.writeln('return (${ct}){.ok = false};')
 						} else {
@@ -116,20 +116,19 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						return
 					}
 				}
-				if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+				if g.cur_fn_ret_is_optional {
 					ct := g.optional_type_name(g.cur_fn_ret)
-					base := if g.cur_fn_ret is types.OptionType {
-						g.cur_fn_ret.base_type
-					} else if g.cur_fn_ret is types.ResultType {
-						g.cur_fn_ret.base_type
-					} else {
-						types.Type(types.void_)
+					base := g.cur_fn_ret_base
+					if ret_node.kind == .none_expr {
+						g.writeln('return (${ct}){.ok = false};')
+						return
 					}
 					if base is types.Void {
 						g.writeln('return (${ct}){.ok = false};')
 					} else {
 						expr_type := g.tc.resolve_type(ret_id)
-						if expr_type is types.OptionType || expr_type is types.ResultType {
+						if (expr_type is types.OptionType || expr_type is types.ResultType)
+							&& g.expr_really_returns_optional(ret_id) {
 							g.write('return ')
 							g.gen_expr(ret_id)
 							g.writeln(';')
@@ -182,7 +181,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					}
 				}
 			} else {
-				if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+				if g.cur_fn_ret_is_optional {
 					ct := g.optional_type_name(g.cur_fn_ret)
 					g.writeln('return (${ct}){.ok = true};')
 				} else {
@@ -247,6 +246,23 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 			eprintln('gen_node: unsupported node kind: ${node.kind}')
 		}
 	}
+}
+
+fn (g &FlatGen) expr_really_returns_optional(id flat.NodeId) bool {
+	if int(id) < 0 {
+		return false
+	}
+	node := g.a.nodes[int(id)]
+	if node.kind == .none_expr {
+		return true
+	}
+	if node.kind == .call {
+		if fname := g.tc.resolved_calls[int(id)] {
+			ret_type := g.tc.fn_ret_types[fname] or { return false }
+			return ret_type is types.OptionType || ret_type is types.ResultType
+		}
+	}
+	return false
 }
 
 fn (g &FlatGen) is_runtime_array_flags_stmt(id flat.NodeId) bool {
@@ -541,7 +557,7 @@ fn (mut g FlatGen) gen_assign_or_expr(node flat.Node, lhs_idx int, or_node flat.
 	g.indent++
 	g.writeln('IError err = (IError){0};')
 	if or_node.value == '!' || or_node.value == '?' {
-		if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+		if g.cur_fn_ret_is_optional {
 			fn_opt_ct := g.optional_type_name(g.cur_fn_ret)
 			g.writeln('return (${fn_opt_ct}){.ok = false};')
 		} else {
@@ -592,7 +608,7 @@ fn (mut g FlatGen) gen_decl_or_expr(lhs flat.Node, or_node flat.Node) {
 	g.indent++
 	g.writeln('IError err = (IError){0};')
 	if or_node.value == '!' || or_node.value == '?' {
-		if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+		if g.cur_fn_ret_is_optional {
 			fn_opt_ct := g.optional_type_name(g.cur_fn_ret)
 			g.writeln('return (${fn_opt_ct}){.ok = false};')
 		} else {
@@ -752,7 +768,7 @@ fn (mut g FlatGen) gen_or_expr_stmt(node flat.Node) {
 	g.indent++
 	g.writeln('IError err = (IError){0};')
 	if node.value == '!' || node.value == '?' {
-		if g.cur_fn_ret is types.OptionType || g.cur_fn_ret is types.ResultType {
+		if g.cur_fn_ret_is_optional {
 			fn_opt_ct := g.optional_type_name(g.cur_fn_ret)
 			g.writeln('return (${fn_opt_ct}){.ok = false};')
 		} else {

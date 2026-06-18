@@ -99,7 +99,7 @@ fn (mut t Transformer) transform_infix_struct_ops(_id flat.NodeId, node flat.Nod
 	lhs_id := t.a.child(&node, 0)
 	mut lhs_type := t.node_type(lhs_id)
 	if lhs_type.starts_with('&') {
-		lhs_type = lhs_type[1..]
+		return none
 	}
 	struct_type := t.struct_lookup_name(lhs_type)
 	if struct_type.len == 0 {

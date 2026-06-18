@@ -6,28 +6,30 @@ import v3.types
 
 pub struct FlatGen {
 mut:
-	sb                    strings.Builder
-	indent                int
-	a                     &flat.FlatAst = unsafe { nil }
-	used_fns              map[string]bool
-	str_lits              []string
-	global_types          map[string]types.Type
-	enum_vals             map[string]int
-	defers                []flat.NodeId
-	interfaces            map[string][]string
-	const_vals            map[string]flat.NodeId
-	const_modules         map[string]string
-	global_modules        map[string]string
-	tc                    types.TypeChecker
-	has_builtins          bool
-	tmp_count             int
-	modules               map[string]string // alias -> full module name
-	fn_ptr_types          map[string]string // fn_ptr:ret|params -> typedef name
-	runtime_inits         []string
-	cur_fn_ret            types.Type = types.Type(types.void_)
-	expected_enum         string
-	needed_optional_types map[string]string
-	emitted_fns           map[string]bool
+	sb                     strings.Builder
+	indent                 int
+	a                      &flat.FlatAst = unsafe { nil }
+	used_fns               map[string]bool
+	str_lits               []string
+	global_types           map[string]types.Type
+	enum_vals              map[string]int
+	defers                 []flat.NodeId
+	interfaces             map[string][]string
+	const_vals             map[string]flat.NodeId
+	const_modules          map[string]string
+	global_modules         map[string]string
+	tc                     types.TypeChecker
+	has_builtins           bool
+	tmp_count              int
+	modules                map[string]string // alias -> full module name
+	fn_ptr_types           map[string]string // fn_ptr:ret|params -> typedef name
+	runtime_inits          []string
+	cur_fn_ret             types.Type = types.Type(types.void_)
+	cur_fn_ret_is_optional bool
+	cur_fn_ret_base        types.Type = types.Type(types.void_)
+	expected_enum          string
+	needed_optional_types  map[string]string
+	emitted_fns            map[string]bool
 }
 
 pub fn FlatGen.new() FlatGen {
