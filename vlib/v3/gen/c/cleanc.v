@@ -33,6 +33,9 @@ mut:
 pub fn FlatGen.new() FlatGen {
 	return FlatGen{
 		sb: strings.new_builder(4096)
+		str_lits: []string{}
+		defers: []flat.NodeId{}
+		runtime_inits: []string{}
 	}
 }
 
@@ -278,7 +281,31 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			if lhs_type is types.Enum {
 				g.expected_enum = lhs_type.name
 			}
-			if lhs_type is types.Struct {
+			if lhs_type is types.String {
+				if node.op == .eq {
+					g.write('string__eq(')
+					g.gen_expr(lhs_id)
+					g.write(', ')
+					g.gen_expr(rhs_id)
+					g.write(')')
+				} else if node.op == .ne {
+					g.write('!string__eq(')
+					g.gen_expr(lhs_id)
+					g.write(', ')
+					g.gen_expr(rhs_id)
+					g.write(')')
+				} else if node.op == .plus {
+					g.write('string_plus_many(2, (string[2]){')
+					g.gen_expr(lhs_id)
+					g.write(', ')
+					g.gen_expr(rhs_id)
+					g.write('})')
+				} else {
+					g.gen_expr(lhs_id)
+					g.write(' ${g.op_str(node.op)} ')
+					g.gen_expr(rhs_id)
+				}
+			} else if lhs_type is types.Struct {
 				op_name := match node.op {
 					.minus { '__minus' }
 					.plus { '__plus' }

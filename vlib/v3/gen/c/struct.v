@@ -34,6 +34,13 @@ fn (mut g FlatGen) gen_struct_init(node flat.Node) {
 				}
 				g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
 				has_field = true
+			} else if f.typ is types.Array {
+				c_elem := g.tc.c_type(f.typ.elem_type)
+				if has_field {
+					g.write(', ')
+				}
+				g.write('.${c_name(f.name)} = array_new(sizeof(${c_elem}), 0, 0)')
+				has_field = true
 			}
 		}
 	}
@@ -70,6 +77,13 @@ fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
 					g.write(', ')
 				}
 				g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+				has_field = true
+			} else if f.typ is types.Array {
+				c_elem := g.tc.c_type(f.typ.elem_type)
+				if has_field {
+					g.write(', ')
+				}
+				g.write('.${c_name(f.name)} = array_new(sizeof(${c_elem}), 0, 0)')
 				has_field = true
 			}
 		}

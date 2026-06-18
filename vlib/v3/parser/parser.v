@@ -10,16 +10,17 @@ import v3.token
 pub struct Parser {
 	prefs &pref.Preferences
 mut:
-	s          &scanner.Scanner
-	tok        token.Token
-	lit        string
-	prev_tok   token.Token
-	peek_tok   token.Token = .eof
-	peek_lit   string
-	has_peek   bool
-	a          flat.FlatAst
-	cur_file   string
-	cur_module string
+	s            &scanner.Scanner
+	tok          token.Token
+	lit          string
+	prev_tok     token.Token
+	peek_tok     token.Token = .eof
+	peek_lit     string
+	has_peek     bool
+	a            flat.FlatAst
+	cur_file     string
+	cur_module   string
+	pending_flag bool
 }
 
 pub fn Parser.new(prefs &pref.Preferences) Parser {
@@ -829,9 +830,15 @@ fn (mut p Parser) enum_decl() flat.NodeId {
 	}
 	p.check(.rcbr)
 	start := p.add_children(ids)
+	mut typ := ''
+	if p.pending_flag {
+		typ = 'flag'
+		p.pending_flag = false
+	}
 	return p.a.add_node(flat.Node{
 		kind:           .enum_decl
 		value:          name
+		typ:            typ
 		children_start: start
 		children_count: ids.len
 	})
@@ -1042,6 +1049,9 @@ fn (mut p Parser) directive() flat.NodeId {
 fn (mut p Parser) skip_attrs() {
 	if p.tok == .attribute {
 		p.next()
+		if p.tok == .name && p.lit == 'flag' {
+			p.pending_flag = true
+		}
 		for p.tok != .rsbr && p.tok != .eof {
 			p.next()
 		}
@@ -2617,16 +2627,24 @@ fn (mut p Parser) struct_init(name string) flat.NodeId {
 }
 
 fn (mut p Parser) string_literal() flat.NodeId {
+	mut q := u8(`'`)
+	if p.lit.len > 0 {
+		if p.lit[0] == `r` && p.lit.len > 1 {
+			q = p.lit[1]
+		} else if p.lit[0] == `'` || p.lit[0] == `"` {
+			q = p.lit[0]
+		}
+	}
 	val := strip_quotes(p.lit)
 	p.next()
 	if p.tok != .str_dollar {
 		return p.a.add_val(.string_literal, val)
 	}
 	// string interpolation
-	return p.string_interp(val)
+	return p.string_interp(val, q)
 }
 
-fn (mut p Parser) string_interp(first_part string) flat.NodeId {
+fn (mut p Parser) string_interp(first_part string, quote u8) flat.NodeId {
 	mut ids := []flat.NodeId{}
 	if first_part.len > 0 {
 		ids << p.a.add_val(.string_literal, first_part)
@@ -2644,7 +2662,7 @@ fn (mut p Parser) string_interp(first_part string) flat.NodeId {
 		}
 		p.check(.rcbr) // skip }
 		if p.tok == .string {
-			part := strip_quotes(p.lit)
+			part := strip_interp_quotes(p.lit, quote)
 			p.next()
 			if part.len > 0 {
 				ids << p.a.add_val(.string_literal, part)
@@ -3148,11 +3166,17 @@ fn strip_quotes(s string) string {
 		raw = raw[1..raw.len - 1]
 	} else if raw.len >= 1 && (raw[0] == `'` || raw[0] == `"`) {
 		raw = raw[1..]
-	} else if raw.len >= 1 && (raw[raw.len - 1] == `'` || raw[raw.len - 1] == `"`) {
-		raw = raw[..raw.len - 1]
 	}
 	if is_raw {
 		return raw
+	}
+	return unescape_string(raw)
+}
+
+fn strip_interp_quotes(s string, quote u8) string {
+	mut raw := s
+	if raw.len >= 1 && raw[raw.len - 1] == quote {
+		raw = raw[..raw.len - 1]
 	}
 	return unescape_string(raw)
 }
@@ -3161,34 +3185,50 @@ fn unescape_string(s string) string {
 	if !s.contains('\\') {
 		return s
 	}
-	mut result := []u8{cap: s.len}
+	mut buf := unsafe { malloc(s.len + 1) }
+	mut j := 0
 	mut i := 0
 	for i < s.len {
 		if s[i] == `\\` && i + 1 < s.len {
-			match s[i + 1] {
-				`n` { result << `\n` }
-				`t` { result << `\t` }
-				`r` { result << `\r` }
-				`\\` { result << `\\` }
-				`'` { result << `'` }
-				`"` { result << `"` }
-				`0` { result << 0 }
-				`a` { result << 7 }
-				`b` { result << 8 }
-				`f` { result << 12 }
-				`v` { result << 11 }
-				else {
-					result << s[i]
-					result << s[i + 1]
+			c := match s[i + 1] {
+				`n` { u8(`\n`) }
+				`t` { u8(`\t`) }
+				`r` { u8(`\r`) }
+				`\\` { u8(`\\`) }
+				`'` { u8(`'`) }
+				`"` { u8(`"`) }
+				`0` { u8(0) }
+				`a` { u8(7) }
+				`b` { u8(8) }
+				`f` { u8(12) }
+				`v` { u8(11) }
+				else { u8(0xff) }
+			}
+			if c != 0xff {
+				unsafe {
+					buf[j] = c
 				}
+				j++
+			} else {
+				unsafe {
+					buf[j] = s[i]
+					buf[j + 1] = s[i + 1]
+				}
+				j += 2
 			}
 			i += 2
 		} else {
-			result << s[i]
+			unsafe {
+				buf[j] = s[i]
+			}
+			j++
 			i++
 		}
 	}
-	return result.bytestr()
+	unsafe {
+		buf[j] = 0
+		return tos(buf, j)
+	}
 }
 
 fn is_builtin_type(name string) bool {

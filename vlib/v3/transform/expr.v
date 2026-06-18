@@ -311,9 +311,18 @@ fn fixed_array_len(s string) int {
 	return s.all_after('[').all_before(']').int()
 }
 
+const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default', 'do',
+	'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
+	'register', 'restrict', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch',
+	'typedef', 'union', 'unsigned', 'void', 'volatile', 'while']
+
 fn c_name(name string) string {
 	if name.starts_with('C.') {
 		return name[2..]
 	}
-	return name.replace('.', '__')
+	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==', '__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<', '__lt').replace('.>', '__gt').replace('.', '__')
+	if n in c_reserved_words {
+		return 'v_${n}'
+	}
+	return n
 }
