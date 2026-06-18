@@ -117,7 +117,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	eprintln(total_suffix_entries.str())
 
 	mut suffix_hits := 0
-	mut suffix_misses := 0
+	//mut suffix_misses := 0
 	mut in_cg := 0
 	mut not_in_cg := 0
 	mut qi := 0

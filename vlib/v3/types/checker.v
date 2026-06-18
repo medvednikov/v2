@@ -314,6 +314,9 @@ fn (mut tc TypeChecker) register_runtime_methods() {
 		tc.parse_type('u8'))
 	tc.fn_ret_types['strings.Builder.free'] = tc.parse_type('void')
 	tc.fn_param_types['strings.Builder.free'] = tarr1(tc.parse_type('&strings.Builder'))
+	tc.fn_ret_types['strings.Builder.last_n'] = tc.parse_type('string')
+	tc.fn_param_types['strings.Builder.last_n'] = tarr2(tc.parse_type('&strings.Builder'),
+		tc.parse_type('int'))
 	tc.fn_ret_types['check_fwrite'] = tc.parse_type('!int')
 	tc.fn_param_types['check_fwrite'] = tarr1(tc.parse_type('int'))
 	tc.fn_ret_types['os.check_fwrite'] = tc.parse_type('!int')
@@ -1276,6 +1279,15 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					for f in tc.structs[clean.name] {
 						if f.name == node.value {
 							return f.typ
+						}
+					}
+				}
+			}
+			if clean is SumType {
+				if clean.name in tc.sum_types {
+					for v in tc.sum_types[clean.name] {
+						if c_name(v) == node.value {
+							return tc.parse_type(v)
 						}
 					}
 				}

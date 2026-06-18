@@ -145,16 +145,28 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						}
 					}
 				} else if g.cur_fn_ret is types.MultiReturn {
-					expr_type := g.tc.resolve_type(ret_id)
-					if expr_type is types.MultiReturn {
-						g.write('return ')
-						g.gen_expr(ret_id)
-						g.writeln(';')
-					} else {
+					if node.children_count > 1 {
 						ct := g.tc.c_type(g.cur_fn_ret)
 						g.write('return (${ct}){')
-						g.gen_expr(ret_id)
+						for i in 0 .. node.children_count {
+							if i > 0 {
+								g.write(', ')
+							}
+							g.gen_expr(g.a.child(&node, i))
+						}
 						g.writeln('};')
+					} else {
+						expr_type := g.tc.resolve_type(ret_id)
+						if expr_type is types.MultiReturn {
+							g.write('return ')
+							g.gen_expr(ret_id)
+							g.writeln(';')
+						} else {
+							ct := g.tc.c_type(g.cur_fn_ret)
+							g.write('return (${ct}){')
+							g.gen_expr(ret_id)
+							g.writeln('};')
+						}
 					}
 				} else if ret_node.kind == .assoc {
 					g.gen_return_assoc(ret_node)

@@ -348,7 +348,25 @@ pub fn (mut t Transformer) transform_expr(id flat.NodeId) flat.NodeId {
 		.in_expr {
 			return t.transform_in_expr(id, node)
 		}
-		.is_expr, .ident, .int_literal, .float_literal, .bool_literal, .char_literal,
+		.is_expr {
+			if node.children_count >= 1 {
+				expr_id := t.a.child(&node, 0)
+				new_expr := t.transform_expr(expr_id)
+				if new_expr != expr_id {
+					start := t.a.children.len
+					t.a.children << new_expr
+					return t.a.add_node(flat.Node{
+						kind:           .is_expr
+						value:          node.value
+						children_start: start
+						children_count: 1
+						pos:            node.pos
+					})
+				}
+			}
+			return id
+		}
+		.ident, .int_literal, .float_literal, .bool_literal, .char_literal,
 		.string_literal, .nil_literal, .none_expr, .enum_val, .sizeof_expr, .typeof_expr {
 			// leaf/simple nodes - pass through unchanged
 			return id

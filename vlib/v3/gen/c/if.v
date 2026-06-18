@@ -27,6 +27,33 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	g.gen_if_else(node)
 }
 
+fn (mut g FlatGen) smartcast_is_expr(cond &flat.Node) {
+	expr_id := g.a.child(cond, 0)
+	expr_node := g.a.nodes[int(expr_id)]
+	if expr_node.kind == .ident {
+		sum_type := g.tc.resolve_type(expr_id)
+		clean_sum := types.unwrap_pointer(sum_type)
+		if clean_sum is types.SumType {
+			variant_type := g.tc.parse_type(cond.value)
+			if variant_type is types.Void {
+				return
+			}
+			variant_ct := g.tc.c_type(variant_type)
+			field_name := g.sum_field_name(cond.value)
+			is_ptr_variant := g.variant_references_sum(cond.value, clean_sum.name)
+			var_name := c_name(expr_node.value)
+			tmp := g.tmp_name()
+			if is_ptr_variant {
+				g.writeln('${variant_ct} ${tmp} = *${var_name}.${field_name};')
+			} else {
+				g.writeln('${variant_ct} ${tmp} = ${var_name}.${field_name};')
+			}
+			g.writeln('${variant_ct} ${var_name} = ${tmp};')
+			g.tc.cur_scope.insert(expr_node.value, variant_type)
+		}
+	}
+}
+
 fn (g &FlatGen) expr_key(id flat.NodeId) string {
 	node := g.a.nodes[int(id)]
 	if node.kind == .ident {
