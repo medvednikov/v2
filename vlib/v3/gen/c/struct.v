@@ -4,29 +4,75 @@ import v3.flat
 import v3.types
 
 fn (mut g FlatGen) gen_struct_init(node flat.Node) {
-	name := g.tc.c_type(g.tc.parse_type(node.value))
+	stype := g.tc.parse_type(node.value)
+	name := g.tc.c_type(stype)
 	g.write('(${name}){')
+	mut set_fields := map[string]bool{}
+	mut has_field := false
 	for i in 0 .. node.children_count {
 		field := g.a.child_node(&node, i)
-		if i > 0 {
+		if has_field {
 			g.write(', ')
 		}
 		g.write('.${c_name(field.value)} = ')
 		g.gen_expr(g.a.child(field, 0))
+		set_fields[field.value] = true
+		has_field = true
+	}
+	qname := g.tc.qualify_name(node.value)
+	sname := if qname in g.tc.structs { qname } else { node.value }
+	if sname in g.tc.structs {
+		for f in g.tc.structs[sname] {
+			if f.name in set_fields {
+				continue
+			}
+			if f.typ is types.Map {
+				c_key := g.tc.c_type(f.typ.key_type)
+				c_val := g.tc.c_type(f.typ.value_type)
+				if has_field {
+					g.write(', ')
+				}
+				g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+				has_field = true
+			}
+		}
 	}
 	g.write('}')
 }
 
 fn (mut g FlatGen) gen_heap_struct_init(node flat.Node) {
-	name := g.tc.c_type(g.tc.parse_type(node.value))
+	stype := g.tc.parse_type(node.value)
+	name := g.tc.c_type(stype)
 	g.write('(${name}*)memdup(&(${name}){')
+	mut set_fields := map[string]bool{}
+	mut has_field := false
 	for i in 0 .. node.children_count {
 		field := g.a.child_node(&node, i)
-		if i > 0 {
+		if has_field {
 			g.write(', ')
 		}
 		g.write('.${c_name(field.value)} = ')
 		g.gen_expr(g.a.child(field, 0))
+		set_fields[field.value] = true
+		has_field = true
+	}
+	qname := g.tc.qualify_name(node.value)
+	sname := if qname in g.tc.structs { qname } else { node.value }
+	if sname in g.tc.structs {
+		for f in g.tc.structs[sname] {
+			if f.name in set_fields {
+				continue
+			}
+			if f.typ is types.Map {
+				c_key := g.tc.c_type(f.typ.key_type)
+				c_val := g.tc.c_type(f.typ.value_type)
+				if has_field {
+					g.write(', ')
+				}
+				g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+				has_field = true
+			}
+		}
 	}
 	g.write('}, sizeof(${name}))')
 }

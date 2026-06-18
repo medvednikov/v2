@@ -718,6 +718,19 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			}
 			break
 		}
+		if variadic_idx >= 0 && arg_idx == variadic_idx && num_args == param_types.len {
+			arg_type := g.tc.resolve_type(arg_id)
+			if arg_type !is types.Array {
+				variadic_type := param_types[variadic_idx]
+				if variadic_type is types.Array {
+					c_elem := g.tc.c_type(variadic_type.elem_type)
+					g.write('new_array_from_c_array(1, 1, sizeof(${c_elem}), (${c_elem}[]){')
+					g.gen_expr(arg_id)
+					g.write('})')
+					continue
+				}
+			}
+		}
 		mut needs_addr := false
 		if arg_idx < param_types.len && param_types[arg_idx] is types.Pointer && !(arg_node.kind == .prefix && arg_node.op == .amp) {
 			arg_type := g.tc.resolve_type(arg_id)
