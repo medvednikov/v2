@@ -1117,6 +1117,22 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					}
 				}
 			}
+			if clean is Array || clean is Map || clean is String {
+				sname := if clean is Array {
+					'array'
+				} else if clean is Map {
+					'map'
+				} else {
+					'string'
+				}
+				if sname in tc.structs {
+					for f in tc.structs[sname] {
+						if f.name == node.value {
+							return f.typ
+						}
+					}
+				}
+			}
 			if clean is Primitive && base_node.kind == .selector {
 				vname := base_node.value.replace('__', '.')
 				if vname in tc.structs {

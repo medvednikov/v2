@@ -92,6 +92,9 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 			g.gen_index_assign(node)
 		}
 		.return_stmt {
+			if g.cur_fn_ret is types.Enum {
+				g.expected_enum = g.cur_fn_ret.name
+			}
 			g.gen_defers()
 			if node.children_count > 0 {
 				ret_id := g.a.child(&node, 0)
@@ -171,6 +174,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					g.writeln('return;')
 				}
 			}
+			g.expected_enum = ''
 		}
 		.defer_stmt {
 			g.defers << g.a.child(&node, 0)
@@ -438,10 +442,15 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 				}
 				g.writeln('});')
 			} else {
+				lhs_type := g.tc.resolve_type(g.a.child(&node, i))
+				if lhs_type is types.Enum {
+					g.expected_enum = lhs_type.name
+				}
 				g.gen_expr(g.a.child(&node, i))
 				g.write(' ${g.op_str(node.op)} ')
 				g.gen_expr(rhs_id)
 				g.writeln(';')
+				g.expected_enum = ''
 			}
 		}
 		i += 2

@@ -25,6 +25,7 @@ mut:
 	fn_ptr_types          map[string]string // fn_ptr:ret|params -> typedef name
 	runtime_inits         []string
 	cur_fn_ret            types.Type = types.Type(types.void_)
+	expected_enum         string
 	needed_optional_types map[string]string
 	emitted_fns           map[string]bool
 }
@@ -248,6 +249,17 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.enum_val {
+			if node.value in g.enum_vals {
+				g.write('${g.enum_vals[node.value]}')
+				return
+			}
+			if g.expected_enum.len > 0 {
+				ekey := '${g.expected_enum}.${node.value}'
+				if ekey in g.enum_vals {
+					g.write('${g.enum_vals[ekey]}')
+					return
+				}
+			}
 			for ename, eval in g.enum_vals {
 				if ename.ends_with('.${node.value}') {
 					g.write('${eval}')
@@ -263,6 +275,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			lhs_type := g.tc.resolve_type(lhs_id)
+			if lhs_type is types.Enum {
+				g.expected_enum = lhs_type.name
+			}
 			if lhs_type is types.Struct {
 				op_name := match node.op {
 					.minus { '__minus' }
@@ -305,6 +320,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					g.gen_expr(rhs_id)
 				}
 			}
+			g.expected_enum = ''
 		}
 		.prefix {
 			child_id := g.a.child(&node, 0)

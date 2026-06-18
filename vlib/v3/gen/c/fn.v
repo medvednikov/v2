@@ -645,6 +645,9 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						needs_addr = true
 					}
 				}
+				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Enum {
+					g.expected_enum = (param_types[arg_idx] as types.Enum).name
+				}
 				is_rvalue := arg_node.kind == .call || (arg_node.kind == .index && arg_node.value == 'range')
 				if needs_addr && is_rvalue {
 					pt := param_types[arg_idx]
@@ -659,6 +662,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					}
 					g.gen_expr(arg_id)
 				}
+				g.expected_enum = ''
 			}
 			actual_args := node.children_count - arg_start
 			expected_args := if is_method {
