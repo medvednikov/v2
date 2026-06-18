@@ -21,7 +21,7 @@ pub fn (s &Scope) lookup(name string) ?Type {
 		return none
 	}
 	if name in s.objects {
-		return s.objects[name]
+		return s.objects[name] or { Type(int_) }
 	}
 	if s.parent != unsafe { nil } {
 		return s.parent.lookup(name)

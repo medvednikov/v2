@@ -97,7 +97,7 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 
 // try_lower_builtin_call checks if a call is to a builtin that needs special lowering.
 // Returns none for most calls so the caller falls through to generic call transform.
-fn (mut t Transformer) try_lower_builtin_call(id flat.NodeId, node flat.Node) ?flat.NodeId {
+fn (mut t Transformer) try_lower_builtin_call(_id flat.NodeId, node flat.Node) ?flat.NodeId {
 	name := t.resolve_call_name(node)
 	if name.len == 0 {
 		return none

@@ -6,7 +6,7 @@ import v3.flat
 // Currently returns false as interface tracking is not yet connected
 // to the TypeChecker. Will be wired up when interface declarations
 // are collected during the type collection pass.
-fn (t &Transformer) is_interface_type(name string) bool {
+fn (t &Transformer) is_interface_type(_name string) bool {
 	// TODO: Connect to TypeChecker or add interface_types map to Transformer
 	// once interface_decl nodes are collected in collect_types.
 	return false

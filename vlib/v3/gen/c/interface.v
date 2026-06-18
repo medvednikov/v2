@@ -133,7 +133,7 @@ fn (mut g FlatGen) interface_method_stubs() {
 			sid := g.intern_string('interface method ${cn}.${method} not implemented')
 			mname := '${iface_name}.${method}'
 			ret_type := if mname in g.tc.fn_ret_types {
-				g.tc.fn_ret_types[mname]
+				g.tc.fn_ret_types[mname] or { types.Type(types.int_) }
 			} else {
 				types.Type(types.int_)
 			}

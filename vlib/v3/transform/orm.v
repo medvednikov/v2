@@ -7,7 +7,7 @@ import v3.flat
 //   users := sql db { select from User where age > 18 order by name }
 // This would be lowered into the appropriate database driver function calls.
 // For now, returns the node unchanged as a hook for future ORM support.
-fn (mut t Transformer) transform_sql_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+fn (mut t Transformer) transform_sql_expr(id flat.NodeId, _node flat.Node) flat.NodeId {
 	// TODO: When ORM support is implemented:
 	//   1. Parse the SQL expression structure from children
 	//   2. Determine the target table and struct type

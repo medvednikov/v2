@@ -459,7 +459,7 @@ fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
 	}
 }
 
-fn (mut tc TypeChecker) annotate_for_in(id flat.NodeId, node flat.Node) {
+fn (mut tc TypeChecker) annotate_for_in(_id flat.NodeId, node flat.Node) {
 	header := node.value.int()
 	if header < 3 || node.children_count < 3 {
 		return
@@ -877,10 +877,10 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			}
 			qname := tc.qualify_name(node.value)
 			if qname in tc.const_types {
-				return tc.const_types[qname]
+				return tc.const_types[qname] or { Type(int_) }
 			}
 			if node.value in tc.const_types {
-				return tc.const_types[node.value]
+				return tc.const_types[node.value] or { Type(int_) }
 			}
 			return Type(int_)
 		}
@@ -890,7 +890,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 				base_node := tc.a.child_node(fn_node, 0)
 				if base_node.kind == .ident && base_node.value == 'C' {
 					if fn_node.value in tc.fn_ret_types {
-						return tc.fn_ret_types[fn_node.value]
+						return tc.fn_ret_types[fn_node.value] or { Type(int_) }
 					}
 					return Type(Struct{
 						name: 'C.${fn_node.value}'
@@ -904,7 +904,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					}
 					mod_name := '${resolved}.${fn_node.value}'
 					if mod_name in tc.fn_ret_types {
-						return tc.fn_ret_types[mod_name]
+						return tc.fn_ret_types[mod_name] or { Type(int_) }
 					}
 					if mod_name in tc.sum_types {
 						return Type(SumType{name: mod_name})
@@ -919,14 +919,14 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						qname := tc.qualify_name(base_node.value)
 						sname := '${qname}.${fn_node.value}'
 						if sname in tc.fn_ret_types {
-							return tc.fn_ret_types[sname]
+							return tc.fn_ret_types[sname] or { Type(int_) }
 						}
 					} else {
 						qname := tc.qualify_name(base_node.value)
 						if qname in tc.structs || qname in tc.enum_names {
 							sname := '${qname}.${fn_node.value}'
 							if sname in tc.fn_ret_types {
-								return tc.fn_ret_types[sname]
+								return tc.fn_ret_types[sname] or { Type(int_) }
 							}
 						}
 					}
@@ -940,7 +940,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						}
 						full_name := '${mod_name}.${base_node.value}.${fn_node.value}'
 						if full_name in tc.fn_ret_types {
-							return tc.fn_ret_types[full_name]
+							return tc.fn_ret_types[full_name] or { Type(int_) }
 						}
 					}
 				}
@@ -977,11 +977,11 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					if mod_prefix.len > 0 {
 						arr_mkey := '${mod_prefix}.${arr_mname1}'
 						if arr_mkey in tc.fn_ret_types {
-							return tc.fn_ret_types[arr_mkey]
+							return tc.fn_ret_types[arr_mkey] or { Type(int_) }
 						}
 					}
 					if arr_mname1 in tc.fn_ret_types {
-						return tc.fn_ret_types[arr_mname1]
+						return tc.fn_ret_types[arr_mname1] or { Type(int_) }
 					}
 					return Type(int_)
 				}
@@ -994,45 +994,45 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 				if clean_type is String {
 					mname := 'string.${fn_node.value}'
 					if mname in tc.fn_ret_types {
-						return tc.fn_ret_types[mname]
+						return tc.fn_ret_types[mname] or { Type(int_) }
 					}
 				}
 				if clean_type is Struct {
 					mname := '${clean_type.name}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
-						return tc.fn_ret_types[mname]
+						return tc.fn_ret_types[mname] or { Type(int_) }
 					}
 				}
 				if clean_type is SumType {
 					mname := '${clean_type.name}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
-						return tc.fn_ret_types[mname]
+						return tc.fn_ret_types[mname] or { Type(int_) }
 					}
 				}
 				if clean_type is Enum {
 					mname := '${clean_type.name}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
-						return tc.fn_ret_types[mname]
+						return tc.fn_ret_types[mname] or { Type(int_) }
 					}
 				}
 				if clean_type is Primitive {
 					mname := '${prim_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
-						return tc.fn_ret_types[mname]
+						return tc.fn_ret_types[mname] or { Type(int_) }
 					}
 				}
 			}
 			qfn := tc.qualify_fn_name(fn_node.value)
 			if qfn in tc.fn_ret_types {
-				return tc.fn_ret_types[qfn]
+				return tc.fn_ret_types[qfn] or { Type(int_) }
 			}
 			if fn_node.value in tc.fn_ret_types {
-				return tc.fn_ret_types[fn_node.value]
+				return tc.fn_ret_types[fn_node.value] or { Type(int_) }
 			}
 			for _, imp in tc.imports {
 				imp_name := '${imp}.${fn_node.value}'
 				if imp_name in tc.fn_ret_types {
-					return tc.fn_ret_types[imp_name]
+					return tc.fn_ret_types[imp_name] or { Type(int_) }
 				}
 			}
 			$if debug {
@@ -1098,7 +1098,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 				}
 				qname := '${resolved}.${node.value}'
 				if qname in tc.const_types {
-					return tc.const_types[qname]
+					return tc.const_types[qname] or { Type(int_) }
 				}
 			}
 			base_type := tc.resolve_type(tc.a.child(&node, 0))

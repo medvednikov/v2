@@ -127,7 +127,7 @@ fn (mut t Transformer) build_return_if_chain(if_id flat.NodeId, ret_typ string) 
 // Returns the expanded if-statement as a single-element array, or none if the
 // pattern does not match. A plain `return if x {..}` with no else (if_expr with
 // fewer than 3 children) is left unexpanded.
-fn (mut t Transformer) try_expand_return_if(id flat.NodeId, node flat.Node) ?[]flat.NodeId {
+fn (mut t Transformer) try_expand_return_if(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
 	if node.children_count == 0 {
 		return none
 	}
@@ -146,7 +146,7 @@ fn (mut t Transformer) try_expand_return_if(id flat.NodeId, node flat.Node) ?[]f
 //
 // For now, returns none. This will be implemented after confirming that
 // match lowering always runs before the return expansion pass.
-fn (mut t Transformer) try_expand_return_match(id flat.NodeId, node flat.Node) ?[]flat.NodeId {
+fn (mut t Transformer) try_expand_return_match(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
 	if node.children_count == 0 {
 		return none
 	}

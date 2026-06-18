@@ -4,7 +4,7 @@ module transform
 // Generic functions have type parameters that need to be monomorphized
 // into concrete specializations before code generation.
 // For now, returns false as generics are not yet supported in v3.
-fn (mut t Transformer) is_generic_fn(name string) bool {
+fn (mut t Transformer) is_generic_fn(_name string) bool {
 	return false
 }
 
@@ -12,7 +12,7 @@ fn (mut t Transformer) is_generic_fn(name string) bool {
 // Generic structs like `Array[T]` would need monomorphization into
 // concrete types like `Array_int`, `Array_string`, etc.
 // For now, returns false as generics are not yet supported in v3.
-fn (mut t Transformer) is_generic_struct(name string) bool {
+fn (mut t Transformer) is_generic_struct(_name string) bool {
 	return false
 }
 

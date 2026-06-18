@@ -12,7 +12,7 @@ import v3.flat
 //
 // Currently returns none -- option/result type tracking is not yet in place,
 // but the infrastructure is here for when it is.
-fn (mut t Transformer) try_expand_if_guard(id flat.NodeId, node flat.Node) ?[]flat.NodeId {
+fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
 	if node.kind != .if_expr || node.children_count < 2 {
 		return none
 	}
@@ -44,7 +44,7 @@ fn (mut t Transformer) try_expand_if_guard(id flat.NodeId, node flat.Node) ?[]fl
 //
 // Currently returns none -- this will be invoked from the assignment
 // transform once if-as-value detection is wired up.
-fn (mut t Transformer) try_expand_if_expr_value(id flat.NodeId, node flat.Node) ?flat.NodeId {
+fn (mut t Transformer) try_expand_if_expr_value(_id flat.NodeId, node flat.Node) ?flat.NodeId {
 	if node.kind != .if_expr {
 		return none
 	}

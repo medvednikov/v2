@@ -419,7 +419,7 @@ fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []f
 	}))
 }
 
-fn (mut t Transformer) try_lower_string_compound_assign(id flat.NodeId, node flat.Node) ?[]flat.NodeId {
+fn (mut t Transformer) try_lower_string_compound_assign(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
 	if node.kind != .assign || node.op != .plus_assign || node.children_count != 2 {
 		return none
 	}
@@ -503,7 +503,7 @@ fn (mut t Transformer) transform_for_in_stmt(id flat.NodeId, node flat.Node) []f
 	return t.transform_for_in_body(id, node)
 }
 
-fn (mut t Transformer) transform_block_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
+fn (mut t Transformer) transform_block_stmt(_id flat.NodeId, node flat.Node) []flat.NodeId {
 	mut child_ids := []flat.NodeId{}
 	for i in 0 .. node.children_count {
 		child_ids << t.a.child(&node, i)

@@ -245,7 +245,7 @@ fn (mut g FlatGen) emit_struct(name string) {
 	}
 }
 
-fn (mut g FlatGen) write_struct_field(struct_name string, f types.StructField) {
+fn (mut g FlatGen) write_struct_field(_struct_name string, f types.StructField) {
 	if f.typ is types.FnType {
 		ret := if f.typ.return_type is types.Void { 'void' } else { g.tc.c_type(f.typ.return_type) }
 		mut params := []string{}

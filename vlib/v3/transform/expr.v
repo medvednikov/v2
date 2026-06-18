@@ -2,7 +2,7 @@ module transform
 
 import v3.flat
 
-fn (mut t Transformer) transform_infix_string_ops(id flat.NodeId, node flat.Node) ?flat.NodeId {
+fn (mut t Transformer) transform_infix_string_ops(_id flat.NodeId, node flat.Node) ?flat.NodeId {
 	if node.children_count < 2 {
 		return none
 	}
