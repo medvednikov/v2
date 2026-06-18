@@ -6,17 +6,10 @@ import v3.types
 const trace_markused = false
 
 pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
-	mut all_fns := map[string]bool{}
 	mut cur_module := ''
 	mut imports := map[string]string{}
 	mut fn_decls := map[string]FnDeclInfo{}
 	mut struct_decls := map[string]StructDeclInfo{}
-
-	// Build a resolved function name set from the type checker
-	mut resolved_fns := map[string]bool{}
-	for name, _ in tc.fn_ret_types {
-		resolved_fns[name] = true
-	}
 
 	// Reverse index: short name (after last '.') -> list of full qualified names
 	mut suffix_map := map[string][]string{}
@@ -47,41 +40,30 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			continue
 		}
 		if node.kind == .fn_decl {
-			fn_count++
-			if node.value.contains('.') {
-				fn_with_dot++
-				if trace_markused && fn_with_dot <= 5 {
-					eprintln('  fn with dot: "${node.value}"')
-				}
-			}
-			mut receiver_name := ''
-			mut receiver_struct := ''
-			if node.value.contains('.') {
-				receiver_struct = node.value.all_before_last('.')
-				for pi in 0 .. node.children_count {
-					pc := a.child_node(&node, pi)
-					if pc.kind == .param {
-						receiver_name = pc.value
-						break
+			has_dot := node.value.contains('.')
+			if trace_markused {
+				fn_count++
+				if has_dot {
+					fn_with_dot++
+					if fn_with_dot <= 5 {
+						eprintln('  fn with dot: "${node.value}"')
 					}
 				}
 			}
 			info := FnDeclInfo{
-				node_id:         flat.NodeId(node_idx)
-				module:          cur_module
-				receiver_name:   receiver_name
-				receiver_struct: receiver_struct
+				node_id: flat.NodeId(node_idx)
+				module:  cur_module
 			}
-			all_fns[node.value] = true
 			fn_decls[node.value] = info
 			qname := qualify_fn(cur_module, node.value)
 			if qname != node.value {
-				all_fns[qname] = true
 				fn_decls[qname] = info
 			}
 			// Build suffix_map entries
-			if node.value.contains('.') {
-				contains2_total++
+			if has_dot {
+				if trace_markused {
+					contains2_total++
+				}
 				short := node.value.all_after_last('.')
 				suffix_map[short] << node.value
 				if qname != node.value {
@@ -111,7 +93,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		eprintln('contains2_total:')
 		eprintln(contains2_total.str())
 		eprintln('markused: main in fn_decls: ${'main' in fn_decls}')
-		eprintln('markused: all_fns count: ${all_fns.len}')
+		eprintln('markused: fn_decls count: ${fn_decls.len}')
 		eprintln('markused: suffix_map count: ${suffix_map.len}')
 		mut total_suffix_entries := 0
 		for _, vals in suffix_map {
@@ -151,39 +133,38 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		node_key := int(fn_info.node_id)
 		calls := calls_by_node[node_key] or {
 			node := a.node(fn_info.node_id)
+			receiver_name, receiver_struct := receiver_info(a, node)
 			mut new_calls := []string{}
-			collector.collect_calls(node, fn_info.module, imports, fn_info.receiver_name,
-				fn_info.receiver_struct, mut new_calls)
+			collector.collect_calls(node, fn_info.module, imports, receiver_name, receiver_struct, mut
+				new_calls)
 			total_callees += new_calls.len
 			calls_by_node[node_key] = new_calls
 			new_calls
 		}
 		for callee in calls {
-			if callee in all_fns {
-				if callee !in used {
-					used[callee] = true
-					queue << callee
+			if callee_info := fn_decls[callee] {
+				if enqueue(callee, mut used, mut queue) {
 					if trace_markused && qi == 1 {
 						eprintln('main: all_fns hit: "${callee}"')
 					}
 				}
-			} else if callee in resolved_fns {
-				if callee !in used {
-					used[callee] = true
-					queue << callee
+				alias := a.node(callee_info.node_id).value
+				if alias != callee && alias !in used {
+					used[alias] = true
+				}
+			} else if callee in tc.fn_ret_types {
+				if enqueue(callee, mut used, mut queue) {
 					if trace_markused && qi == 1 {
 						eprintln('main: resolved hit: "${callee}"')
 					}
 				}
 			}
-			if callee.len > 0 {
+			if callee.len > 0 && !callee.contains('.') {
 				if callee in suffix_map {
 					suffix_hits++
 					entries := suffix_map[callee]
 					for fn_name in entries {
-						if fn_name !in used {
-							used[fn_name] = true
-							queue << fn_name
+						if enqueue(fn_name, mut used, mut queue) {
 							if trace_markused && qi == 1 {
 								eprintln('main: suffix hit: "${callee}" -> "${fn_name}"')
 							}
@@ -213,11 +194,18 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	return used
 }
 
+fn enqueue(name string, mut used map[string]bool, mut queue []string) bool {
+	if name in used {
+		return false
+	}
+	used[name] = true
+	queue << name
+	return true
+}
+
 struct FnDeclInfo {
-	node_id         flat.NodeId
-	module          string
-	receiver_name   string
-	receiver_struct string
+	node_id flat.NodeId
+	module  string
 }
 
 struct StructDeclInfo {
@@ -238,6 +226,20 @@ fn qualify_fn(mod string, name string) string {
 	return '${mod}.${name}'
 }
 
+fn receiver_info(a &flat.FlatAst, node &flat.Node) (string, string) {
+	if !node.value.contains('.') {
+		return '', ''
+	}
+	receiver_struct := node.value.all_before_last('.')
+	for pi in 0 .. node.children_count {
+		pc := a.child_node(node, pi)
+		if pc.kind == .param {
+			return pc.value, receiver_struct
+		}
+	}
+	return '', receiver_struct
+}
+
 fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports map[string]string, receiver_name string, receiver_struct string, mut calls []string) {
 	for i in 0 .. node.children_count {
 		child_id := c.a.child(node, i)
@@ -247,7 +249,9 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 		child := &c.a.nodes[int(child_id)]
 		match child.kind {
 			.call {
-				if child.children_count > 0 {
+				if resolved := c.tc.resolved_calls[int(child_id)] {
+					calls << resolved
+				} else if child.children_count > 0 {
 					callee_id := c.a.child(child, 0)
 					if int(callee_id) >= 0 {
 						callee := c.a.nodes[int(callee_id)]
@@ -292,7 +296,7 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 											}
 										}
 									}
-									base_type := c.tc.resolve_type(base_id)
+									base_type := c.node_type(base_id)
 									type_name := resolve_type_name(base_type)
 									if type_name.len > 0 {
 										calls << type_name + '.' + callee.value
@@ -334,7 +338,7 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 				if child.children_count >= 2 {
 					lhs_id := c.a.child(child, 0)
 					if int(lhs_id) >= 0 {
-						lhs_type := c.tc.resolve_type(lhs_id)
+						lhs_type := c.node_type(lhs_id)
 						lhs_name := resolve_type_name(lhs_type)
 						if lhs_name.len > 0 {
 							op_name := match child.op {
@@ -366,6 +370,13 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 	}
 }
 
+fn (c &CallCollector) node_type(id flat.NodeId) types.Type {
+	if t := c.tc.expr_type(id) {
+		return t
+	}
+	return c.tc.resolve_type(id)
+}
+
 fn (c &CallCollector) collect_struct_default_calls(init &flat.Node, imports map[string]string, mut calls []string) {
 	info := c.struct_decls[init.value] or { return }
 	mut set_fields := map[string]bool{}
@@ -386,7 +397,9 @@ fn (c &CallCollector) collect_struct_default_calls(init &flat.Node, imports map[
 }
 
 fn resolve_type_name(t types.Type) string {
-	if t is types.Struct {
+	if t is types.Alias {
+		return t.name
+	} else if t is types.Struct {
 		return t.name
 	} else if t is types.String {
 		return 'string'
