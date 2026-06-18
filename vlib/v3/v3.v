@@ -164,13 +164,11 @@ fn main() {
 		// C backend (default)
 		mut g := cgen.FlatGen.new()
 		c_code := g.gen_with_used_options(a, used_fns, tc, no_parallel)
-		b.step('gen C')
-
 		os.write_file(output_file, c_code) or {
 			eprintln('error writing ${output_file}: ${err}')
 			exit(1)
 		}
-		b.step('write')
+		b.step('gen C/write')
 
 		opt_flag := if is_prod { '-O2 ' } else { '' }
 		warn_flags := if is_strict {

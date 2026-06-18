@@ -4747,6 +4747,11 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 		inner := b.resolve_type(name[1..])
 		return b.m.type_store.get_ptr(inner)
 	}
+	if alias := b.type_alias_target(name) {
+		if alias != name {
+			return b.resolve_type(alias)
+		}
+	}
 	if name.starts_with('[]') || name == 'array' || name == 'Array' {
 		return b.array_type
 	}
@@ -4758,7 +4763,7 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 	}
 	return match name {
 		'int' {
-			b.i64_type
+			b.i32_type
 		}
 		'i8' {
 			b.i8_type
@@ -4803,7 +4808,18 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 			b.m.type_store.get_ptr(b.i8_type)
 		}
 		else {
+			short_name := name.all_after('.')
+			if !name.contains('.') && b.cur_module.len > 0 && b.cur_module != 'main'
+				&& b.cur_module != 'builtin' {
+				qualified_name := b.cur_module + '.' + short_name
+				if typ := b.struct_types[qualified_name] {
+					return typ
+				}
+			}
 			if typ := b.struct_types[name] {
+				return typ
+			}
+			if typ := b.struct_types[short_name] {
 				return typ
 			}
 			if name == 'Builder' {
@@ -4825,8 +4841,30 @@ fn (mut b Builder) resolve_type_in_module(name string, module_name string) TypeI
 		if typ := b.struct_types[qualified_name] {
 			return typ
 		}
+		if alias := b.type_alias_target(qualified_name) {
+			if alias != qualified_name {
+				return b.resolve_type_in_module(alias, module_name)
+			}
+		}
 	}
 	return b.resolve_type(name)
+}
+
+fn (b &Builder) type_alias_target(name string) ?string {
+	if b.tc == unsafe { nil } || name.len == 0 {
+		return none
+	}
+	if target := b.tc.type_aliases[name] {
+		return target
+	}
+	if !name.contains('.') && b.cur_module.len > 0 && b.cur_module != 'main'
+		&& b.cur_module != 'builtin' {
+		qualified_name := b.cur_module + '.' + name
+		if target := b.tc.type_aliases[qualified_name] {
+			return target
+		}
+	}
+	return none
 }
 
 fn (b &Builder) value_type(val_id ValueID) TypeID {
