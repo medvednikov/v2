@@ -139,11 +139,15 @@ fn (mut t Transformer) transform_map_index_or_expr(id flat.NodeId, node flat.Nod
 	key_name := t.new_temp('map_key')
 	ptr_name := t.new_temp('map_ptr')
 	val_name := t.new_temp('map_val')
-	t.pending_stmts << t.make_decl_assign_typed(key_name, t.transform_expr(info.key_id),
-		info.key_type)
-	t.pending_stmts << t.make_decl_assign_typed(ptr_name, t.make_map_get_check_expr(map_expr,
+	outer_pending := t.pending_stmts.clone()
+	t.pending_stmts.clear()
+	key_expr := t.transform_expr(info.key_id)
+	mut prelude := []flat.NodeId{}
+	t.drain_pending(mut prelude)
+	prelude << t.make_decl_assign_typed(key_name, key_expr, info.key_type)
+	prelude << t.make_decl_assign_typed(ptr_name, t.make_map_get_check_expr(map_expr,
 		info.base_type, key_name), 'voidptr')
-	t.pending_stmts << t.make_decl_assign_typed(val_name, t.zero_value_for_type(info.value_type),
+	prelude << t.make_decl_assign_typed(val_name, t.zero_value_for_type(info.value_type),
 		info.value_type)
 
 	ptr_ident := t.make_ident(ptr_name)
@@ -152,6 +156,10 @@ fn (mut t Transformer) transform_map_index_or_expr(id flat.NodeId, node flat.Nod
 		'&${info.value_type}'))
 	then_block := t.make_block(arr1(t.make_assign(t.make_ident(val_name), ptr_value)))
 	else_block := t.make_block(t.lower_map_or_body_to_stmts(body_id, val_name, info.value_type))
+	t.pending_stmts = outer_pending
+	for stmt in prelude {
+		t.pending_stmts << stmt
+	}
 	t.pending_stmts << t.make_if(found_cond, then_block, else_block)
 	return t.make_ident(val_name)
 }

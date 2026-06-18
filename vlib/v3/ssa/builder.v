@@ -572,8 +572,8 @@ fn (b &Builder) has_fn_decl(name string) bool {
 
 fn (b &Builder) skip_source_fn(name string) bool {
 	if name in ['_wymix', 'wyhash', 'wyhash64', 'string__eq', 'string__lt', 'array_new', 'array_get',
-		'string__plus', 'string_plus_many', 'string.trim_right', 'array_push', 'array.push_many',
-		'array_clone', 'panic', 'fast_string_eq', 'strings.new_builder',
+		'string__plus', 'string_plus_many', 'string.trim_right', 'array_push', 'array_push_many',
+		'array.push_many', 'array_clone', 'panic', 'fast_string_eq', 'strings.new_builder',
 		'strings.Builder.write_string', 'strings.Builder.writeln', 'strings.Builder.str',
 		'strings.Builder.write_ptr', 'strings.Builder.write_u8', 'strings.Builder.write_runes',
 		'strings.Builder.free', 'strings.Builder.last_n', 'Builder.write_string', 'Builder.writeln',
@@ -1003,6 +1003,13 @@ fn (mut b Builder) register_array_runtime_stubs() {
 	array_push_many_id := b.register_synthetic_function('array.push_many', b.void_type,
 		p3_push_many)
 	b.generate_array_push_many_body(array_push_many_id)
+
+	mut p2_push_many := []TypeID{}
+	p2_push_many << ptr_array
+	p2_push_many << b.array_type
+	array_push_many_wrapper_id := b.register_synthetic_function('array_push_many', b.void_type,
+		p2_push_many)
+	b.generate_array_push_many_array_body(array_push_many_wrapper_id)
 
 	mut p1 := []TypeID{}
 	p1 << b.array_type
@@ -2307,6 +2314,26 @@ fn (mut b Builder) generate_array_push_many_body(func_id int) {
 	b.block_instr0(.ret, blk_copy, b.void_type)
 
 	b.block_instr0(.ret, blk_done, b.void_type)
+}
+
+fn (mut b Builder) generate_array_push_many_array_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_array := b.m.type_store.get_ptr(b.array_type)
+	entry := b.m.add_block(func_id, 'entry')
+	arr_ptr := b.func_add_argument(func_id, ptr_array, 'arr')
+	src := b.func_add_argument(func_id, b.array_type, 'src')
+
+	src_alloca := b.block_instr0(.alloca, entry, ptr_array)
+	b.block_instr2(.store, entry, b.void_type, src, src_alloca)
+	data_ptr := b.block_struct_field_ptr(entry, src_alloca, b.array_type, 0)
+	len_ptr := b.block_struct_field_ptr(entry, src_alloca, b.array_type, 2)
+	data := b.block_instr1(.load, entry, ptr_i8, data_ptr)
+	len32 := b.block_instr1(.load, entry, b.i32_type, len_ptr)
+	len := b.block_instr1(.zext, entry, b.i64_type, len32)
+	push_many_ref := b.m.add_value(.func_ref, b.void_type, 'array.push_many',
+		b.fn_ids['array.push_many'])
+	b.block_instr4(.call, entry, b.void_type, push_many_ref, arr_ptr, data, len)
+	b.block_instr0(.ret, entry, b.void_type)
 }
 
 fn (mut b Builder) register_string_eq_stub() {

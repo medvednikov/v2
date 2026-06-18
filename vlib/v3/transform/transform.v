@@ -557,7 +557,7 @@ fn (mut t Transformer) transform_return_stmt(id flat.NodeId, node flat.Node) []f
 		value:          node.value
 		typ:            node.typ
 	})
-	return arr1(new_id)
+	return t.with_pending_before(new_id)
 }
 
 fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
@@ -599,7 +599,7 @@ fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []f
 	if node.kind == .assign && node.op == .left_shift_assign {
 		t.annotate_left_shift_assign(new_id)
 	}
-	return arr1(new_id)
+	return t.with_pending_before(new_id)
 }
 
 fn (mut t Transformer) try_lower_string_compound_assign(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
@@ -674,7 +674,7 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 	for nc in new_children {
 		t.a.children << nc
 	}
-	return arr1(t.a.add_node(flat.Node{
+	new_id := t.a.add_node(flat.Node{
 		kind:           .decl_assign
 		op:             node.op
 		children_start: start
@@ -682,7 +682,8 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 		pos:            node.pos
 		value:          node.value
 		typ:            if node.typ.len > 0 { node.typ } else { inferred_typ }
-	}))
+	})
+	return t.with_pending_before(new_id)
 }
 
 fn (mut t Transformer) try_expand_multi_return_decl(node flat.Node) ?[]flat.NodeId {
@@ -787,7 +788,7 @@ fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []fla
 		value:          node.value
 		typ:            node.typ
 	})
-	return arr1(new_id)
+	return t.with_pending_before(new_id)
 }
 
 fn (mut t Transformer) transform_for_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
@@ -1511,6 +1512,13 @@ pub fn (mut t Transformer) drain_pending(mut result []flat.NodeId) {
 		result << id
 	}
 	t.pending_stmts.clear()
+}
+
+fn (mut t Transformer) with_pending_before(stmt flat.NodeId) []flat.NodeId {
+	mut result := []flat.NodeId{}
+	t.drain_pending(mut result)
+	result << stmt
+	return result
 }
 
 fn (t &Transformer) is_stmt_kind(kind flat.NodeKind) bool {

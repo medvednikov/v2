@@ -212,12 +212,12 @@ fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_
 	if elem_type.len == 0 {
 		return arr1(id)
 	}
-	idx_name := if has_index {
-		key.value
-	} else {
-		t.new_temp('for_idx')
+	mut idx_name := key.value
+	if !has_index {
+		idx_name = t.new_temp('for_idx')
 	}
-	elem_name := if has_index {
+	mut elem_name := key.value
+	if has_index {
 		if int(val_id) < 0 {
 			return arr1(id)
 		}
@@ -225,9 +225,7 @@ fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_
 		if val.kind != .ident || val.value.len == 0 {
 			return arr1(id)
 		}
-		val.value
-	} else {
-		key.value
+		elem_name = val.value
 	}
 	t.var_types[idx_name] = 'int'
 	t.var_types[elem_name] = elem_type
