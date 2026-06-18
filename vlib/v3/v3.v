@@ -67,7 +67,7 @@ fn main() {
 
 	// Parse directly to flat AST
 	prefs := pref.new_preferences()
-	mut p := parser.FlatParser.new(prefs)
+	mut p := parser.Parser.new(prefs)
 
 	mut files := []string{}
 	if backend == 'arm64' {
@@ -180,7 +180,7 @@ fn main() {
 	b.print_report()
 }
 
-fn resolve_imports(mut a flat.FlatAst, mut p parser.FlatParser, prefs &pref.Preferences, initial_files []string) {
+fn resolve_imports(mut a flat.FlatAst, mut p parser.Parser, prefs &pref.Preferences, initial_files []string) {
 	mut parsed_modules := map[string]bool{}
 	parsed_modules['builtin'] = true
 	parsed_modules['main'] = true

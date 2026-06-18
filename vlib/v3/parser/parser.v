@@ -7,7 +7,7 @@ import v3.pref
 import v3.scanner
 import v3.token
 
-pub struct FlatParser {
+pub struct Parser {
 	prefs &pref.Preferences
 mut:
 	s          &scanner.Scanner
@@ -22,27 +22,27 @@ mut:
 	cur_module string
 }
 
-pub fn FlatParser.new(prefs &pref.Preferences) FlatParser {
-	return FlatParser{
+pub fn Parser.new(prefs &pref.Preferences) Parser {
+	return Parser{
 		prefs: prefs
 		s:     scanner.new_scanner(prefs, .normal)
 		a:     flat.FlatAst.new()
 	}
 }
 
-pub fn (mut p FlatParser) parse_file(path string) &flat.FlatAst {
+pub fn (mut p Parser) parse_file(path string) &flat.FlatAst {
 	p.parse_into(path)
 	return &p.a
 }
 
-pub fn (mut p FlatParser) parse_files(paths []string) &flat.FlatAst {
+pub fn (mut p Parser) parse_files(paths []string) &flat.FlatAst {
 	for path in paths {
 		p.parse_into(path)
 	}
 	return &p.a
 }
 
-pub fn (mut p FlatParser) parse_into(path string) {
+pub fn (mut p Parser) parse_into(path string) {
 	p.cur_file = path
 	// File marker before content so import resolver can track source files
 	p.a.add_node(flat.Node{
@@ -85,7 +85,7 @@ pub fn (mut p FlatParser) parse_into(path string) {
 	})
 }
 
-fn (mut p FlatParser) next() {
+fn (mut p Parser) next() {
 	p.prev_tok = p.tok
 	if p.has_peek {
 		p.tok = p.peek_tok
@@ -101,7 +101,7 @@ fn (mut p FlatParser) next() {
 	}
 }
 
-fn (mut p FlatParser) peek() token.Token {
+fn (mut p Parser) peek() token.Token {
 	if !p.has_peek {
 		p.peek_tok = p.s.scan()
 		p.peek_lit = p.s.lit
@@ -114,13 +114,13 @@ fn (mut p FlatParser) peek() token.Token {
 	return p.peek_tok
 }
 
-fn (mut p FlatParser) check(expected token.Token) {
+fn (mut p Parser) check(expected token.Token) {
 	if p.tok == expected {
 		p.next()
 	}
 }
 
-fn (mut p FlatParser) expect(expected token.Token) string {
+fn (mut p Parser) expect(expected token.Token) string {
 	lit := p.lit
 	if p.tok != expected {
 		eprintln('expected ${expected}, got ${p.tok} "${p.lit}"')
@@ -129,7 +129,7 @@ fn (mut p FlatParser) expect(expected token.Token) string {
 	return lit
 }
 
-fn (mut p FlatParser) expect_name() string {
+fn (mut p Parser) expect_name() string {
 	name := p.lit
 	if p.tok != .name {
 		eprintln('expected name, got ${p.tok} "${p.lit}"')
@@ -138,13 +138,13 @@ fn (mut p FlatParser) expect_name() string {
 	return name
 }
 
-fn (mut p FlatParser) expect_name_or_keyword() string {
+fn (mut p Parser) expect_name_or_keyword() string {
 	name := p.lit
 	p.next()
 	return name
 }
 
-fn (mut p FlatParser) add_children(ids []flat.NodeId) int {
+fn (mut p Parser) add_children(ids []flat.NodeId) int {
 	start := p.a.children.len
 	for id in ids {
 		p.a.children << id
@@ -152,13 +152,13 @@ fn (mut p FlatParser) add_children(ids []flat.NodeId) int {
 	return start
 }
 
-fn (mut p FlatParser) add_child(id flat.NodeId) int {
+fn (mut p Parser) add_child(id flat.NodeId) int {
 	start := p.a.children.len
 	p.a.children << id
 	return start
 }
 
-fn (mut p FlatParser) add_children2(a flat.NodeId, b flat.NodeId) int {
+fn (mut p Parser) add_children2(a flat.NodeId, b flat.NodeId) int {
 	start := p.a.children.len
 	p.a.children << a
 	p.a.children << b
@@ -167,7 +167,7 @@ fn (mut p FlatParser) add_children2(a flat.NodeId, b flat.NodeId) int {
 
 // ==================== top-level ====================
 
-fn (mut p FlatParser) top_level_stmt() flat.NodeId {
+fn (mut p Parser) top_level_stmt() flat.NodeId {
 	match p.tok {
 		.key_fn {
 			return p.fn_decl()
@@ -228,7 +228,7 @@ fn (mut p FlatParser) top_level_stmt() flat.NodeId {
 	}
 }
 
-fn (mut p FlatParser) fn_decl() flat.NodeId {
+fn (mut p Parser) fn_decl() flat.NodeId {
 	p.check(.key_fn)
 	mut name := ''
 	mut receiver_name := ''
@@ -302,7 +302,7 @@ fn (mut p FlatParser) fn_decl() flat.NodeId {
 	return p.fn_decl_body(name, receiver_name, receiver_type, is_method, false)
 }
 
-fn (mut p FlatParser) fn_operator_overload(receiver_name string, receiver_type string, op_name string) flat.NodeId {
+fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type string, op_name string) flat.NodeId {
 	// parse parameter
 	p.check(.lpar)
 	mut param_ids := []flat.NodeId{}
@@ -358,7 +358,7 @@ fn (mut p FlatParser) fn_operator_overload(receiver_name string, receiver_type s
 	})
 }
 
-fn (mut p FlatParser) fn_decl_body(name string, receiver_name string, receiver_type string, is_method bool, _ bool) flat.NodeId {
+fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type string, is_method bool, _ bool) flat.NodeId {
 	// generic params — skip
 	if p.tok == .lsbr {
 		p.skip_brackets()
@@ -428,7 +428,7 @@ fn (mut p FlatParser) fn_decl_body(name string, receiver_name string, receiver_t
 	})
 }
 
-fn (mut p FlatParser) parse_param_group() []flat.NodeId {
+fn (mut p Parser) parse_param_group() []flat.NodeId {
 	mut ids := []flat.NodeId{}
 	mut names := []string{}
 	mut is_mut := false
@@ -481,7 +481,7 @@ fn (mut p FlatParser) parse_param_group() []flat.NodeId {
 	return ids
 }
 
-fn (mut p FlatParser) struct_decl() flat.NodeId {
+fn (mut p Parser) struct_decl() flat.NodeId {
 	p.next() // skip 'struct' or 'union'
 	name := p.expect(.name)
 	// generic params — skip
@@ -613,7 +613,7 @@ fn (mut p FlatParser) struct_decl() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) global_decl() flat.NodeId {
+fn (mut p Parser) global_decl() flat.NodeId {
 	p.next() // skip '__global'
 	is_grouped := p.tok == .lpar
 	if is_grouped {
@@ -703,7 +703,7 @@ fn (mut p FlatParser) global_decl() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) const_decl() flat.NodeId {
+fn (mut p Parser) const_decl() flat.NodeId {
 	p.next() // skip 'const'
 	is_grouped := p.tok == .lpar
 	if is_grouped {
@@ -786,7 +786,7 @@ fn (mut p FlatParser) const_decl() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) enum_decl() flat.NodeId {
+fn (mut p Parser) enum_decl() flat.NodeId {
 	p.next() // skip 'enum'
 	name := p.expect(.name)
 	// `as` type
@@ -837,7 +837,7 @@ fn (mut p FlatParser) enum_decl() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) type_decl() flat.NodeId {
+fn (mut p Parser) type_decl() flat.NodeId {
 	p.next() // skip 'type'
 	// C. or JS. prefix
 	if p.tok == .name && (p.lit == 'C' || p.lit == 'JS') {
@@ -888,7 +888,7 @@ fn (mut p FlatParser) type_decl() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) interface_decl() flat.NodeId {
+fn (mut p Parser) interface_decl() flat.NodeId {
 	p.next() // skip 'interface'
 	mut name := p.expect(.name)
 	for p.tok == .dot {
@@ -973,7 +973,7 @@ fn (mut p FlatParser) interface_decl() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) import_stmt() flat.NodeId {
+fn (mut p Parser) import_stmt() flat.NodeId {
 	p.next() // skip 'import'
 	mut name := p.expect_name()
 	mut alias := name
@@ -1007,7 +1007,7 @@ fn (mut p FlatParser) import_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) module_stmt() flat.NodeId {
+fn (mut p Parser) module_stmt() flat.NodeId {
 	p.next() // skip 'module'
 	name := p.expect_name()
 	if p.tok == .semicolon {
@@ -1019,7 +1019,7 @@ fn (mut p FlatParser) module_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) directive() flat.NodeId {
+fn (mut p Parser) directive() flat.NodeId {
 	full := p.lit
 	p.next() // skip '#' (lit already contains the full line)
 	mut name := full
@@ -1039,7 +1039,7 @@ fn (mut p FlatParser) directive() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) skip_attrs() {
+fn (mut p Parser) skip_attrs() {
 	if p.tok == .attribute {
 		p.next()
 		for p.tok != .rsbr && p.tok != .eof {
@@ -1053,7 +1053,7 @@ fn (mut p FlatParser) skip_attrs() {
 	}
 }
 
-fn (mut p FlatParser) parse_comptime_if() flat.NodeId {
+fn (mut p Parser) parse_comptime_if() flat.NodeId {
 	p.next() // skip $
 	if p.tok != .key_if {
 		// $for or other comptime — skip
@@ -1086,7 +1086,7 @@ fn (mut p FlatParser) parse_comptime_if() flat.NodeId {
 	}
 }
 
-fn (mut p FlatParser) parse_comptime_cond() string {
+fn (mut p Parser) parse_comptime_cond() string {
 	mut cond := strings.new_builder(64)
 	for p.tok != .lcbr && p.tok != .eof {
 		tok_str := if p.lit.len > 0 { p.lit } else { p.tok.str() }
@@ -1099,7 +1099,7 @@ fn (mut p FlatParser) parse_comptime_cond() string {
 	return cond.str()
 }
 
-fn (mut p FlatParser) skip_comptime_else() {
+fn (mut p Parser) skip_comptime_else() {
 	if p.tok == .semicolon && p.peek() == .dollar {
 		p.next()
 	}
@@ -1130,7 +1130,7 @@ fn (mut p FlatParser) skip_comptime_else() {
 	}
 }
 
-fn (mut p FlatParser) parse_comptime_else() flat.NodeId {
+fn (mut p Parser) parse_comptime_else() flat.NodeId {
 	// Skip auto-semicolons before $else
 	if p.tok == .semicolon && p.peek() == .dollar {
 		p.next()
@@ -1180,7 +1180,7 @@ fn eval_comptime_cond(prefs &pref.Preferences, cond string) bool {
 	return pref.comptime_flag_value(prefs, flag)
 }
 
-fn (mut p FlatParser) skip_block() {
+fn (mut p Parser) skip_block() {
 	if p.tok != .lcbr {
 		return
 	}
@@ -1196,7 +1196,7 @@ fn (mut p FlatParser) skip_block() {
 	}
 }
 
-fn (mut p FlatParser) skip_brackets() {
+fn (mut p Parser) skip_brackets() {
 	if p.tok != .lsbr {
 		return
 	}
@@ -1214,7 +1214,7 @@ fn (mut p FlatParser) skip_brackets() {
 
 // ==================== statements ====================
 
-fn (mut p FlatParser) stmt() flat.NodeId {
+fn (mut p Parser) stmt() flat.NodeId {
 	match p.tok {
 		.key_return {
 			return p.return_stmt()
@@ -1307,7 +1307,7 @@ fn (mut p FlatParser) stmt() flat.NodeId {
 	}
 }
 
-fn (mut p FlatParser) return_stmt() flat.NodeId {
+fn (mut p Parser) return_stmt() flat.NodeId {
 	p.next() // skip 'return'
 	mut ids := []flat.NodeId{}
 	if p.tok != .semicolon && p.tok != .rcbr && p.tok != .eof {
@@ -1328,7 +1328,7 @@ fn (mut p FlatParser) return_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) if_stmt() flat.NodeId {
+fn (mut p Parser) if_stmt() flat.NodeId {
 	p.next() // skip 'if'
 	cond := p.expr(.lowest)
 
@@ -1388,7 +1388,7 @@ fn (mut p FlatParser) if_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) for_stmt() flat.NodeId {
+fn (mut p Parser) for_stmt() flat.NodeId {
 	p.next() // skip 'for'
 	if p.tok == .lcbr {
 		// infinite loop: for { ... }
@@ -1502,7 +1502,7 @@ fn (mut p FlatParser) for_stmt() flat.NodeId {
 	return flat.empty_node
 }
 
-fn (mut p FlatParser) for_c_style(lhs_expr flat.NodeId) flat.NodeId {
+fn (mut p Parser) for_c_style(lhs_expr flat.NodeId) flat.NodeId {
 	op := p.tok
 	p.next()
 	rhs := p.expr(.lowest)
@@ -1554,7 +1554,7 @@ fn (mut p FlatParser) for_c_style(lhs_expr flat.NodeId) flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) for_in(first_expr flat.NodeId) flat.NodeId {
+fn (mut p Parser) for_in(first_expr flat.NodeId) flat.NodeId {
 	// first_expr is either the key var or the only var
 	mut key_id := first_expr
 	mut val_id := flat.empty_node
@@ -1601,7 +1601,7 @@ fn (mut p FlatParser) for_in(first_expr flat.NodeId) flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) match_stmt() flat.NodeId {
+fn (mut p Parser) match_stmt() flat.NodeId {
 	p.next() // skip 'match'
 	match_expr := p.expr(.lowest)
 	p.check(.lcbr)
@@ -1626,7 +1626,7 @@ fn (mut p FlatParser) match_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) match_branch_cond() flat.NodeId {
+fn (mut p Parser) match_branch_cond() flat.NodeId {
 	if p.tok == .name && p.lit.len > 0 && p.lit[0] >= `A` && p.lit[0] <= `Z` && p.peek() == .lcbr {
 		name := p.lit
 		p.next()
@@ -1669,7 +1669,7 @@ fn (mut p FlatParser) match_branch_cond() flat.NodeId {
 	return p.expr(.lowest)
 }
 
-fn (mut p FlatParser) match_branch() flat.NodeId {
+fn (mut p Parser) match_branch() flat.NodeId {
 	mut branch_ids := []flat.NodeId{}
 	mut is_else := false
 	mut n_conds := 0
@@ -1705,7 +1705,7 @@ fn (mut p FlatParser) match_branch() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) block_stmt() flat.NodeId {
+fn (mut p Parser) block_stmt() flat.NodeId {
 	ids := p.parse_block_body()
 	start := p.add_children(ids)
 	return p.a.add_node(flat.Node{
@@ -1715,7 +1715,7 @@ fn (mut p FlatParser) block_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) parse_block_body() []flat.NodeId {
+fn (mut p Parser) parse_block_body() []flat.NodeId {
 	p.check(.lcbr)
 	mut ids := []flat.NodeId{}
 	for p.tok != .rcbr && p.tok != .eof {
@@ -1728,7 +1728,7 @@ fn (mut p FlatParser) parse_block_body() []flat.NodeId {
 	return ids
 }
 
-fn (mut p FlatParser) assign_or_expr_stmt() flat.NodeId {
+fn (mut p Parser) assign_or_expr_stmt() flat.NodeId {
 	lhs := p.expr(.lowest)
 
 	// multi-assign: a, b := expr1, expr2
@@ -1826,7 +1826,7 @@ fn (mut p FlatParser) assign_or_expr_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) assign_or_expr_inline() flat.NodeId {
+fn (mut p Parser) assign_or_expr_inline() flat.NodeId {
 	lhs := p.expr(.lowest)
 
 	if p.tok.is_assignment() {
@@ -1858,7 +1858,7 @@ fn (mut p FlatParser) assign_or_expr_inline() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) defer_stmt() flat.NodeId {
+fn (mut p Parser) defer_stmt() flat.NodeId {
 	p.next() // skip 'defer'
 	if p.tok == .lpar {
 		p.next()
@@ -1876,7 +1876,7 @@ fn (mut p FlatParser) defer_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) assert_stmt() flat.NodeId {
+fn (mut p Parser) assert_stmt() flat.NodeId {
 	p.next() // skip 'assert'
 	cond := p.expr(.lowest)
 	mut ids := []flat.NodeId{}
@@ -1897,7 +1897,7 @@ fn (mut p FlatParser) assert_stmt() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) goto_stmt() flat.NodeId {
+fn (mut p Parser) goto_stmt() flat.NodeId {
 	p.next() // skip 'goto'
 	label := p.expect_name()
 	if p.tok == .semicolon {
@@ -1906,7 +1906,7 @@ fn (mut p FlatParser) goto_stmt() flat.NodeId {
 	return p.a.add_val(.goto_stmt, label)
 }
 
-fn (mut p FlatParser) asm_stmt() flat.NodeId {
+fn (mut p Parser) asm_stmt() flat.NodeId {
 	p.next() // skip 'asm'
 	// consume optional volatile keyword
 	if p.tok == .name && p.lit == 'volatile' {
@@ -1924,7 +1924,7 @@ fn (mut p FlatParser) asm_stmt() flat.NodeId {
 
 // ==================== expressions (Pratt parser) ====================
 
-fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
+fn (mut p Parser) expr(min_bp token.BindingPower) flat.NodeId {
 	mut lhs := p.prefix_expr()
 
 	for {
@@ -2159,7 +2159,7 @@ fn (mut p FlatParser) expr(min_bp token.BindingPower) flat.NodeId {
 	return lhs
 }
 
-fn (mut p FlatParser) prefix_expr() flat.NodeId {
+fn (mut p Parser) prefix_expr() flat.NodeId {
 	match p.tok {
 		.number {
 			val := p.lit
@@ -2373,7 +2373,7 @@ fn (mut p FlatParser) prefix_expr() flat.NodeId {
 	}
 }
 
-fn (mut p FlatParser) selector_or_method(lhs flat.NodeId) flat.NodeId {
+fn (mut p Parser) selector_or_method(lhs flat.NodeId) flat.NodeId {
 	p.next() // skip '.'
 	field_name := p.expect_name_or_keyword()
 	sel_start := p.add_child(lhs)
@@ -2389,7 +2389,7 @@ fn (mut p FlatParser) selector_or_method(lhs flat.NodeId) flat.NodeId {
 	return sel
 }
 
-fn (mut p FlatParser) call_args(fn_expr flat.NodeId) flat.NodeId {
+fn (mut p Parser) call_args(fn_expr flat.NodeId) flat.NodeId {
 	p.check(.lpar)
 	mut ids := []flat.NodeId{}
 	ids << fn_expr
@@ -2472,7 +2472,7 @@ fn (mut p FlatParser) call_args(fn_expr flat.NodeId) flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) index_expr(lhs flat.NodeId) flat.NodeId {
+fn (mut p Parser) index_expr(lhs flat.NodeId) flat.NodeId {
 	p.check(.lsbr)
 	// range index: arr[..b]
 	if p.tok == .dotdot {
@@ -2529,7 +2529,7 @@ fn (mut p FlatParser) index_expr(lhs flat.NodeId) flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) struct_init(name string) flat.NodeId {
+fn (mut p Parser) struct_init(name string) flat.NodeId {
 	p.check(.lcbr)
 	mut ids := []flat.NodeId{}
 	// assoc syntax: Type{...base, field: val}
@@ -2612,7 +2612,7 @@ fn (mut p FlatParser) struct_init(name string) flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) string_literal() flat.NodeId {
+fn (mut p Parser) string_literal() flat.NodeId {
 	val := strip_quotes(p.lit)
 	p.next()
 	if p.tok != .str_dollar {
@@ -2622,7 +2622,7 @@ fn (mut p FlatParser) string_literal() flat.NodeId {
 	return p.string_interp(val)
 }
 
-fn (mut p FlatParser) string_interp(first_part string) flat.NodeId {
+fn (mut p Parser) string_interp(first_part string) flat.NodeId {
 	mut ids := []flat.NodeId{}
 	if first_part.len > 0 {
 		ids << p.a.add_val(.string_literal, first_part)
@@ -2656,7 +2656,7 @@ fn (mut p FlatParser) string_interp(first_part string) flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) array_literal() flat.NodeId {
+fn (mut p Parser) array_literal() flat.NodeId {
 	p.next() // skip '['
 	// empty array or fixed array type: []Type{} or [N]Type{}
 	if p.tok == .rsbr {
@@ -2777,7 +2777,7 @@ fn (mut p FlatParser) array_literal() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) fn_literal() flat.NodeId {
+fn (mut p Parser) fn_literal() flat.NodeId {
 	p.next() // skip 'fn'
 	// capture list: fn [a, b] (params) ret { }
 	mut capture_ids := []flat.NodeId{}
@@ -2839,7 +2839,7 @@ fn (mut p FlatParser) fn_literal() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) lock_expr() flat.NodeId {
+fn (mut p Parser) lock_expr() flat.NodeId {
 	is_rlock := p.tok == .key_rlock
 	p.next() // skip 'lock' or 'rlock'
 	mut obj_ids := []flat.NodeId{}
@@ -2863,7 +2863,7 @@ fn (mut p FlatParser) lock_expr() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) select_expr() flat.NodeId {
+fn (mut p Parser) select_expr() flat.NodeId {
 	p.next() // skip 'select'
 	p.check(.lcbr)
 	mut ids := []flat.NodeId{}
@@ -2883,7 +2883,7 @@ fn (mut p FlatParser) select_expr() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) select_branch() flat.NodeId {
+fn (mut p Parser) select_branch() flat.NodeId {
 	mut is_else := false
 	mut cond_ids := []flat.NodeId{}
 	if p.tok == .key_else {
@@ -2916,7 +2916,7 @@ fn (mut p FlatParser) select_branch() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) sizeof_expr() flat.NodeId {
+fn (mut p Parser) sizeof_expr() flat.NodeId {
 	p.next() // skip 'sizeof'
 	p.check(.lpar)
 	type_name := p.parse_type_name()
@@ -2924,7 +2924,7 @@ fn (mut p FlatParser) sizeof_expr() flat.NodeId {
 	return p.a.add_val(.sizeof_expr, type_name)
 }
 
-fn (mut p FlatParser) typeof_expr() flat.NodeId {
+fn (mut p Parser) typeof_expr() flat.NodeId {
 	p.next() // skip 'typeof'
 	p.check(.lpar)
 	inner := p.expr(.lowest)
@@ -2937,7 +2937,7 @@ fn (mut p FlatParser) typeof_expr() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) dump_expr() flat.NodeId {
+fn (mut p Parser) dump_expr() flat.NodeId {
 	p.next() // skip 'dump'
 	p.check(.lpar)
 	inner := p.expr(.lowest)
@@ -2950,7 +2950,7 @@ fn (mut p FlatParser) dump_expr() flat.NodeId {
 	})
 }
 
-fn (mut p FlatParser) offsetof_expr() flat.NodeId {
+fn (mut p Parser) offsetof_expr() flat.NodeId {
 	p.next() // skip '__offsetof'
 	p.check(.lpar)
 	type_name := p.parse_type_name()
@@ -2966,7 +2966,7 @@ fn (mut p FlatParser) offsetof_expr() flat.NodeId {
 
 // ==================== types ====================
 
-fn (mut p FlatParser) parse_type_name() string {
+fn (mut p Parser) parse_type_name() string {
 	// option ?T
 	if p.tok == .question {
 		p.next()
