@@ -5,6 +5,7 @@ import v3.ssa
 pub fn optimize(mut m ssa.Module) {
 	rebuild_use_lists(mut m)
 	build_cfg(mut m)
+	verify_ssa(m, 'initial normalization')
 
 	constant_fold(mut m)
 	rebuild_use_lists(mut m)
@@ -22,6 +23,7 @@ pub fn optimize(mut m ssa.Module) {
 	merge_blocks(mut m)
 	rebuild_use_lists(mut m)
 	build_cfg(mut m)
+	verify_ssa(m, 'optimization')
 }
 
 fn rebuild_use_lists(mut m ssa.Module) {
