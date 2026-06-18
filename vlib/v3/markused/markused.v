@@ -18,6 +18,11 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	// Reverse index: short name (after last '.') -> list of full qualified names
 	mut suffix_map := map[string][]string{}
 
+	mut fn_count := 0
+	mut fn_with_dot := 0
+	mut contains2_total := 0
+	mut empty_fns := 0
+	mut total_callees := 0
 	for node in a.nodes {
 		if node.kind == .module_decl {
 			cur_module = node.value
@@ -29,6 +34,13 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			continue
 		}
 		if node.kind == .fn_decl {
+			fn_count++
+			if node.value.contains('.') {
+				fn_with_dot++
+				if fn_with_dot <= 5 {
+					eprintln('  fn with dot: "${node.value}"')
+				}
+			}
 			all_fns[node.value] = true
 			qname := qualify_fn(cur_module, node.value)
 			if qname != node.value {
@@ -36,6 +48,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			}
 			// Build suffix_map entries
 			if node.value.contains('.') {
+				contains2_total++
 				short := node.value.all_after_last('.')
 				suffix_map[short] << node.value
 				if qname != node.value {
@@ -63,7 +76,11 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			mut callees := []string{}
 			collect_calls(a, tc, &node, cur_module, imports, receiver_name, receiver_struct, mut
 				callees)
+			total_callees += callees.len
 			call_graph[node.value] = callees
+			if callees.len == 0 && node.children_count > 0 && fn_count <= 2200 {
+				empty_fns++
+			}
 			if qname != node.value {
 				call_graph[qname] = callees
 			}
@@ -76,37 +93,99 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	queue << 'main'
 	used['main'] = true
 
+	eprintln('markused: fn_count:')
+	eprintln(fn_count.str())
+	eprintln('fn_with_dot:')
+	eprintln(fn_with_dot.str())
+	eprintln('contains2_total:')
+	eprintln(contains2_total.str())
+	eprintln('markused: main in call_graph: ${'main' in call_graph}')
+	if 'main' in call_graph {
+		main_calls := call_graph['main']
+		eprintln('markused: main has ${main_calls.len} callees')
+		for mc in main_calls {
+			eprintln('  callee: ${mc}')
+		}
+	}
+	eprintln('markused: all_fns count: ${all_fns.len}')
+	eprintln('markused: suffix_map count: ${suffix_map.len}')
+	mut total_suffix_entries := 0
+	for _, vals in suffix_map {
+		total_suffix_entries += vals.len
+	}
+	eprintln('total suffix_map entries (sum of array lens):')
+	eprintln(total_suffix_entries.str())
+
+	mut suffix_hits := 0
+	mut suffix_misses := 0
+	mut in_cg := 0
+	mut not_in_cg := 0
 	mut qi := 0
 	for qi < queue.len {
 		name := queue[qi]
 		qi++
+		prev_len := queue.len
+		if qi <= 10 {
+			eprintln('BFS qi=${qi.str()} name="${name}" in_cg=${name in call_graph}')
+		}
 		if name in call_graph {
+			in_cg++
 			calls := call_graph[name]
 			for callee in calls {
 				if callee in all_fns {
 					if callee !in used {
 						used[callee] = true
 						queue << callee
+						if qi == 1 {
+							eprintln('main: all_fns hit: "${callee}"')
+						}
 					}
 				} else if callee in resolved_fns {
 					if callee !in used {
 						used[callee] = true
 						queue << callee
+						if qi == 1 {
+							eprintln('main: resolved hit: "${callee}"')
+						}
 					}
 				}
 				if callee.len > 0 {
 					if callee in suffix_map {
-						for fn_name in suffix_map[callee] {
+						suffix_hits++
+						entries := suffix_map[callee]
+						for fn_name in entries {
 							if fn_name !in used {
 								used[fn_name] = true
 								queue << fn_name
+								if qi == 1 {
+									eprintln('main: suffix hit: "${callee}" -> "${fn_name}"')
+								}
 							}
 						}
 					}
 				}
 			}
+		} else {
+			not_in_cg++
+		}
+		new_added := queue.len - prev_len
+		if qi <= 10 {
+			eprintln('  -> added ${new_added.str()} new entries, queue now ${queue.len.str()}')
 		}
 	}
+	eprintln('empty_fns:')
+	eprintln(empty_fns.str())
+	eprintln('total_callees:')
+	eprintln(total_callees.str())
+	eprintln('markused: in_cg:')
+	eprintln(in_cg.str())
+	eprintln('not_in_cg:')
+	eprintln(not_in_cg.str())
+	eprintln('queue.len:')
+	eprintln(queue.len.str())
+	eprintln('markused: suffix_hits:')
+	eprintln(suffix_hits.str())
+	eprintln('markused: total used: ${used.len}')
 	return used
 }
 

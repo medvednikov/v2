@@ -168,6 +168,8 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 		has_smartcast = true
 	}
 	new_cond_id := t.transform_expr(cond_id)
+	cond_pending := t.pending_stmts.clone()
+	t.pending_stmts.clear()
 
 	// Transform then-block children under the smartcast context.
 	then_node := t.a.nodes[int(then_id)]
@@ -226,21 +228,25 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 		t.a.children << new_else_id
 		child_count = 3
 	}
-	return t.a.add_node(flat.Node{
+	new_if := t.a.add_node(flat.Node{
 		kind:           .if_expr
 		children_start: if_start
 		children_count: child_count
 		typ:            node.typ
 		pos:            node.pos
 	})
+	for pending in cond_pending {
+		t.pending_stmts << pending
+	}
+	return new_if
 }
 
 // --- helpers ---
 
 struct IsExprInfo {
-	expr_name      string
-	variant_name   string
-	sum_type_name  string
+	expr_name     string
+	variant_name  string
+	sum_type_name string
 }
 
 // extract_is_expr searches a condition tree for an is_expr and returns

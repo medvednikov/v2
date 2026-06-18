@@ -37,6 +37,7 @@ fn holder_detail(h Holder) int {
 			return h.pet.tricks
 		}
 	}
+
 	return 0
 }
 
@@ -101,11 +102,17 @@ struct Foo97 {
 }
 
 fn Foo97.new(x int, y int) Foo97 {
-	return Foo97{x: x, y: y}
+	return Foo97{
+		x: x
+		y: y
+	}
 }
 
 fn Foo97.with_name(name string, val int) Foo97 {
-	return Foo97{name: name, val: val}
+	return Foo97{
+		name: name
+		val:  val
+	}
 }
 
 fn multiply(a int, b int) int {
@@ -168,6 +175,11 @@ fn print_int(n int) {
 
 fn print_str(s string) {
 	C.puts(s.str)
+}
+
+fn next_in_value() int {
+	g_count = g_count + 1
+	return g_count
 }
 
 fn sum_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
@@ -4061,19 +4073,29 @@ fn main() {
 	print_str('function pointers: ok')
 
 	// 101. Sum type smartcasting (ident and selector)
-	cat101 := Cat{ name: 'Whiskers', age: 5 }
-	dog101 := Dog{ name: 'Rex', tricks: 3 }
+	cat101 := Cat{
+		name: 'Whiskers'
+		age:  5
+	}
+	dog101 := Dog{
+		name:   'Rex'
+		tricks: 3
+	}
 	a101 := Animal(cat101)
 	if a101 is Cat {
 		assert a101.name == 'Whiskers'
 		assert a101.age == 5
 	}
 
-	h101 := Holder{ pet: Animal(cat101) }
+	h101 := Holder{
+		pet: Animal(cat101)
+	}
 	assert describe_holder(h101) == 'Whiskers'
 	assert holder_detail(h101) == 5
 
-	h102 := Holder{ pet: Animal(dog101) }
+	h102 := Holder{
+		pet: Animal(dog101)
+	}
 	assert describe_holder(h102) == 'Rex'
 	assert holder_detail(h102) == 3
 
@@ -4095,5 +4117,27 @@ fn main() {
 
 	print_str('sum type smartcast: ok')
 
-	print_str('=== ALL 101 TESTS PASSED ===')
+	print_str('--- 102. In Operator LHS Evaluation ---')
+	g_count = 0
+	if next_in_value() in 0..10 {
+		print_str('range side effect: yes')
+	}
+	print_int(g_count) // 1
+
+	g_count = 0
+	if next_in_value() in [2, 3, 4] {
+		print_str('inline side effect: unexpected')
+	} else {
+		print_str('inline side effect: no')
+	}
+	print_int(g_count) // 1
+
+	g_count = 0
+	if next_in_value() !in [2, 3, 4] {
+		print_str('not in side effect: yes')
+	}
+	print_int(g_count) // 1
+	print_str('in operator lhs eval: ok')
+
+	print_str('=== ALL 102 TESTS PASSED ===')
 }

@@ -65,7 +65,7 @@ pub:
 
 pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 	mut t := Transformer{
-		a:  &a
+		a:  a
 		tc: unsafe { tc }
 	}
 	t.collect_types()
@@ -248,8 +248,8 @@ fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
 pub fn (mut t Transformer) transform_stmts(ids []flat.NodeId) []flat.NodeId {
 	mut result := []flat.NodeId{}
 	for id in ids {
-		t.drain_pending(mut result)
 		expanded := t.transform_stmt(id)
+		t.drain_pending(mut result)
 		for eid in expanded {
 			result << eid
 		}
@@ -631,6 +631,47 @@ fn (mut t Transformer) transform_string_interp(_id flat.NodeId, node flat.Node) 
 	if node.children_count == 0 {
 		return t.make_string_literal('')
 	}
+	mut part_types := []string{cap: node.children_count}
+	for i in 0 .. node.children_count {
+		child_id := t.a.child(&node, i)
+		typ := t.reliable_stringify_type(child_id)
+		if typ.len == 0 {
+			return t.transform_string_interp_backend(node)
+		}
+		part_types << typ
+	}
+	tmp_name := t.new_temp('str_intp')
+	mut min_cap := 0
+	mut parts := []flat.NodeId{cap: node.children_count}
+	for i in 0 .. node.children_count {
+		child_id := t.a.child(&node, i)
+		child := t.a.nodes[int(child_id)]
+		if child.kind == .string_literal {
+			min_cap += child.value.len
+		} else {
+			min_cap += 16
+		}
+		parts << t.wrap_string_conversion(t.transform_expr(child_id), part_types[i])
+	}
+	if min_cap < 16 {
+		min_cap = 16
+	}
+	decl := t.make_decl_assign(tmp_name, t.make_call_typed('strings.new_builder',
+		arr1(t.make_int_literal(min_cap)), 'strings.Builder'))
+	t.a.nodes[int(decl)].typ = 'strings.Builder'
+	t.var_types[tmp_name] = 'strings.Builder'
+	t.pending_stmts << decl
+	for part in parts {
+		call := t.make_method_call(t.make_ident(tmp_name), 'write_string', arr1(part))
+		t.a.nodes[int(call)].typ = 'void'
+		t.pending_stmts << t.make_expr_stmt(call)
+	}
+	result := t.make_method_call(t.make_ident(tmp_name), 'str', []flat.NodeId{})
+	t.a.nodes[int(result)].typ = 'string'
+	return result
+}
+
+fn (mut t Transformer) transform_string_interp_backend(node flat.Node) flat.NodeId {
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		new_children << t.stringify_expr(t.a.child(&node, i))
@@ -750,7 +791,14 @@ fn (mut t Transformer) transform_prefix_expr(id flat.NodeId, node flat.Node) fla
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
-		new_children << t.transform_expr(child_id)
+		mut new_child := t.transform_expr(child_id)
+		if node.op == .not {
+			child := t.a.nodes[int(new_child)]
+			if child.kind == .infix {
+				new_child = t.make_paren(new_child)
+			}
+		}
+		new_children << new_child
 	}
 	start := t.a.children.len
 	for nc in new_children {
@@ -862,6 +910,16 @@ pub fn (mut t Transformer) make_decl_assign(name string, rhs flat.NodeId) flat.N
 	})
 }
 
+pub fn (mut t Transformer) make_expr_stmt(expr flat.NodeId) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << expr
+	return t.a.add_node(flat.Node{
+		kind:           .expr_stmt
+		children_start: start
+		children_count: 1
+	})
+}
+
 pub fn (mut t Transformer) make_assign(lhs flat.NodeId, rhs flat.NodeId) flat.NodeId {
 	return t.make_assign_op(lhs, rhs, .assign)
 }
@@ -908,6 +966,16 @@ pub fn (mut t Transformer) make_prefix(op flat.Op, expr flat.NodeId) flat.NodeId
 	return t.a.add_node(flat.Node{
 		kind:           .prefix
 		op:             op
+		children_start: start
+		children_count: 1
+	})
+}
+
+pub fn (mut t Transformer) make_paren(expr flat.NodeId) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << expr
+	return t.a.add_node(flat.Node{
+		kind:           .paren
 		children_start: start
 		children_count: 1
 	})

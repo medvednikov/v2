@@ -156,7 +156,9 @@ pub fn (mut s Scanner) scan() token.Token {
 		s.lit = s.src[s.pos..s.offset]
 		if s.lit == 'c' && s.offset < s.src.len && s.src[s.offset] == `'` {
 			s.pos = s.offset
-			return s.scan_char_literal(`'`)
+			tok := s.scan_char_literal(`'`)
+			s.lit = 'c:${s.lit}'
+			return tok
 		}
 		tok := token.Token.from_string_tinyv(s.lit)
 		if tok in [.key_break, .key_continue, .key_none, .key_return, .key_false, .key_true, .name] {

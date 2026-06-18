@@ -179,6 +179,10 @@ fn (mut g FlatGen) gen_if_expr_block(block &flat.Node) {
 				g.write('_ifexpr = ')
 				g.gen_expr(g.a.child(child, 0))
 				g.writeln(';')
+			} else if child.kind == .if_expr {
+				g.write('_ifexpr = ')
+				g.gen_if_expr(*child)
+				g.writeln(';')
 			} else {
 				g.gen_node(g.a.child(block, i))
 			}

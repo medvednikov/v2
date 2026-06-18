@@ -382,7 +382,8 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 
 	// return type
 	mut ret_type := 'void'
-	if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr || p.tok == .lpar || p.tok == .key_fn || p.tok == .ellipsis {
+	if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr
+		|| p.tok == .lpar || p.tok == .key_fn || p.tok == .ellipsis {
 		ret_type = p.parse_type_name()
 	}
 
@@ -1474,9 +1475,9 @@ fn (mut p Parser) for_stmt() flat.NodeId {
 				children_count: 1
 			})
 			mut ids := []flat.NodeId{}
-		ids << init_id
-		ids << cond
-		ids << post
+			ids << init_id
+			ids << cond
+			ids << post
 			for id in body_ids {
 				ids << id
 			}
@@ -1550,9 +1551,9 @@ fn (mut p Parser) for_c_style(lhs_expr flat.NodeId) flat.NodeId {
 	body_ids := p.parse_block_body()
 
 	mut ids := []flat.NodeId{}
-		ids << init_id
-		ids << cond
-		ids << post
+	ids << init_id
+	ids << cond
+	ids << post
 	for id in body_ids {
 		ids << id
 	}
@@ -1651,7 +1652,8 @@ fn (mut p Parser) match_branch_cond() flat.NodeId {
 		mod_name := p.lit
 		p.next()
 		p.next()
-		if p.tok == .name && p.lit.len > 0 && p.lit[0] >= `A` && p.lit[0] <= `Z` && p.peek() == .lcbr {
+		if p.tok == .name && p.lit.len > 0 && p.lit[0] >= `A` && p.lit[0] <= `Z`
+			&& p.peek() == .lcbr {
 			type_name := p.lit
 			p.next()
 			mod_id := p.a.add_val(.ident, mod_name)
@@ -1946,9 +1948,11 @@ fn (mut p Parser) expr(min_bp token.BindingPower) flat.NodeId {
 		// module-qualified struct init: module.Type{} or module.Type{field: val, ...}
 		if p.tok == .lcbr {
 			lhs_node := p.a.nodes[int(lhs)]
-			if lhs_node.kind == .selector && lhs_node.value.len > 0 && (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
+			if lhs_node.kind == .selector && lhs_node.value.len > 0
+				&& (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
 				base := p.a.child_node(&lhs_node, 0)
-				if base.kind == .ident && (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
+				if base.kind == .ident
+					&& (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
 					full_name := '${base.value}.${lhs_node.value}'
 					lhs = p.struct_init(full_name)
 					continue
@@ -2103,7 +2107,17 @@ fn (mut p Parser) expr(min_bp token.BindingPower) flat.NodeId {
 				break
 			}
 			p.next()
-			rhs := p.expr(token.BindingPower.bit_or)
+			mut rhs := p.expr(token.BindingPower.bit_or)
+			if p.tok == .dotdot {
+				p.next()
+				range_rhs := p.expr(.lowest)
+				rstart := p.add_children2(rhs, range_rhs)
+				rhs = p.a.add_node(flat.Node{
+					kind:           .range
+					children_start: rstart
+					children_count: 2
+				})
+			}
 			istart := p.add_children2(lhs, rhs)
 			in_node := p.a.add_node(flat.Node{
 				kind:           .in_expr
@@ -2130,7 +2144,17 @@ fn (mut p Parser) expr(min_bp token.BindingPower) flat.NodeId {
 			}
 			p.next() // skip !
 			p.next() // skip in
-			rhs := p.expr(token.BindingPower.bit_or)
+			mut rhs := p.expr(token.BindingPower.bit_or)
+			if p.tok == .dotdot {
+				p.next()
+				range_rhs := p.expr(.lowest)
+				rstart := p.add_children2(rhs, range_rhs)
+				rhs = p.a.add_node(flat.Node{
+					kind:           .range
+					children_start: rstart
+					children_count: 2
+				})
+			}
 			istart := p.add_children2(lhs, rhs)
 			in_node := p.a.add_node(flat.Node{
 				kind:           .in_expr
@@ -2263,7 +2287,8 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 				return p.struct_init(name)
 			}
 			// type cast: TypeName(expr) or builtin_type(expr)
-			if p.tok == .lpar && name.len > 0 && ((name[0] >= `A` && name[0] <= `Z`) || is_builtin_type(name)) {
+			if p.tok == .lpar && name.len > 0 && ((name[0] >= `A` && name[0] <= `Z`)
+				|| is_builtin_type(name)) {
 				p.next() // skip (
 				inner := p.expr(.lowest)
 				p.check(.rpar)
@@ -2498,8 +2523,8 @@ fn (mut p Parser) index_expr(lhs flat.NodeId) flat.NodeId {
 		p.check(.rsbr)
 		start_id := p.a.add(flat.NodeKind.empty)
 		mut ids := []flat.NodeId{}
-	ids << lhs
-	ids << start_id
+		ids << lhs
+		ids << start_id
 		if int(end_id) >= 0 {
 			ids << end_id
 		}
@@ -2828,7 +2853,8 @@ fn (mut p Parser) fn_literal() flat.NodeId {
 	// return type
 	mut ret_type := 'void'
 	if p.tok != .lcbr && p.tok != .semicolon && p.tok != .eof {
-		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr || p.tok == .lpar || p.tok == .key_fn {
+		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr
+			|| p.tok == .lpar || p.tok == .key_fn {
 			ret_type = p.parse_type_name()
 		}
 	}
@@ -3065,7 +3091,8 @@ fn (mut p Parser) parse_type_name() string {
 		}
 		p.check(.rpar)
 		mut ret := ''
-		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr || p.tok == .lpar || p.tok == .key_fn {
+		if p.tok == .name || p.tok == .amp || p.tok == .question || p.tok == .not || p.tok == .lsbr
+			|| p.tok == .lpar || p.tok == .key_fn {
 			ret = p.parse_type_name()
 		}
 		if ret.len > 0 {
@@ -3138,7 +3165,8 @@ fn (mut p Parser) parse_type_name() string {
 		if p.tok == .lsbr {
 			// peek ahead to distinguish generic from index
 			pk := p.peek()
-			if pk == .name || pk == .amp || pk == .lsbr || pk == .question || pk == .rsbr || pk == .key_fn {
+			if pk == .name || pk == .amp || pk == .lsbr || pk == .question || pk == .rsbr
+				|| pk == .key_fn {
 				p.next() // skip [
 				mut params := []string{}
 				params << p.parse_type_name()
@@ -3162,7 +3190,8 @@ fn strip_quotes(s string) string {
 	if is_raw {
 		raw = s[1..]
 	}
-	if raw.len >= 2 && ((raw[0] == `'` && raw[raw.len - 1] == `'`) || (raw[0] == `"` && raw[raw.len - 1] == `"`)) {
+	if raw.len >= 2 && ((raw[0] == `'` && raw[raw.len - 1] == `'`)
+		|| (raw[0] == `"` && raw[raw.len - 1] == `"`)) {
 		raw = raw[1..raw.len - 1]
 	} else if raw.len >= 1 && (raw[0] == `'` || raw[0] == `"`) {
 		raw = raw[1..]
@@ -3204,6 +3233,7 @@ fn unescape_string(s string) string {
 				`v` { u8(11) }
 				else { u8(0xff) }
 			}
+
 			if c != 0xff {
 				unsafe {
 					buf[j] = c

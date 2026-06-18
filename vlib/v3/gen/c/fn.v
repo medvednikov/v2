@@ -620,6 +620,12 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 			} else {
 				[]types.Type{}
 			}
+			if fn_name == 'resolve_imports' {
+				eprintln('DBG resolve_imports: actual_fn=')
+				eprintln(actual_fn)
+				eprintln(' param_types.len=')
+				eprintln(param_types.len.str())
+			}
 			mut arg_start := 1
 			if is_method {
 				base_type := g.tc.resolve_type(base_id)
@@ -644,6 +650,17 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer
 					&& !(arg_node.kind == .prefix && arg_node.op == .amp) {
 					arg_type := g.tc.resolve_type(arg_id)
+					if fn_name == 'resolve_imports' {
+						eprintln('  DBG arg ')
+						eprintln(arg_idx.str())
+						eprintln(' node_kind=')
+						eprintln(int(arg_node.kind).str())
+						eprintln(' arg_type=')
+						eprintln(arg_type.name())
+						is_arg_ptr := arg_type is types.Pointer
+						eprintln(' is_ptr=')
+						eprintln(is_arg_ptr.str())
+					}
 					if arg_type !is types.Pointer {
 						needs_addr = true
 					}

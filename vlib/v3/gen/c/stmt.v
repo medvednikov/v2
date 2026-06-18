@@ -23,7 +23,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 				amp := if lhs_is_ptr { '' } else { '&' }
 				if child.value == 'push_many' {
 					g.write('array_push_many(${amp}')
-					g.gen_expr(lhs_id)
+					g.gen_expr_lvalue(lhs_id)
 					g.write(', ')
 					g.gen_expr(g.a.child(&child, 1))
 					g.writeln(');')
@@ -33,7 +33,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					push_rhs_clean := types.unwrap_pointer(push_rhs_type)
 					if push_rhs_clean is types.Array {
 						g.write('array_push_many(${amp}')
-						g.gen_expr(lhs_id)
+						g.gen_expr_lvalue(lhs_id)
 						g.write(', ')
 						g.gen_expr(push_rhs_id)
 						g.writeln(');')
@@ -48,7 +48,7 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 							c_elem = g.tc.c_type(lhs_arr_type.elem_type)
 						}
 						g.write('array_push(${amp}')
-						g.gen_expr(lhs_id)
+						g.gen_expr_lvalue(lhs_id)
 						g.write(', &(${c_elem}[]){')
 						g.gen_expr(push_rhs_id)
 						g.writeln('});')
@@ -62,14 +62,14 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						rhs_clean := types.unwrap_pointer(rhs_type)
 						if rhs_clean is types.Array {
 							g.write('array_push_many(${amp}')
-							g.gen_expr(lhs_id)
+							g.gen_expr_lvalue(lhs_id)
 							g.write(', ')
 							g.gen_expr(rhs_id)
 							g.writeln(');')
 						} else {
 							c_elem := g.tc.c_type(clean.elem_type)
 							g.write('array_push(${amp}')
-							g.gen_expr(lhs_id)
+							g.gen_expr_lvalue(lhs_id)
 							g.write(', &(${c_elem}[]){')
 							g.gen_expr(rhs_id)
 							g.writeln('});')
@@ -748,4 +748,29 @@ fn (mut g FlatGen) gen_or_expr_stmt(node flat.Node) {
 	g.indent--
 	g.tc.pop_scope()
 	g.writeln('}')
+}
+
+fn (mut g FlatGen) gen_expr_lvalue(id flat.NodeId) {
+	node := g.a.nodes[int(id)]
+	if node.kind == .index {
+		base_id := g.a.child(&node, 0)
+		base_type := g.tc.resolve_type(base_id)
+		if base_type is types.Map {
+			c_key := g.tc.c_type(base_type.key_type)
+			c_val := g.tc.c_type(base_type.value_type)
+			zero := if base_type.value_type is types.Array {
+				c_elem := g.tc.c_type(base_type.value_type.elem_type)
+				'&(${c_val}[]){{0, 0, 0, sizeof(${c_elem})}}'
+			} else {
+				'&(${c_val}[]){0}'
+			}
+			g.write('(*(${c_val}*)map__get_or_set(&')
+			g.gen_expr(base_id)
+			g.write(', &(${c_key}[]){')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write('}, ${zero}))')
+			return
+		}
+	}
+	g.gen_expr(id)
 }

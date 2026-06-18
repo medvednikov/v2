@@ -182,7 +182,7 @@ fn main() {
 			if result.exit_code != 0 && result.output.len > 0 {
 				eprintln('  tcc error: ${result.output.trim_space()}')
 			}
-			cc_cmd = 'cc -std=gnu11 ${opt_flag}${warn_flags} -Wno-int-conversion -o ${bin_file} ${output_file} -lm'
+			cc_cmd = 'cc -std=gnu11 ${opt_flag}${warn_flags} -Wno-int-conversion -Wl,-stack_size,0x4000000 -o ${bin_file} ${output_file} -lm'
 			println('  > ${cc_cmd}')
 			result = os.execute(cc_cmd)
 			if result.exit_code != 0 {

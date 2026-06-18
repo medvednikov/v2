@@ -102,10 +102,121 @@ fn (mut t Transformer) stringify_expr(expr_id flat.NodeId) flat.NodeId {
 	return t.wrap_string_conversion(expr, typ)
 }
 
+fn (t &Transformer) reliable_stringify_type(id flat.NodeId) string {
+	mut typ := t.node_type(id)
+	if typ.len > 0 {
+		return typ
+	}
+	if int(id) >= 0 {
+		node := t.a.nodes[int(id)]
+		if node.typ.len > 0 {
+			return node.typ
+		}
+		match node.kind {
+			.int_literal {
+				return 'int'
+			}
+			.float_literal {
+				return 'f64'
+			}
+			.bool_literal {
+				return 'bool'
+			}
+			.char_literal {
+				return 'rune'
+			}
+			.string_literal, .string_interp {
+				return 'string'
+			}
+			.infix {
+				return t.reliable_infix_stringify_type(node)
+			}
+			.prefix {
+				if node.op == .not {
+					return 'bool'
+				}
+				if node.children_count > 0 {
+					return t.reliable_stringify_type(t.a.child(&node, 0))
+				}
+			}
+			.paren, .cast_expr {
+				if node.children_count > 0 {
+					return t.reliable_stringify_type(t.a.child(&node, 0))
+				}
+			}
+			else {}
+		}
+	}
+	return ''
+}
+
+fn (t &Transformer) reliable_infix_stringify_type(node flat.Node) string {
+	if node.children_count < 2 {
+		return ''
+	}
+	lhs_type := t.reliable_stringify_type(t.a.child(&node, 0))
+	rhs_type := t.reliable_stringify_type(t.a.child(&node, 1))
+	if lhs_type == 'string' || rhs_type == 'string' {
+		return 'string'
+	}
+	match node.op {
+		.eq, .ne, .lt, .gt, .le, .ge, .logical_and, .logical_or {
+			return 'bool'
+		}
+		.plus, .minus, .mul, .div, .mod, .left_shift, .right_shift, .amp, .pipe, .xor {
+			if lhs_type.len > 0 && rhs_type.len > 0 && t.is_numeric_stringify_type(lhs_type)
+				&& t.is_numeric_stringify_type(rhs_type) {
+				return lhs_type
+			}
+		}
+		else {}
+	}
+
+	return ''
+}
+
+fn (t &Transformer) is_numeric_stringify_type(typ string) bool {
+	is_number := typ in ['int', 'i8', 'i16', 'i32', 'i64', 'isize', 'usize', 'u8', 'byte', 'u16',
+		'u32', 'u64', 'f32', 'f64', 'rune']
+	return is_number || typ in t.enum_types
+}
+
 fn (mut t Transformer) wrap_string_conversion(expr flat.NodeId, typ string) flat.NodeId {
 	mut clean_typ := typ
 	if clean_typ.starts_with('&') {
 		clean_typ = clean_typ[1..]
+	}
+	if !isnil(t.tc) {
+		if alias := t.tc.type_aliases[clean_typ] {
+			return t.wrap_string_conversion(expr, alias)
+		}
+		mut qtyp := clean_typ
+		if !qtyp.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+			&& t.cur_module != 'builtin' {
+			qtyp = '${t.cur_module}.${clean_typ}'
+		}
+		if alias := t.tc.type_aliases[qtyp] {
+			return t.wrap_string_conversion(expr, alias)
+		}
+		if !clean_typ.contains('.') {
+			for aname, target in t.tc.type_aliases {
+				if aname.all_after_last('.') == clean_typ {
+					return t.wrap_string_conversion(expr, target)
+				}
+			}
+		}
+		parsed := t.tc.parse_type(clean_typ)
+		if parsed is types.Enum {
+			return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)),
+				'string')
+		}
+		if qtyp != clean_typ {
+			qparsed := t.tc.parse_type(qtyp)
+			if qparsed is types.Enum {
+				return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)),
+					'string')
+			}
+		}
 	}
 	if clean_typ == 'string' {
 		return expr
@@ -127,10 +238,12 @@ fn (mut t Transformer) wrap_string_conversion(expr flat.NodeId, typ string) flat
 			return t.make_call_typed('bool_str', arr1(expr), 'string')
 		}
 		'u8', 'byte', 'u16', 'u32', 'u64' {
-			return t.make_call_typed('strconv__format_uint', arr2(expr, t.make_int_literal(10)), 'string')
+			return t.make_call_typed('strconv__format_uint', arr2(expr, t.make_int_literal(10)),
+				'string')
 		}
 		'int', 'i8', 'i16', 'i32', 'i64', 'isize', 'usize' {
-			return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)), 'string')
+			return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)),
+				'string')
 		}
 		'f32' {
 			return t.make_call_typed('strconv__f32_to_str_l', arr1(expr), 'string')
@@ -139,10 +252,23 @@ fn (mut t Transformer) wrap_string_conversion(expr flat.NodeId, typ string) flat
 			return t.make_call_typed('strconv__f64_to_str_l', arr1(expr), 'string')
 		}
 		else {
+			if clean_typ in t.enum_types {
+				return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)),
+					'string')
+			}
+			mut qenum := clean_typ
+			if !clean_typ.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+				&& t.cur_module != 'builtin' {
+				qenum = '${t.cur_module}.${clean_typ}'
+			}
+			if qenum in t.enum_types {
+				return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)),
+					'string')
+			}
 			if clean_typ in t.structs || clean_typ in t.sum_types {
 				mut qualified := clean_typ
-				if !clean_typ.contains('.') && t.cur_module.len > 0
-					&& t.cur_module != 'main' && t.cur_module != 'builtin' {
+				if !clean_typ.contains('.') && t.cur_module.len > 0 && t.cur_module != 'main'
+					&& t.cur_module != 'builtin' {
 					q := '${t.cur_module}.${clean_typ}'
 					if q in t.structs || q in t.sum_types {
 						qualified = q
@@ -152,7 +278,8 @@ fn (mut t Transformer) wrap_string_conversion(expr flat.NodeId, typ string) flat
 			} else if clean_typ.len > 0 && clean_typ.starts_with('[]') {
 				return t.make_call_typed('Array_str', arr1(expr), 'string')
 			} else if clean_typ == 'rune' {
-				return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)), 'string')
+				return t.make_call_typed('strconv__format_int', arr2(expr, t.make_int_literal(10)),
+					'string')
 			} else {
 				return expr
 			}

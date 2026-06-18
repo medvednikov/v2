@@ -123,21 +123,17 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 
 	is_not_in := node.value == '!in'
 
-	new_lhs := t.transform_expr(lhs_id)
-
 	result := if rhs.kind == .range {
 		// x in low..high  ->  x >= low && x < high
 		if rhs.children_count >= 2 {
+			new_lhs := t.stable_expr_for_reuse(lhs_id)
 			low_id := t.a.child(&rhs, 0)
 			high_id := t.a.child(&rhs, 1)
 			new_low := t.transform_expr(low_id)
 			new_high := t.transform_expr(high_id)
 
-			// Need a second copy of lhs for the right side of &&
-			lhs_copy := t.transform_expr(lhs_id)
-
 			ge_cmp := t.make_infix(.ge, new_lhs, new_low)
-			lt_cmp := t.make_infix(.lt, lhs_copy, new_high)
+			lt_cmp := t.make_infix(.lt, new_lhs, new_high)
 			t.make_infix(.logical_and, ge_cmp, lt_cmp)
 		} else {
 			id
@@ -147,16 +143,16 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 		if rhs.children_count == 0 {
 			t.make_bool_literal(false)
 		} else {
+			new_lhs := t.stable_expr_for_reuse(lhs_id)
 			is_str := t.is_string_type(lhs_id)
 			mut or_chain := flat.empty_node
 			for i in 0 .. rhs.children_count {
 				elem_id := t.a.child(&rhs, i)
 				new_elem := t.transform_expr(elem_id)
-				lhs_copy := t.transform_expr(lhs_id)
 				eq_cmp := if is_str {
-					t.make_call('string__eq', arr2(lhs_copy, new_elem))
+					t.make_call('string__eq', arr2(new_lhs, new_elem))
 				} else {
-					t.make_infix(.eq, lhs_copy, new_elem)
+					t.make_infix(.eq, new_lhs, new_elem)
 				}
 				if int(or_chain) < 0 {
 					or_chain = eq_cmp
@@ -167,6 +163,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			or_chain
 		}
 	} else {
+		new_lhs := t.transform_expr(lhs_id)
 		new_rhs := t.transform_expr(rhs_id)
 		rhs_type := t.node_type(rhs_id)
 		if rhs_type.starts_with('[]') {
@@ -206,7 +203,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 
 	if is_not_in && result != id {
 		start := t.a.children.len
-		t.a.children << result
+		t.a.children << t.make_paren(result)
 		return t.a.add_node(flat.Node{
 			kind:           .prefix
 			op:             .not
@@ -215,6 +212,45 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 		})
 	}
 	return result
+}
+
+fn (mut t Transformer) stable_expr_for_reuse(id flat.NodeId) flat.NodeId {
+	expr := t.transform_expr(id)
+	if t.is_stable_expr_for_reuse(expr) {
+		return expr
+	}
+	tmp_name := t.new_temp('in_lhs')
+	tmp_typ := t.node_type(id)
+	decl := t.make_decl_assign(tmp_name, expr)
+	if tmp_typ.len > 0 {
+		t.a.nodes[int(decl)].typ = tmp_typ
+		t.var_types[tmp_name] = tmp_typ
+	}
+	t.pending_stmts << decl
+	return t.make_ident(tmp_name)
+}
+
+fn (t &Transformer) is_stable_expr_for_reuse(id flat.NodeId) bool {
+	if int(id) < 0 {
+		return true
+	}
+	node := t.a.nodes[int(id)]
+	return match node.kind {
+		.ident, .int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
+		.nil_literal, .none_expr, .enum_val, .sizeof_expr, .typeof_expr {
+			true
+		}
+		.selector {
+			node.children_count > 0 && t.is_stable_expr_for_reuse(t.a.child(&node, 0))
+		}
+		.index {
+			node.children_count >= 2 && t.is_stable_expr_for_reuse(t.a.child(&node, 0))
+				&& t.is_stable_expr_for_reuse(t.a.child(&node, 1))
+		}
+		else {
+			false
+		}
+	}
 }
 
 fn (mut t Transformer) transform_fixed_array_len(_id flat.NodeId, node flat.Node) ?flat.NodeId {
@@ -311,8 +347,8 @@ fn fixed_array_len(s string) int {
 	return s.all_after('[').all_before(']').int()
 }
 
-const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default', 'do',
-	'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
+const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default',
+	'do', 'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
 	'register', 'restrict', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch',
 	'typedef', 'union', 'unsigned', 'void', 'volatile', 'while']
 
@@ -320,7 +356,9 @@ fn c_name(name string) string {
 	if name.starts_with('C.') {
 		return name[2..]
 	}
-	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==', '__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<', '__lt').replace('.>', '__gt').replace('.', '__')
+	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
+		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',
+		'__lt').replace('.>', '__gt').replace('.', '__')
 	if n in c_reserved_words {
 		return 'v_${n}'
 	}
