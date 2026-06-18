@@ -6,10 +6,11 @@ import v3.types
 const trace_markused = false
 
 pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
-	mut call_graph := map[string][]string{}
 	mut all_fns := map[string]bool{}
 	mut cur_module := ''
 	mut imports := map[string]string{}
+	mut fn_decls := map[string]FnDeclInfo{}
+	mut struct_decls := map[string]StructDeclInfo{}
 
 	// Build a resolved function name set from the type checker
 	mut resolved_fns := map[string]bool{}
@@ -23,9 +24,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	mut fn_count := 0
 	mut fn_with_dot := 0
 	mut contains2_total := 0
-	mut empty_fns := 0
-	mut total_callees := 0
-	for node in a.nodes {
+	for node_idx, node in a.nodes {
 		if node.kind == .module_decl {
 			cur_module = node.value
 			continue
@@ -33,6 +32,18 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		if node.kind == .import_decl {
 			mod := if node.value.contains('.') { node.value.all_after_last('.') } else { node.value }
 			imports[node.typ] = mod
+			continue
+		}
+		if node.kind == .struct_decl {
+			full_name := qualify_fn(cur_module, node.value)
+			info := StructDeclInfo{
+				node_id: flat.NodeId(node_idx)
+				module:  cur_module
+			}
+			struct_decls[full_name] = info
+			if node.value !in struct_decls {
+				struct_decls[node.value] = info
+			}
 			continue
 		}
 		if node.kind == .fn_decl {
@@ -43,10 +54,30 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 					eprintln('  fn with dot: "${node.value}"')
 				}
 			}
+			mut receiver_name := ''
+			mut receiver_struct := ''
+			if node.value.contains('.') {
+				receiver_struct = node.value.all_before_last('.')
+				for pi in 0 .. node.children_count {
+					pc := a.child_node(&node, pi)
+					if pc.kind == .param {
+						receiver_name = pc.value
+						break
+					}
+				}
+			}
+			info := FnDeclInfo{
+				node_id:         flat.NodeId(node_idx)
+				module:          cur_module
+				receiver_name:   receiver_name
+				receiver_struct: receiver_struct
+			}
 			all_fns[node.value] = true
+			fn_decls[node.value] = info
 			qname := qualify_fn(cur_module, node.value)
 			if qname != node.value {
 				all_fns[qname] = true
+				fn_decls[qname] = info
 			}
 			// Build suffix_map entries
 			if node.value.contains('.') {
@@ -62,29 +93,6 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 				if short != node.value.all_after_last('.') {
 					suffix_map[short] << qname
 				}
-			}
-			mut receiver_name := ''
-			mut receiver_struct := ''
-			if node.value.contains('.') {
-				receiver_struct = node.value.all_before_last('.')
-				for pi in 0 .. node.children_count {
-					pc := a.child_node(&node, pi)
-					if pc.kind == .param {
-						receiver_name = pc.value
-						break
-					}
-				}
-			}
-			mut callees := []string{}
-			collect_calls(a, tc, &node, cur_module, imports, receiver_name, receiver_struct, mut
-				callees)
-			total_callees += callees.len
-			call_graph[node.value] = callees
-			if callees.len == 0 && node.children_count > 0 && fn_count <= 2200 {
-				empty_fns++
-			}
-			if qname != node.value {
-				call_graph[qname] = callees
 			}
 		}
 	}
@@ -102,14 +110,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		eprintln(fn_with_dot.str())
 		eprintln('contains2_total:')
 		eprintln(contains2_total.str())
-		eprintln('markused: main in call_graph: ${'main' in call_graph}')
-		if 'main' in call_graph {
-			main_calls := call_graph['main']
-			eprintln('markused: main has ${main_calls.len} callees')
-			for mc in main_calls {
-				eprintln('  callee: ${mc}')
-			}
-		}
+		eprintln('markused: main in fn_decls: ${'main' in fn_decls}')
 		eprintln('markused: all_fns count: ${all_fns.len}')
 		eprintln('markused: suffix_map count: ${suffix_map.len}')
 		mut total_suffix_entries := 0
@@ -124,53 +125,72 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	// mut suffix_misses := 0
 	mut in_cg := 0
 	mut not_in_cg := 0
+	mut total_callees := 0
+	collector := CallCollector{
+		a:            a
+		tc:           tc
+		struct_decls: struct_decls
+	}
+	mut calls_by_node := map[int][]string{}
 	mut qi := 0
 	for qi < queue.len {
 		name := queue[qi]
 		qi++
 		prev_len := queue.len
-		if trace_markused && qi <= 10 {
-			eprintln('BFS qi=${qi.str()} name="${name}" in_cg=${name in call_graph}')
+		fn_info := fn_decls[name] or {
+			not_in_cg++
+			if trace_markused && qi <= 10 {
+				eprintln('BFS qi=${qi.str()} name="${name}" in_cg=false')
+			}
+			continue
 		}
-		if name in call_graph {
-			in_cg++
-			calls := call_graph[name]
-			for callee in calls {
-				if callee in all_fns {
-					if callee !in used {
-						used[callee] = true
-						queue << callee
-						if trace_markused && qi == 1 {
-							eprintln('main: all_fns hit: "${callee}"')
-						}
-					}
-				} else if callee in resolved_fns {
-					if callee !in used {
-						used[callee] = true
-						queue << callee
-						if trace_markused && qi == 1 {
-							eprintln('main: resolved hit: "${callee}"')
-						}
+		if trace_markused && qi <= 10 {
+			eprintln('BFS qi=${qi.str()} name="${name}" in_cg=true')
+		}
+		in_cg++
+		node_key := int(fn_info.node_id)
+		calls := calls_by_node[node_key] or {
+			node := a.node(fn_info.node_id)
+			mut new_calls := []string{}
+			collector.collect_calls(node, fn_info.module, imports, fn_info.receiver_name,
+				fn_info.receiver_struct, mut new_calls)
+			total_callees += new_calls.len
+			calls_by_node[node_key] = new_calls
+			new_calls
+		}
+		for callee in calls {
+			if callee in all_fns {
+				if callee !in used {
+					used[callee] = true
+					queue << callee
+					if trace_markused && qi == 1 {
+						eprintln('main: all_fns hit: "${callee}"')
 					}
 				}
-				if callee.len > 0 {
-					if callee in suffix_map {
-						suffix_hits++
-						entries := suffix_map[callee]
-						for fn_name in entries {
-							if fn_name !in used {
-								used[fn_name] = true
-								queue << fn_name
-								if trace_markused && qi == 1 {
-									eprintln('main: suffix hit: "${callee}" -> "${fn_name}"')
-								}
+			} else if callee in resolved_fns {
+				if callee !in used {
+					used[callee] = true
+					queue << callee
+					if trace_markused && qi == 1 {
+						eprintln('main: resolved hit: "${callee}"')
+					}
+				}
+			}
+			if callee.len > 0 {
+				if callee in suffix_map {
+					suffix_hits++
+					entries := suffix_map[callee]
+					for fn_name in entries {
+						if fn_name !in used {
+							used[fn_name] = true
+							queue << fn_name
+							if trace_markused && qi == 1 {
+								eprintln('main: suffix hit: "${callee}" -> "${fn_name}"')
 							}
 						}
 					}
 				}
 			}
-		} else {
-			not_in_cg++
 		}
 		new_added := queue.len - prev_len
 		if trace_markused && qi <= 10 {
@@ -178,8 +198,6 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		}
 	}
 	if trace_markused {
-		eprintln('empty_fns:')
-		eprintln(empty_fns.str())
 		eprintln('total_callees:')
 		eprintln(total_callees.str())
 		eprintln('markused: in_cg:')
@@ -195,6 +213,24 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	return used
 }
 
+struct FnDeclInfo {
+	node_id         flat.NodeId
+	module          string
+	receiver_name   string
+	receiver_struct string
+}
+
+struct StructDeclInfo {
+	node_id flat.NodeId
+	module  string
+}
+
+struct CallCollector {
+	a            &flat.FlatAst      = unsafe { nil }
+	tc           &types.TypeChecker = unsafe { nil }
+	struct_decls map[string]StructDeclInfo
+}
+
 fn qualify_fn(mod string, name string) string {
 	if mod.len == 0 || mod == 'main' || mod == 'builtin' {
 		return name
@@ -202,19 +238,19 @@ fn qualify_fn(mod string, name string) string {
 	return '${mod}.${name}'
 }
 
-fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_module string, imports map[string]string, receiver_name string, receiver_struct string, mut calls []string) {
+fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports map[string]string, receiver_name string, receiver_struct string, mut calls []string) {
 	for i in 0 .. node.children_count {
-		child_id := a.child(node, i)
+		child_id := c.a.child(node, i)
 		if int(child_id) < 0 {
 			continue
 		}
-		child := &a.nodes[int(child_id)]
+		child := &c.a.nodes[int(child_id)]
 		match child.kind {
 			.call {
 				if child.children_count > 0 {
-					callee_id := a.child(child, 0)
+					callee_id := c.a.child(child, 0)
 					if int(callee_id) >= 0 {
-						callee := a.nodes[int(callee_id)]
+						callee := c.a.nodes[int(callee_id)]
 						if callee.kind == .ident && callee.value.len > 0 {
 							calls << callee.value
 							qcallee := qualify_fn(cur_module, callee.value)
@@ -223,9 +259,9 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 							}
 						} else if callee.kind == .selector && callee.value.len > 0 {
 							if callee.children_count > 0 {
-								base_id := a.child(&callee, 0)
+								base_id := c.a.child(&callee, 0)
 								if int(base_id) >= 0 {
-									base := a.nodes[int(base_id)]
+									base := c.a.nodes[int(base_id)]
 									if base.kind == .ident && base.value.len > 0 {
 										if receiver_name.len > 0 && base.value == receiver_name {
 											calls << receiver_struct + '.' + callee.value
@@ -242,9 +278,9 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 										}
 										calls << mod_name + '.' + callee.value
 									} else if base.kind == .selector && base.children_count > 0 {
-										inner_id := a.child(&base, 0)
+										inner_id := c.a.child(&base, 0)
 										if int(inner_id) >= 0 {
-											inner := a.nodes[int(inner_id)]
+											inner := c.a.nodes[int(inner_id)]
 											if inner.kind == .ident && inner.value.len > 0 {
 												mod_name := if inner.value in imports {
 													imports[inner.value]
@@ -256,7 +292,7 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 											}
 										}
 									}
-									base_type := tc.resolve_type(base_id)
+									base_type := c.tc.resolve_type(base_id)
 									type_name := resolve_type_name(base_type)
 									if type_name.len > 0 {
 										calls << type_name + '.' + callee.value
@@ -268,9 +304,9 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 					}
 				}
 				for ci in 1 .. child.children_count {
-					arg_id := a.child(child, ci)
+					arg_id := c.a.child(child, ci)
 					if int(arg_id) >= 0 {
-						arg := a.nodes[int(arg_id)]
+						arg := c.a.nodes[int(arg_id)]
 						if arg.kind == .ident && arg.value.len > 0 {
 							calls << arg.value
 						}
@@ -279,9 +315,9 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 			}
 			.prefix {
 				if child.op == .amp && child.children_count > 0 {
-					inner_id := a.child(child, 0)
+					inner_id := c.a.child(child, 0)
 					if int(inner_id) >= 0 {
-						inner := a.nodes[int(inner_id)]
+						inner := c.a.nodes[int(inner_id)]
 						if inner.kind == .struct_init {
 							calls << 'memdup'
 						}
@@ -296,9 +332,9 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 					calls << 'string__plus'
 				}
 				if child.children_count >= 2 {
-					lhs_id := a.child(child, 0)
+					lhs_id := c.a.child(child, 0)
 					if int(lhs_id) >= 0 {
-						lhs_type := tc.resolve_type(lhs_id)
+						lhs_type := c.tc.resolve_type(lhs_id)
 						lhs_name := resolve_type_name(lhs_type)
 						if lhs_name.len > 0 {
 							op_name := match child.op {
@@ -321,62 +357,32 @@ fn collect_calls(a &flat.FlatAst, tc &types.TypeChecker, node &flat.Node, cur_mo
 				}
 			}
 			.struct_init {
-				collect_struct_default_calls(a, tc, child, imports, mut calls)
+				c.collect_struct_default_calls(child, imports, mut calls)
 			}
 			else {}
 		}
 
-		collect_calls(a, tc, child, cur_module, imports, receiver_name, receiver_struct, mut calls)
+		c.collect_calls(child, cur_module, imports, receiver_name, receiver_struct, mut calls)
 	}
 }
 
-struct StructDeclInfo {
-	node   flat.Node
-	module string
-}
-
-fn collect_struct_default_calls(a &flat.FlatAst, tc &types.TypeChecker, init &flat.Node, imports map[string]string, mut calls []string) {
-	info := find_struct_decl(a, init.value) or { return }
+fn (c &CallCollector) collect_struct_default_calls(init &flat.Node, imports map[string]string, mut calls []string) {
+	info := c.struct_decls[init.value] or { return }
 	mut set_fields := map[string]bool{}
 	for i in 0 .. init.children_count {
-		field := a.child_node(init, i)
+		field := c.a.child_node(init, i)
 		if field.kind == .field_init {
 			set_fields[field.value] = true
 		}
 	}
-	for i in 0 .. info.node.children_count {
-		field := a.child_node(&info.node, i)
+	node := c.a.node(info.node_id)
+	for i in 0 .. node.children_count {
+		field := c.a.child_node(node, i)
 		if field.kind != .field_decl || field.children_count == 0 || field.value in set_fields {
 			continue
 		}
-		collect_calls(a, tc, field, info.module, imports, '', '', mut calls)
+		c.collect_calls(field, info.module, imports, '', '', mut calls)
 	}
-}
-
-fn find_struct_decl(a &flat.FlatAst, type_name string) ?StructDeclInfo {
-	short_name := if type_name.contains('.') { type_name.all_after_last('.') } else { type_name }
-	mut cur_module := ''
-	for node in a.nodes {
-		if node.kind == .module_decl {
-			cur_module = node.value
-			continue
-		}
-		if node.kind != .struct_decl || node.value != short_name {
-			continue
-		}
-		full_name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
-			'${cur_module}.${node.value}'
-		} else {
-			node.value
-		}
-		if type_name == node.value || type_name == full_name {
-			return StructDeclInfo{
-				node:   node
-				module: cur_module
-			}
-		}
-	}
-	return none
 }
 
 fn resolve_type_name(t types.Type) string {
