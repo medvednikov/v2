@@ -15,6 +15,9 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		resolved_fns[name] = true
 	}
 
+	// Reverse index: short name (after last '.') -> list of full qualified names
+	mut suffix_map := map[string][]string{}
+
 	for node in a.nodes {
 		if node.kind == .module_decl {
 			cur_module = node.value
@@ -30,6 +33,20 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			qname := qualify_fn(cur_module, node.value)
 			if qname != node.value {
 				all_fns[qname] = true
+			}
+			// Build suffix_map entries
+			if node.value.contains('.') {
+				short := node.value.all_after_last('.')
+				suffix_map[short] << node.value
+				if qname != node.value {
+					suffix_map[short] << qname
+				}
+			}
+			if qname != node.value && qname.contains('.') {
+				short := qname.all_after_last('.')
+				if short != node.value.all_after_last('.') {
+					suffix_map[short] << qname
+				}
 			}
 			mut receiver_name := ''
 			mut receiver_struct := ''
@@ -77,10 +94,12 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 					}
 				}
 				if callee.len > 0 {
-					for fn_name, _ in all_fns {
-						if fn_name.ends_with('.${callee}') && fn_name !in used {
-							used[fn_name] = true
-							queue << fn_name
+					if callee in suffix_map {
+						for fn_name in suffix_map[callee] {
+							if fn_name !in used {
+								used[fn_name] = true
+								queue << fn_name
+							}
 						}
 					}
 				}

@@ -25,8 +25,10 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 				g.gen_or_expr_stmt(child)
 			} else if child.kind == .infix && child.op == .left_shift {
 				lhs_id := g.a.child(&child, 0)
+				lhs_is_ptr := g.tc.resolve_type(lhs_id) is types.Pointer
+				amp := if lhs_is_ptr { '' } else { '&' }
 				if child.value == 'push_many' {
-					g.write('array_push_many(&')
+					g.write('array_push_many(${amp}')
 					g.gen_expr(lhs_id)
 					g.write(', ')
 					g.gen_expr(g.a.child(&child, 1))
@@ -36,14 +38,14 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 					push_rhs_type := g.tc.resolve_type(push_rhs_id)
 					push_rhs_clean := types.unwrap_pointer(push_rhs_type)
 					if push_rhs_clean is types.Array {
-						g.write('array_push_many(&')
+						g.write('array_push_many(${amp}')
 						g.gen_expr(lhs_id)
 						g.write(', ')
 						g.gen_expr(push_rhs_id)
 						g.writeln(');')
 					} else {
 						c_elem := g.tc.c_type(g.tc.parse_type(child.typ))
-						g.write('array_push(&')
+						g.write('array_push(${amp}')
 						g.gen_expr(lhs_id)
 						g.write(', &(${c_elem}[]){')
 						g.gen_expr(push_rhs_id)
@@ -57,14 +59,14 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						rhs_type := g.tc.resolve_type(rhs_id)
 						rhs_clean := types.unwrap_pointer(rhs_type)
 						if rhs_clean is types.Array {
-							g.write('array_push_many(&')
+							g.write('array_push_many(${amp}')
 							g.gen_expr(lhs_id)
 							g.write(', ')
 							g.gen_expr(rhs_id)
 							g.writeln(');')
 						} else {
 							c_elem := g.tc.c_type(clean.elem_type)
-							g.write('array_push(&')
+							g.write('array_push(${amp}')
 							g.gen_expr(lhs_id)
 							g.write(', &(${c_elem}[]){')
 							g.gen_expr(rhs_id)
@@ -386,13 +388,15 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 			g.gen_expr(g.a.child(&node, i + 1))
 			g.writeln(');')
 		} else if node.op == .left_shift_assign && lhs.kind == .ident {
+			lhs_is_ptr := g.tc.resolve_type(g.a.child(&node, i)) is types.Pointer
+			amp := if lhs_is_ptr { '' } else { '&' }
 			if node.value == 'push_many' {
-				g.write('array_push_many(&${c_name(lhs.value)}, ')
+				g.write('array_push_many(${amp}${c_name(lhs.value)}, ')
 				g.gen_expr(g.a.child(&node, i + 1))
 				g.writeln(');')
 			} else if node.value == 'push' {
 				c_elem := g.tc.c_type(g.tc.parse_type(node.typ))
-				g.write('array_push(&${c_name(lhs.value)}, &(${c_elem}[]){')
+				g.write('array_push(${amp}${c_name(lhs.value)}, &(${c_elem}[]){')
 				g.gen_expr(g.a.child(&node, i + 1))
 				g.writeln('});')
 			} else {

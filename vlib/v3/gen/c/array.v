@@ -60,7 +60,8 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.write('${dot}len = 0')
 		}
 		'push_many' {
-			g.write('array_push_many_ptr(&')
+			amp := if is_ptr { '' } else { '&' }
+			g.write('array_push_many_ptr(${amp}')
 			g.gen_expr(base_id)
 			g.write(', ')
 			g.gen_expr(g.a.child(&node, 1))
@@ -74,14 +75,16 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.gen_expr(g.a.child(&node, 1))
 		}
 		'ensure_cap' {
-			g.write('array_ensure_cap(&')
+			amp := if is_ptr { '' } else { '&' }
+			g.write('array_ensure_cap(${amp}')
 			g.gen_expr(base_id)
 			g.write(', ')
 			g.gen_expr(g.a.child(&node, 1))
 			g.write(')')
 		}
 		'delete' {
-			g.write('array_delete(&')
+			amp := if is_ptr { '' } else { '&' }
+			g.write('array_delete(${amp}')
 			g.gen_expr(base_id)
 			g.write(', ')
 			g.gen_expr(g.a.child(&node, 1))
@@ -93,7 +96,8 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.write('${dot}data)')
 		}
 		'str' {
-			g.write('strings__Builder__str(&')
+			amp := if is_ptr { '' } else { '&' }
+			g.write('strings__Builder__str(${amp}')
 			g.gen_expr(base_id)
 			g.write(')')
 		}
