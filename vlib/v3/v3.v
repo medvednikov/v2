@@ -64,6 +64,7 @@ fn main() {
 	}
 
 	mut b := bench.new()
+	println('=== v3 benchmark ===')
 
 	// Parse directly to flat AST
 	prefs := pref.new_preferences()
@@ -165,16 +166,26 @@ fn main() {
 		warn_flags := if is_strict {
 			'-Wall -Wextra -Werror=implicit-function-declaration -Wno-unused-variable -Wno-unused-parameter -Wno-int-conversion -Wno-missing-braces'
 		} else {
-			'-w -Wno-int-conversion'
+			'-w'
 		}
-		cc_cmd := 'cc -std=gnu11 ${opt_flag}${warn_flags} -o ${bin_file} ${output_file} -lm'
-		result := os.execute(cc_cmd)
-		if result.exit_code != 0 {
-			eprintln('C compilation failed:')
-			eprintln(result.output)
-			exit(1)
+		mut cc_cmd := ''
+		mut result := os.Result{}
+		if !is_prod {
+			tcc_path := os.join_path(os.home_dir(), 'code', 'v', 'thirdparty', 'tcc', 'tcc.exe')
+			cc_cmd = '${tcc_path} ${warn_flags} -o ${bin_file} ${output_file} -lm'
+			result = os.execute(cc_cmd)
+		}
+		if is_prod || result.exit_code != 0 {
+			cc_cmd = 'cc -std=gnu11 ${opt_flag}${warn_flags} -Wno-int-conversion -o ${bin_file} ${output_file} -lm'
+			result = os.execute(cc_cmd)
+			if result.exit_code != 0 {
+				eprintln('C compilation failed:')
+				eprintln(result.output)
+				exit(1)
+			}
 		}
 		b.step('cc')
+		println('  ${cc_cmd}')
 	}
 
 	b.print_report()

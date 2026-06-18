@@ -518,9 +518,14 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.array_init {
-			elem_type := g.tc.parse_type(node.value)
-			c_elem := g.tc.c_type(elem_type)
-			g.write('array_new(sizeof(${c_elem}), 0, 0)')
+			init_type := g.tc.parse_type(node.value)
+			if init_type is types.ArrayFixed {
+				ct := g.tc.c_type(init_type)
+				g.write('(${ct}){0}')
+			} else {
+				c_elem := g.tc.c_type(init_type)
+				g.write('array_new(sizeof(${c_elem}), 0, 0)')
+			}
 		}
 		.map_init {
 			g.gen_map_init(node)
@@ -1238,6 +1243,11 @@ fn (mut g FlatGen) runtime_fns() {
 
 fn (mut g FlatGen) global_decls() {
 	for name, typ in g.global_types {
+		if typ is types.ArrayFixed {
+			c_elem := g.tc.c_type(typ.elem_type)
+			g.writeln('${c_elem} ${c_name(name)}[${typ.len}];')
+			continue
+		}
 		ct := g.tc.c_type(typ)
 		if ct == 'void' {
 			continue

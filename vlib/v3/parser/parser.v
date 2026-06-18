@@ -2709,7 +2709,9 @@ fn (mut p Parser) array_literal() flat.NodeId {
 		p.next()
 		if p.tok == .name || p.tok == .amp || p.tok == .lsbr || p.tok == .question {
 			// fixed array type: [N]Type
+			size_str := p.a.nodes[int(ids[0])].value
 			elem_type := p.parse_type_name()
+			fixed_type := '[${size_str}]${elem_type}'
 			// may have init
 			if p.tok == .lcbr {
 				p.next()
@@ -2741,12 +2743,12 @@ fn (mut p Parser) array_literal() flat.NodeId {
 				start := p.add_children(init_ids)
 				return p.a.add_node(flat.Node{
 					kind:           .array_init
-					value:          elem_type
+					value:          fixed_type
 					children_start: start
 					children_count: init_ids.len
 				})
 			}
-			return p.a.add_val(.array_init, elem_type)
+			return p.a.add_val(.array_init, fixed_type)
 		}
 		// single-element array: [expr]
 		start := p.add_children(ids)

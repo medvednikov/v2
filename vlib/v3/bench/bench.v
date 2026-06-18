@@ -26,22 +26,19 @@ pub fn new() Bench {
 
 pub fn (mut b Bench) step(name string) {
 	elapsed := b.t0.elapsed()
-	ram := current_rss_kb()
+	ram_mb := f64(current_rss_kb()) / 1024.0
+	ms := f64(elapsed.microseconds()) / 1000.0
+	println('  ${name:-20s} ${ms:8.2f} ms   ${ram_mb:6.0f} MB resident RAM')
 	b.steps << Step{
 		name:    name
 		time_us: elapsed.microseconds()
-		ram_kb:  ram
+		ram_kb:  i64(ram_mb * 1024)
 	}
 	b.t0 = time.new_stopwatch()
 }
 
 pub fn (b &Bench) print_report() {
 	total := b.start.elapsed()
-	println('=== v3 benchmark ===')
-	for s in b.steps {
-		ms := f64(s.time_us) / 1000.0
-		println('  ${s.name:-20s} ${ms:8.2f} ms   ${s.ram_kb:6d} KB RSS')
-	}
 	total_ms := f64(total.microseconds()) / 1000.0
 	println('  ${'total':-20s} ${total_ms:8.2f} ms')
 	println('')

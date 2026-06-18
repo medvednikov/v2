@@ -271,32 +271,41 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		} else if rhs.kind == .or_expr {
 			g.gen_decl_or_expr(lhs, rhs)
 		} else if rhs.kind == .array_init {
-			elem_type := g.tc.parse_type(rhs.value)
-			c_elem := g.tc.c_type(elem_type)
-			mut init_len := '0'
-			mut init_cap := '0'
-			mut init_val := ''
-			for j in 0 .. rhs.children_count {
-				child := g.a.child_node(&rhs, j)
-				if child.kind == .field_init {
-					if child.value == 'len' {
-						init_len = g.expr_to_string(g.a.child(child, 0))
-					} else if child.value == 'cap' {
-						init_cap = g.expr_to_string(g.a.child(child, 0))
-					} else if child.value == 'init' {
-						init_val = g.expr_to_string(g.a.child(child, 0))
+			init_type := g.tc.parse_type(rhs.value)
+			if init_type is types.ArrayFixed {
+				c_elem := g.tc.c_type(init_type.elem_type)
+				lhs_str := g.decl_lhs_str(lhs_id)
+				g.writeln('${c_elem} ${lhs_str}[${init_type.len}] = {0};')
+				if lhs.kind == .ident {
+					g.tc.cur_scope.insert(lhs.value, init_type)
+				}
+			} else {
+				c_elem := g.tc.c_type(init_type)
+				mut init_len := '0'
+				mut init_cap := '0'
+				mut init_val := ''
+				for j in 0 .. rhs.children_count {
+					child := g.a.child_node(&rhs, j)
+					if child.kind == .field_init {
+						if child.value == 'len' {
+							init_len = g.expr_to_string(g.a.child(child, 0))
+						} else if child.value == 'cap' {
+							init_cap = g.expr_to_string(g.a.child(child, 0))
+						} else if child.value == 'init' {
+							init_val = g.expr_to_string(g.a.child(child, 0))
+						}
 					}
 				}
-			}
-			lhs_str := g.decl_lhs_str(lhs_id)
-			g.writeln('Array ${lhs_str} = array_new(sizeof(${c_elem}), ${init_len}, ${init_cap});')
-			if init_val.len > 0 {
-				g.writeln('for (int _ai = 0; _ai < ${lhs_str}.len; _ai++) ((${c_elem}*)${lhs_str}.data)[_ai] = ${init_val};')
-			}
-			if lhs.kind == .ident {
-				g.tc.cur_scope.insert(lhs.value, types.Type(types.Array{
-					elem_type: elem_type
-				}))
+				lhs_str := g.decl_lhs_str(lhs_id)
+				g.writeln('Array ${lhs_str} = array_new(sizeof(${c_elem}), ${init_len}, ${init_cap});')
+				if init_val.len > 0 {
+					g.writeln('for (int _ai = 0; _ai < ${lhs_str}.len; _ai++) ((${c_elem}*)${lhs_str}.data)[_ai] = ${init_val};')
+				}
+				if lhs.kind == .ident {
+					g.tc.cur_scope.insert(lhs.value, types.Type(types.Array{
+						elem_type: init_type
+					}))
+				}
 			}
 		} else if rhs.kind == .map_init {
 			v_type := g.tc.resolve_type(rhs_id)
@@ -615,7 +624,7 @@ fn (mut g FlatGen) gen_or_expr(node flat.Node) {
 	g.gen_expr(expr_id)
 	g.write('; ${tmp}.ok ? ${tmp}.value : ({IError err = (IError){0}; (void)err; ')
 	g.gen_or_body(or_body)
-	g.write(';})')
+	g.write(';});})')
 }
 
 fn (mut g FlatGen) gen_or_body(or_body flat.Node) {
