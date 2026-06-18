@@ -87,6 +87,12 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	queue << 'time.Time.new'
 	used['time.Time.new'] = true
 	used['Time.new'] = true
+	for seed in ['__new_array', 'new_array_from_c_array', 'array.get', 'array.set', 'array.push',
+		'array.push_many', 'array.slice', 'array.clone', 'array.delete', 'array.ensure_cap',
+		'string.==', 'string.<', 'strings.Builder.free'] {
+		queue << seed
+		used[seed] = true
+	}
 
 	if trace_markused {
 		eprintln('markused: fn_count:')
@@ -116,6 +122,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		tc:           tc
 		struct_decls: struct_decls
 	}
+	enqueue_initializer_calls(a, collector, imports, fn_decls, mut used, mut queue)
 	mut calls_by_node := map[int][]string{}
 	mut qi := 0
 	for qi < queue.len {
@@ -145,7 +152,9 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			new_calls
 		}
 		for callee in calls {
+			mut found_direct := false
 			if callee_info := fn_decls[callee] {
+				found_direct = true
 				if enqueue(callee, mut used, mut queue) {
 					if trace_markused && qi == 1 {
 						eprintln('main: all_fns hit: "${callee}"')
@@ -156,25 +165,14 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 					used[alias] = true
 				}
 			} else if callee in tc.fn_ret_types {
+				found_direct = true
 				if enqueue(callee, mut used, mut queue) {
 					if trace_markused && qi == 1 {
 						eprintln('main: resolved hit: "${callee}"')
 					}
 				}
 			}
-			if callee.len > 0 && !callee.contains('.') {
-				if callee in suffix_map {
-					suffix_hits++
-					entries := suffix_map[callee]
-					for fn_name in entries {
-						if enqueue(fn_name, mut used, mut queue) {
-							if trace_markused && qi == 1 {
-								eprintln('main: suffix hit: "${callee}" -> "${fn_name}"')
-							}
-						}
-					}
-				}
-			}
+			_ = found_direct
 		}
 		new_added := queue.len - prev_len
 		if trace_markused && qi <= 10 {
@@ -195,6 +193,39 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		eprintln('markused: total used: ${used.len}')
 	}
 	return used
+}
+
+fn enqueue_initializer_calls(a &flat.FlatAst, collector CallCollector, imports map[string]string, fn_decls map[string]FnDeclInfo, mut used map[string]bool, mut queue []string) {
+	mut cur_module := ''
+	for node in a.nodes {
+		match node.kind {
+			.module_decl {
+				cur_module = node.value
+			}
+			.const_decl, .global_decl {
+				for i in 0 .. node.children_count {
+					field := a.child_node(&node, i)
+					if field.children_count == 0 {
+						continue
+					}
+					mut calls := []string{}
+					collector.collect_calls(field, cur_module, imports, '', '', mut calls)
+					for callee in calls {
+						if callee_info := fn_decls[callee] {
+							enqueue(callee, mut used, mut queue)
+							alias := a.node(callee_info.node_id).value
+							if alias != callee && alias !in used {
+								used[alias] = true
+							}
+						} else {
+							enqueue(callee, mut used, mut queue)
+						}
+					}
+				}
+			}
+			else {}
+		}
+	}
 }
 
 fn enqueue(name string, mut used map[string]bool, mut queue []string) bool {

@@ -2300,8 +2300,10 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 				}
 				return p.a.add_val(.map_init, map_type)
 			}
-			// struct init: Name{...}
-			if p.tok == .lcbr && name.len > 0 && name[0] >= `A` && name[0] <= `Z` {
+			// struct init: Name{...}; vlib/builtin also uses concrete lowercase
+			// runtime structs like array{} and string{}.
+			if p.tok == .lcbr && name.len > 0 && ((name[0] >= `A` && name[0] <= `Z`)
+				|| name in ['array', 'string', 'map', 'mapnode', '_result', '_option']) {
 				return p.struct_init(name)
 			}
 			// type cast: TypeName(expr) or builtin_type(expr)

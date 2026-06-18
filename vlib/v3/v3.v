@@ -75,15 +75,8 @@ fn main() {
 	mut p := parser.Parser.new(prefs)
 
 	mut files := []string{}
-	if backend == 'arm64' {
-		builtin_path := os.join_path(os.dir(@FILE), 'builtins', 'builtin.v')
-		if os.exists(builtin_path) {
-			files << builtin_path
-		}
-	} else {
-		builtin_dir := os.join_path(prefs.vroot, 'vlib', 'builtin')
-		files << pref.get_v_files_from_dir(builtin_dir, prefs.user_defines, prefs.target_os)
-	}
+	builtin_dir := os.join_path(prefs.vroot, 'vlib', 'builtin')
+	files << pref.get_v_files_from_dir(builtin_dir, prefs.user_defines, prefs.target_os)
 	mut a := p.parse_files(files)
 	a.user_code_start = a.nodes.len
 

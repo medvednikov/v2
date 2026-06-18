@@ -262,8 +262,9 @@ fn (mut g FlatGen) gen_map_init(node flat.Node) {
 }
 
 fn (g &FlatGen) skip_builtin_struct(name string) bool {
-	return g.has_builtins
-		&& name in ['array', 'map', 'DenseArray', 'MapHashFn', 'MapEqFn', 'MapCloneFn', 'MapFreeFn', 'MapSlot', 'ArrayDataHeader']
+	_ = g
+	_ = name
+	return false
 }
 
 fn (mut g FlatGen) struct_decls() {
@@ -279,6 +280,9 @@ fn (mut g FlatGen) struct_decls() {
 	}
 	for name, _ in g.interfaces {
 		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
+	}
+	if g.has_builtins {
+		g.writeln('typedef array Array;')
 	}
 	g.writeln('typedef struct Optional { bool ok; int value; } Optional;')
 	g.writeln('')
@@ -319,6 +323,7 @@ fn (mut g FlatGen) struct_decls() {
 				g.writeln('struct ${cn} {')
 				g.writeln('\tint _typ;')
 				if cn == 'IError' {
+					g.writeln('\tvoid* _object;')
 					g.writeln('\tstring message;')
 					g.writeln('\tint code;')
 				}
@@ -402,6 +407,7 @@ fn (mut g FlatGen) struct_decls() {
 		g.writeln('struct ${cn} {')
 		g.writeln('\tint _typ;')
 		if cn == 'IError' {
+			g.writeln('\tvoid* _object;')
 			g.writeln('\tstring message;')
 			g.writeln('\tint code;')
 		}
@@ -432,10 +438,15 @@ fn (mut g FlatGen) emit_struct(name string) {
 }
 
 fn (mut g FlatGen) write_struct_field(_struct_name string, f types.StructField) {
-	if f.typ is types.FnType {
-		ret := if f.typ.return_type is types.Void { 'void' } else { g.tc.c_type(f.typ.return_type) }
+	field_type := if f.typ is types.Alias { f.typ.base_type } else { f.typ }
+	if field_type is types.FnType {
+		ret := if field_type.return_type is types.Void {
+			'void'
+		} else {
+			g.tc.c_type(field_type.return_type)
+		}
 		mut params := []string{}
-		for p in f.typ.params {
+		for p in field_type.params {
 			params << g.tc.c_type(p)
 		}
 		params_str := if params.len > 0 { params.join(', ') } else { 'void' }
@@ -444,7 +455,10 @@ fn (mut g FlatGen) write_struct_field(_struct_name string, f types.StructField) 
 		c_elem := g.tc.c_type(f.typ.elem_type)
 		g.writeln('\t${c_elem} ${c_name(f.name)}[${f.typ.len}];')
 	} else {
-		ct := g.tc.c_type(f.typ)
+		mut ct := g.tc.c_type(f.typ)
+		if ct.starts_with('fn_ptr:') {
+			ct = g.resolve_fn_ptr_type(ct)
+		}
 		g.writeln('\t${ct} ${c_name(f.name)};')
 	}
 }

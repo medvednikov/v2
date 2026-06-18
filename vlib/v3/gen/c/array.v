@@ -141,6 +141,8 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 				wants_ptr := ptypes.len > 0 && ptypes[0] is types.Pointer
 				if wants_ptr && !is_ptr {
 					g.write('&')
+				} else if !wants_ptr && is_ptr {
+					g.write('*')
 				}
 				g.gen_expr(base_id)
 				for i in 1 .. node.children_count {

@@ -2438,6 +2438,12 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	if typ.starts_with('fn(') || typ.starts_with('fn (') {
 		return tc.parse_fn_type(typ)
 	}
+	qtyp := tc.qualify_name(typ)
+	if typ == 'array' && tc.has_builtins && typ in tc.structs {
+		return Type(Struct{
+			name: typ
+		})
+	}
 	if bt := builtin_type(typ) {
 		return bt
 	}
@@ -2451,7 +2457,6 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 			name: typ
 		})
 	}
-	qtyp := tc.qualify_name(typ)
 	if qtyp in tc.type_aliases {
 		return Type(Alias{
 			name:      qtyp
@@ -3266,7 +3271,7 @@ fn resolve_type_name_for_method(t Type) string {
 		return 'string'
 	}
 	if t is Array {
-		return 'Array'
+		return 'array'
 	}
 	if t is Map {
 		return 'map'
@@ -3394,6 +3399,9 @@ const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 
 fn c_name(name string) string {
 	if name.starts_with('C.') {
 		return name[2..]
+	}
+	if name == 'malloc' {
+		return 'v_malloc'
 	}
 	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
 		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',

@@ -24,20 +24,12 @@ fn (mut g FlatGen) gen_fns() {
 }
 
 fn (mut g FlatGen) should_emit_fn_node(node flat.Node, node_index int) bool {
-	if g.has_builtins && node_index < g.a.user_code_start {
-		return false
-	}
+	_ = node_index
 	dfn := g.dotted_fn_name(node.value)
 	if g.used_fns.len > 0 && node.value !in g.used_fns && dfn !in g.used_fns {
 		return false
 	}
 	if g.has_generic_params(node) {
-		return false
-	}
-	if g.is_runtime_provided_strings_fn(node.value) {
-		return false
-	}
-	if g.is_runtime_provided_fn(node.value) {
 		return false
 	}
 	if node.value.starts_with('Gen.') && g.tc.cur_module == 'c' {
@@ -58,24 +50,6 @@ fn (g &FlatGen) dotted_fn_name(name string) string {
 		return '${g.tc.cur_module}.${name}'
 	}
 	return name
-}
-
-fn (g &FlatGen) is_runtime_provided_fn(name string) bool {
-	return g.has_builtins && ((g.tc.cur_module == 'os' && name == 'getwd')
-		|| (g.tc.cur_module == 'strconv' && name in ['f32_to_str_l', 'f64_to_str_l']))
-}
-
-fn (g &FlatGen) is_runtime_provided_strings_fn(name string) bool {
-	if g.tc.cur_module != 'strings' {
-		return false
-	}
-	if g.has_builtins && (name == 'new_builder' || name.starts_with('Builder.')) {
-		return true
-	}
-	return name in ['new_builder', 'Builder.write_string', 'Builder.writeln', 'Builder.str',
-		'Builder.write_ptr', 'Builder.write_u8', 'Builder.write_runes', 'Builder.ensure_cap',
-		'Builder.grow_len', 'Builder.free', 'Builder.reuse_as_plain_u8_array', 'Builder.byte_at',
-		'Builder.drain_builder', 'Builder.indent']
 }
 
 fn (mut g FlatGen) gen_fn(node flat.Node) {
@@ -357,7 +331,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 							if prim_method in g.tc.fn_param_types {
 								is_method = true
 								base_id = g.a.child(fn_node, 0)
-								g.write('${tname}_${fn_node.value}')
+								g.write(c_name(prim_method))
 							} else {
 								mut prim_found := false
 								if alias_method := g.find_alias_method(tname, fn_node.value) {
@@ -511,7 +485,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 						if prim_method in g.tc.fn_param_types {
 							is_method = true
 							base_id = g.a.child(fn_node, 0)
-							g.write('${tname}_${fn_node.value}')
+							g.write(c_name(prim_method))
 						} else {
 							mut prim_found := false
 							if alias_method := g.find_alias_method(tname, fn_node.value) {
@@ -836,6 +810,8 @@ fn (g &FlatGen) is_flag_enum_method(fn_node &flat.Node) bool {
 		return true
 	} else if clean is types.Primitive {
 		return clean.props.has(.integer)
+	} else if clean is types.Unknown {
+		return true
 	}
 	return false
 }
@@ -903,19 +879,19 @@ fn (g &FlatGen) has_generic_params(node flat.Node) bool {
 
 fn (g &FlatGen) find_prim_method(method string) string {
 	if 'u8.${method}' in g.tc.fn_param_types {
-		return 'u8_${method}'
+		return c_name('u8.${method}')
 	}
 	if 'int.${method}' in g.tc.fn_param_types {
-		return 'int_${method}'
+		return c_name('int.${method}')
 	}
 	if 'i64.${method}' in g.tc.fn_param_types {
-		return 'i64_${method}'
+		return c_name('i64.${method}')
 	}
 	if 'u32.${method}' in g.tc.fn_param_types {
-		return 'u32_${method}'
+		return c_name('u32.${method}')
 	}
 	if 'u64.${method}' in g.tc.fn_param_types {
-		return 'u64_${method}'
+		return c_name('u64.${method}')
 	}
 	return ''
 }
@@ -993,20 +969,12 @@ fn (mut g FlatGen) forward_decls() {
 			continue
 		}
 		if node.kind == .fn_decl && node.value != 'main' {
-			if g.has_builtins && i < g.a.user_code_start {
-				continue
-			}
+			_ = i
 			dfn := g.dotted_fn_name(node.value)
 			if g.used_fns.len > 0 && node.value !in g.used_fns && dfn !in g.used_fns {
 				continue
 			}
 			if g.has_generic_params(node) {
-				continue
-			}
-			if g.is_runtime_provided_strings_fn(node.value) {
-				continue
-			}
-			if g.is_runtime_provided_fn(node.value) {
 				continue
 			}
 			params := g.fn_params_list(node)
