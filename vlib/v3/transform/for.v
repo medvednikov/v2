@@ -85,10 +85,12 @@ fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []f
 	if iter_type.starts_with('map[') {
 		return t.rebuild_for_in_stmt(id, node)
 	}
-	if iter_type.starts_with('[]') || iter_type == 'string' || is_fixed_array_type(iter_type) {
+	effective_iter := if iter_type.starts_with('...') { '[]' + iter_type[3..] } else { iter_type }
+	if effective_iter.starts_with('[]') || effective_iter == 'string'
+		|| is_fixed_array_type(effective_iter) {
 		body_ids := t.a.children_of(&node)[header_count..].clone()
-		return t.lower_indexed_for_in(id, node, key_id, val_id, container_id, iter_type, has_index,
-			body_ids)
+		return t.lower_indexed_for_in(id, node, key_id, val_id, container_id, effective_iter,
+			has_index, body_ids)
 	}
 	return t.rebuild_for_in_stmt(id, node)
 }

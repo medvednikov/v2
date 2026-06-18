@@ -133,27 +133,29 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.write(')')
 		}
 		else {
-			mut found_method := false
+			mut best_mname := ''
 			for mname, _ in g.tc.fn_param_types {
 				if mname.ends_with('.${fn_node.value}') {
-					g.write(c_name(mname))
-					g.write('(')
-					ptypes := g.tc.fn_param_types[mname]
-					wants_ptr := ptypes.len > 0 && ptypes[0] is types.Pointer
-					if wants_ptr && !is_ptr {
-						g.write('&')
+					if best_mname.len == 0 || mname.len > best_mname.len {
+						best_mname = mname
 					}
-					g.gen_expr(base_id)
-					for i in 1 .. node.children_count {
-						g.write(', ')
-						g.gen_expr(g.a.child(&node, i))
-					}
-					g.write(')')
-					found_method = true
-					break
 				}
 			}
-			if !found_method {
+			if best_mname.len > 0 {
+				g.write(c_name(best_mname))
+				g.write('(')
+				ptypes := g.tc.fn_param_types[best_mname]
+				wants_ptr := ptypes.len > 0 && ptypes[0] is types.Pointer
+				if wants_ptr && !is_ptr {
+					g.write('&')
+				}
+				g.gen_expr(base_id)
+				for i in 1 .. node.children_count {
+					g.write(', ')
+					g.gen_expr(g.a.child(&node, i))
+				}
+				g.write(')')
+			} else {
 				g.gen_expr(g.a.child(&node, 0))
 				g.write('(')
 				g.gen_expr(base_id)

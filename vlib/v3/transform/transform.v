@@ -1207,6 +1207,19 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 			}
 			return ''
 		}
+		.or_expr {
+			if node.children_count > 0 {
+				inner_type := t.resolve_expr_type(t.a.child(&node, 0))
+				if inner_type.starts_with('!') {
+					return inner_type[1..]
+				}
+				if inner_type.starts_with('?') {
+					return inner_type[1..]
+				}
+				return inner_type
+			}
+			return ''
+		}
 		else {
 			return ''
 		}
