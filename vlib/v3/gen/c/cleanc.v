@@ -1477,7 +1477,7 @@ fn (g &FlatGen) should_emit_runtime_helper(cname string) bool {
 	if cname in g.emitted_fns {
 		return false
 	}
-	return g.used_fns.len == 0 || cname in g.used_fns
+	return g.used_fns.len == 0 || cname in g.used_fns || cname.replace('__', '.') in g.used_fns
 }
 
 fn (mut g FlatGen) global_decls() {

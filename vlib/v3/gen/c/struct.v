@@ -113,6 +113,43 @@ fn (mut g FlatGen) gen_struct_default_fields(type_name string, mut set_fields ma
 	return has
 }
 
+fn (mut g FlatGen) gen_default_value_for_type(typ types.Type) {
+	if typ is types.Struct && !typ.name.starts_with('C.') {
+		ct := g.tc.c_type(typ)
+		g.write('(${ct}){')
+		mut set_fields := map[string]bool{}
+		mut has_field := g.gen_struct_default_fields(typ.name, mut set_fields, false)
+		sname := if typ.name in g.tc.structs { typ.name } else { g.tc.qualify_name(typ.name) }
+		if sname in g.tc.structs {
+			for f in g.tc.structs[sname] {
+				if f.name in set_fields {
+					continue
+				}
+				if f.typ is types.Map {
+					c_key := g.tc.c_type(f.typ.key_type)
+					c_val := g.tc.c_type(f.typ.value_type)
+					if has_field {
+						g.write(', ')
+					}
+					g.write('.${c_name(f.name)} = new_map(sizeof(${c_key}), sizeof(${c_val}), 0, 0, 0, 0)')
+					has_field = true
+				} else if f.typ is types.Array {
+					c_elem := g.tc.c_type(f.typ.elem_type)
+					if has_field {
+						g.write(', ')
+					}
+					g.write('.${c_name(f.name)} = array_new(sizeof(${c_elem}), 0, 0)')
+					has_field = true
+				}
+			}
+		}
+		g.write('}')
+		return
+	}
+	ct := g.tc.c_type(typ)
+	g.write('(${ct}){0}')
+}
+
 struct StructDeclInfo {
 	node      flat.Node
 	module    string

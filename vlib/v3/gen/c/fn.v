@@ -55,7 +55,8 @@ fn (g &FlatGen) dotted_fn_name(name string) string {
 }
 
 fn (g &FlatGen) is_runtime_provided_fn(name string) bool {
-	return g.has_builtins && g.tc.cur_module == 'os' && name == 'getwd'
+	return g.has_builtins && ((g.tc.cur_module == 'os' && name == 'getwd')
+		|| (g.tc.cur_module == 'strconv' && name in ['f32_to_str_l', 'f64_to_str_l']))
 }
 
 fn (mut g FlatGen) gen_fn(node flat.Node) {
@@ -690,8 +691,7 @@ fn (mut g FlatGen) gen_call(node flat.Node) {
 					}
 					pidx := if is_method { pi + 1 } else { pi }
 					pt := param_types[pidx]
-					ct := g.tc.c_type(pt)
-					g.write('(${ct}){0}')
+					g.gen_default_value_for_type(pt)
 				}
 			}
 			g.write(')')
@@ -790,8 +790,7 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 			if num_provided > 0 || i > num_provided {
 				g.write(', ')
 			}
-			ct := g.tc.c_type(param_types[i])
-			g.write('(${ct}){0}')
+			g.gen_default_value_for_type(param_types[i])
 		}
 	}
 }

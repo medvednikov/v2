@@ -1514,6 +1514,14 @@ fn (mut t Transformer) make_match_eq(lhs flat.NodeId, rhs flat.NodeId) flat.Node
 	})
 }
 
+fn (mut t Transformer) match_cond_value(match_expr_id flat.NodeId, cond_val_id flat.NodeId) flat.NodeId {
+	cond_val := t.a.nodes[int(cond_val_id)]
+	if cond_val.kind == .enum_val {
+		return t.transform_enum_shorthand(cond_val_id, cond_val, t.node_type(match_expr_id))
+	}
+	return cond_val_id
+}
+
 fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.Node) flat.NodeId {
 	n_conds := t.count_conds(branch)
 	if n_conds == 1 {
@@ -1530,7 +1538,7 @@ fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.N
 			})
 			return t.transform_is_expr(is_id, t.a.nodes[int(is_id)])
 		}
-		return t.make_match_eq(match_expr_id, cond_val_id)
+		return t.make_match_eq(match_expr_id, t.match_cond_value(match_expr_id, cond_val_id))
 	}
 	mut result := flat.empty_node
 	for i in 0 .. n_conds {
@@ -1548,7 +1556,7 @@ fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.N
 			})
 			t.transform_is_expr(is_id, t.a.nodes[int(is_id)])
 		} else {
-			t.make_match_eq(match_expr_id, cond_val_id)
+			t.make_match_eq(match_expr_id, t.match_cond_value(match_expr_id, cond_val_id))
 		}
 		if int(result) < 0 {
 			result = cmp

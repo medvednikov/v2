@@ -1,48 +1,108 @@
 # v3
 
-Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser with Pratt parsing, a structured type system with sum-type variants, lexical scoping, a transformer for AST simplification (match lowering), a shared type-checking phase, a markused pass for dead-code elimination, recursive import resolution, and two backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR with a built-in linker (no external assembler or linker needed). With `-prod`, the ARM64 backend runs SSA optimization (constant folding, branch folding, dead code elimination, unreachable block removal, block merging), MIR lowering, and instruction selection.
+Clean rewrite of the V compiler. Reuses v2's scanner, uses a flat AST parser
+with Pratt parsing, a structured type system with sum-type variants, lexical
+scoping, a transformer for AST simplification, a shared type-checking phase, a
+markused pass for dead-code elimination, recursive import resolution, and two
+backends: a direct flat-AST-to-C backend and a native ARM64 backend via SSA IR
+with a built-in linker. With `-prod`, the ARM64 backend runs SSA optimization,
+MIR lowering, and instruction selection.
 
-Imports all `vlib/builtin/` V source files — both pure V (`.v`) and C-interop (`.c.v`) — for struct, enum, type alias, interface, C function declarations, and global definitions. `$if` compile-time conditionals are resolved directly in the parser (evaluate condition, parse only the taken branch, skip the other — no AST nodes or transformer pass needed). `#include` and `#flag` directives inside `$if` blocks are handled correctly: the scanner consumes the entire directive line as a single token, preventing the parser from reading past block boundaries. File selection filters out arch-specific files (`.arm64.v`, `.amd64.v`) and deduplicates function definitions when both `.v` and `.c.v` files exist. C runtime functions (println, string ops, int_str, etc.) are still provided via a built-in preamble; builtin function bodies are skipped during C code generation. Maps use the builtin `map` type name and API (`new_map`, `map__set`, `map__get`, `map__delete`, etc.) with a simplified open-addressing implementation until v3 can compile the full builtin map.v.
+Imports all `vlib/builtin/` V source files, both pure V (`.v`) and C-interop
+(`.c.v`), for struct, enum, type alias, interface, C function declarations, and
+global definitions. `$if` compile-time conditionals are resolved directly in the
+parser. The parser evaluates the condition, parses only the taken branch, and
+skips the other, so no AST nodes or transformer pass is needed for `$if` blocks.
+`#include` and `#flag` directives inside `$if` blocks are handled correctly: the
+scanner consumes the entire directive line as a single token, preventing the
+parser from reading past block boundaries. File selection filters out
+arch-specific files (`.arm64.v`, `.amd64.v`) and deduplicates function
+definitions when both `.v` and `.c.v` files exist. C runtime functions
+(println, string ops, int_str, etc.) are still provided via a built-in preamble;
+builtin function bodies are skipped during C code generation. Maps use the
+builtin `map` type name and API (`new_map`, `map__set`, `map__get`,
+`map__delete`, etc.) with a simplified open-addressing implementation until v3
+can compile the full builtin map.v.
 
-The type system (`types/`) uses a `Type` sum type with 20 variants (Primitive, Array, Map, Pointer, FnType, Struct, Enum, etc.) instead of string-based type checks. Primitive types use a `Properties` flag enum with `boolean`, `float`, `integer`, `unsigned` flags and a `size` field. The parser produces string type names; `parse_type()` bridges them to structured `Type` values. `resolve_type()` infers types from AST nodes, and `c_type()` lowers to C type strings only at emission sites. Lexical scopes store `Type` values with parent-chain lookups.
+The type system (`types/`) uses a `Type` sum type with 20 variants instead of
+string-based type checks. Primitive types use a `Properties` flag enum with
+`boolean`, `float`, `integer`, `unsigned` flags and a `size` field. The parser
+produces string type names; `parse_type()` bridges them to structured `Type`
+values. `resolve_type()` infers types from AST nodes, and `c_type()` lowers to C
+type strings only at emission sites. Lexical scopes store `Type` values with
+parent-chain lookups.
 
-Sum types are compiled to tagged unions in C: `struct Type { int typ; union { Variant1 _v1; ... }; };`. Sum type construction (`Type(Variant{...})`), `is` checks, `as` casts, and match-based smartcasting are all supported. The transformer lowers sum type match branches to `is_expr` nodes, enabling smartcast field access through union variants in both `if` and `match` blocks.
+Sum types are compiled to tagged unions in C:
+`struct Type { int typ; union { Variant1 _v1; ... }; };`.
+Sum type construction (`Type(Variant{...})`), `is` checks, `as` casts, and
+match-based smartcasting are all supported. The transformer lowers sum type
+match branches to `is_expr` nodes, enabling smartcast field access through union
+variants in both `if` and `match` blocks.
 
-Type checking runs as a shared pipeline phase before backend selection: `TypeChecker.collect()` walks the flat AST to extract function signatures, struct fields, enum names, type aliases, sum types, and C function declarations, then registers runtime method signatures. Both the C backend and future backends receive the pre-populated `TypeChecker`.
+Type checking runs as a shared pipeline phase before backend selection:
+`TypeChecker.collect()` walks the flat AST to extract function signatures,
+struct fields, enum names, type aliases, sum types, and C function declarations,
+then registers runtime method signatures. Both the C backend and future backends
+receive the pre-populated `TypeChecker`.
 
-Imports are resolved recursively: after parsing the input file, the driver collects `import_decl` nodes, resolves module paths (relative to importing file, then vlib), parses module files, and repeats until no new imports are found.
+Imports are resolved recursively: after parsing the input file, the driver
+collects `import_decl` nodes, resolves module paths, parses module files, and
+repeats until no new imports are found.
 
 ## Architecture
 
 ```
-                                                                                                  ┌→ gen C → cc
-source + vlib/builtin → scanner → flat parser → flat AST → import resolve → transform → check → markused ─┤
-                                                                                                  └→ SSA build ──→ ARM64 gen → link
-                                                                                                               └─→ optimize → MIR → insel ─┘
-                                                                                                                   (-prod only)
+source + vlib/builtin -> scanner -> flat parser -> flat AST -> imports
+  -> transform -> check -> markused -> gen C -> cc
+                                \-> SSA build -> ARM64 gen -> link
+                                             \-> optimize -> MIR -> insel (-prod)
 ```
 
-The parser directly emits a flat AST — no recursive AST intermediate, no flatten step. All nodes live in a single `[]Node` array with children as indices into a separate `[]NodeId` array. No pointer chasing, no recursive sum types during code generation.
+The parser directly emits a flat AST. There is no recursive AST intermediate and
+no flatten step. All nodes live in a single `[]Node` array with children as
+indices into a separate `[]NodeId` array. No pointer chasing, no recursive sum
+types during code generation.
 
-All `vlib/builtin/` files (38 files: both `.v` and `.c.v`) are parsed first to collect struct, enum, type alias, interface, C function, and global definitions. `$if` compile-time conditionals (`$if !no_bounds_checking`, `$if gcboehm_opt ?`, `$if freestanding`, etc.) are resolved inline during parsing — the parser evaluates the condition, parses only the taken branch, and skips the other, so no `comptime_if` AST nodes reach the transformer or backends.
+All `vlib/builtin/` files (38 files: both `.v` and `.c.v`) are parsed first to
+collect struct, enum, type alias, interface, C function, and global definitions.
+`$if` compile-time conditionals (`$if !no_bounds_checking`,
+`$if gcboehm_opt ?`, `$if freestanding`, etc.) are resolved inline during
+parsing. The parser evaluates the condition, parses only the taken branch, and
+skips the other, so no `comptime_if` AST nodes reach the transformer or backends.
 
-After parsing the input file, imports are resolved recursively: the driver scans for `import_decl` nodes, resolves module paths (relative to importing file first, then under `vlib/`), parses module `.v` and `.c.v` files, and repeats until all transitive imports are loaded.
+After parsing the input file, imports are resolved recursively: the driver scans
+for `import_decl` nodes, resolves module paths, parses module `.v` and `.c.v`
+files, and repeats until all transitive imports are loaded.
 
-The type system (`types/`) uses a `Type` sum type with structured variants instead of string-based type checks:
-- **Primitive** types use a `Properties` flag enum (`boolean`, `float`, `integer`, `unsigned`) and a `size` field — `int`, `i64`, `u8`, `f32`, `bool` are all `Primitive` with different flags
-- **Compound** types: `Array{elem_type}`, `ArrayFixed{elem_type, len}`, `Map{key_type, value_type}`, `Pointer{base_type}`, `FnType{params, return_type}`, `OptionType`, `ResultType`, `MultiReturn`
+The type system (`types/`) uses a `Type` sum type with structured variants
+instead of string-based type checks:
+- **Primitive** types use a `Properties` flag enum and a `size` field. `int`,
+  `i64`, `u8`, `f32`, and `bool` are all `Primitive` with different flags.
+- **Compound** types: `Array{elem_type}`, `ArrayFixed{elem_type, len}`,
+  `Map{key_type, value_type}`, `Pointer{base_type}`, `FnType{params,
+  return_type}`, `OptionType`, `ResultType`, `MultiReturn`
 - **Named** types: `Struct{name}`, `Enum{name, is_flag}`, `SumType{name}`, `Alias{name, base_type}`
 - **Simple** tags: `Void`, `String`, `Char`, `Rune`, `ISize`, `USize`, `Nil`, `None`
 
-`parse_type(string) Type` bridges parser string output to structured types. `resolve_type(NodeId) Type` infers types from AST nodes. `c_type(Type) string` lowers to C type strings only at final emission. Lexical scopes store `map[string]Type` with parent-chain lookups.
+`parse_type(string) Type` bridges parser string output to structured types.
+`resolve_type(NodeId) Type` infers types from AST nodes. `c_type(Type) string`
+lowers to C type strings only at final emission. Lexical scopes store
+`map[string]Type` with parent-chain lookups.
 
-`C.` structs and globals are recognized as extern C types and excluded from code generation. Function bodies from builtins are skipped during C code generation — only type and declaration information is used.
+`C.` structs and globals are recognized as extern C types and excluded from code
+generation. Function bodies from builtins are skipped during C code generation;
+only type and declaration information is used.
 
 The transformer lowers match statements to if/else chains and collects struct/global type info.
 
-The markused pass performs reachability analysis from `main`, building a call graph and BFS-walking to find all used functions. Method calls are resolved to `Type.method` names using the type checker, reducing false positives from syntactic matching. Both backends skip codegen for unreachable functions.
+The markused pass performs reachability analysis from `main`, building a call
+graph and BFS-walking to find all used functions. Method calls are resolved to
+`Type.method` names using the type checker, reducing false positives from
+syntactic matching. Both backends skip codegen for unreachable functions.
 
-The ARM64 backend builds SSA IR from the flat AST, generates native ARM64 machine code, and links a Mach-O executable directly — the entire path from source to binary uses no external tools.
+The ARM64 backend builds SSA IR from the flat AST, generates native ARM64
+machine code, and links a Mach-O executable directly. The entire path from
+source to binary uses no external tools.
 
 ## Code size
 
@@ -86,7 +146,18 @@ Compiling `hello world` (`println('hello world')`) with full builtin import (38 
 | cc        | 43 ms    | 12,864 KB |
 | **total** | **~92 ms** | **12,864 KB** |
 
-Compiling `test.v` (4,026 lines, 100 test sections: structs, globals, match, recursion, nested loops, many args, mut params, assert, heap alloc, bitwise, shifts, modulo, pointers, nested structs, negatives, else-if, early return, clamp, postfix, compound bitwise, boolean chains, iterative algorithms, bit counting, global counters, struct mutation, struct passing, 4-field structs, fibonacci, nested loops, complex match, chained calls, mixed arithmetic, large computations, vector math, matrix ops, prime checking, integer sqrt, number reverse/palindrome, stats tracking, binary search, Ackermann, triangle geometry, digital root, interpolation, bit manipulation, chained struct ops, global accumulation, sieve simulation, complex loop patterns, heap struct computations, multi-function pipeline, stress integration, methods, if-expressions, string interpolation, for-in range, enums, defer, unary ops, complex boolean, comparison expressions, deeply nested if, large constants, mixed operations, edge cases, complex recursion, struct operations, control flow edge cases, array initialization, for-in array, fixed-size arrays, string struct fields, struct field operations, println, algebraic optimizations, dead store elimination, goto, string match return, return if-expression, or blocks/optional/panic, if-guard/optional unwrap, maps, string methods, dynamic arrays, array methods/slicing/split, map iteration/array init with len, in operator/array join, strings.Builder, static methods, @FILE, unsafe blocks, function pointers):
+Compiling `test.v` (4,026 lines, 100 test sections):
+
+Coverage includes structs, globals, match, recursion, nested loops, mut params,
+assert, heap alloc, bitwise operations, pointers, nested structs, early return,
+clamp, boolean chains, iterative algorithms, global counters, struct mutation,
+fibonacci, vector math, matrix ops, prime checking, binary search, Ackermann,
+triangle geometry, digital root, interpolation, bit manipulation, methods,
+if-expressions, string interpolation, for-in range, enums, defer, unary ops,
+array initialization, fixed-size arrays, println, algebraic optimizations, dead
+store elimination, goto, optional unwrap, maps, dynamic arrays, array methods,
+map iteration, strings.Builder, static methods, @FILE, unsafe blocks, and
+function pointers.
 
 **C backend:**
 
@@ -101,9 +172,22 @@ Compiling `test.v` (4,026 lines, 100 test sections: structs, globals, match, rec
 | cc        | 79 ms    | 17,312 KB |
 | **total** | **~259 ms** | **17,312 KB** |
 
-All v3 steps (parse + transform + check + markused + gen + write) complete in ~8 ms for hello world (including 38 builtin files), ~157 ms for test.v (4,026 lines) with C backend.
+All v3 steps (parse + transform + check + markused + gen + write) complete in
+~8 ms for hello world, including 38 builtin files, and ~157 ms for `test.v`
+with the C backend.
 
 Peak RSS: 9-17 MB.
+
+Compiling `v3.v` itself with `v3` binaries built by V:
+
+Commands: `v -o v3 v3.v` and `v -prod -o v3 v3.v`.
+
+Both rows compile the target without `-prod`; the final `cc` step uses bundled TCC.
+
+| v3 build | parse | transform | check | markused | gen C | cc | total | Peak RSS |
+|----------|------:|----------:|------:|---------:|------:|---:|------:|---------:|
+| normal   | 41 ms | 296 ms    | 182 ms | 170 ms  | 349 ms | 41 ms | 1,101 ms | 139 MB |
+| `-prod`  | 15 ms | 64 ms     | 40 ms  | 37 ms   | 87 ms  | 40 ms | 306 ms   | 111 MB |
 
 ## Comparison with V1
 
@@ -116,6 +200,10 @@ Frontend-only (parse + check + gen C, no `cc`):
 
 v3 is **~3-12x faster** and uses **~3-8x less memory** than V1 for frontend compilation.
 
-v3 parses all `vlib/builtin/` files (38 files: `.v` and `.c.v`) for type definitions, C function declarations, and globals. `$if` compile-time conditionals are resolved inline in the parser. Builtin function bodies are skipped during C code generation — C runtime functions are provided via a compact preamble.
+v3 parses all `vlib/builtin/` files (38 files: `.v` and `.c.v`) for type
+definitions, C function declarations, and globals. `$if` compile-time
+conditionals are resolved inline in the parser. Builtin function bodies are
+skipped during C code generation; C runtime functions are provided via a compact
+preamble.
 
 Measured on macOS (Apple Silicon), warm runs. V1 built from `~/code/v5/v` (V 0.5.1).
