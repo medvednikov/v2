@@ -19,6 +19,7 @@ mut:
 	void_type        TypeID
 	str_type         TypeID
 	array_type       TypeID
+	map_type         TypeID
 	fn_types         map[string]TypeID
 	fn_ids           map[string]int
 	struct_types     map[string]TypeID
@@ -68,6 +69,25 @@ pub fn build_with_used(a_ &flat.FlatAst, used_fns map[string]bool, tc &types.Typ
 		kind:        .struct_t
 		fields:      array_fields
 		field_names: array_field_names
+	})
+	mut map_fields := []TypeID{}
+	map_fields << ptr_i8
+	map_fields << ptr_i8
+	map_fields << b.i64_type
+	map_fields << b.i64_type
+	map_fields << b.i64_type
+	map_fields << b.i64_type
+	mut map_field_names := []string{}
+	map_field_names << 'keys'
+	map_field_names << 'vals'
+	map_field_names << 'cap'
+	map_field_names << 'len'
+	map_field_names << 'key_size'
+	map_field_names << 'val_size'
+	b.map_type = b.m.type_store.register(Type{
+		kind:        .struct_t
+		fields:      map_fields
+		field_names: map_field_names
 	})
 	b.register_types()
 	b.register_globals()
@@ -123,8 +143,57 @@ fn (mut b Builder) register_functions() {
 	p1 << b.i64_type
 	b.register_extern('putchar', b.i64_type, p1)
 	p1 = []TypeID{}
+	p1 << b.i64_type
+	b.register_extern('close', b.i64_type, p1)
+	p1 = []TypeID{}
 	p1 << ptr_i8
 	b.register_extern('puts', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('strlen', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << b.i64_type
+	b.register_extern('strerror', ptr_i8, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('feof', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('ferror', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('fclose', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('ftell', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('rewind', b.void_type, p1)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << ptr_i8
+	b.register_extern('fputs', b.i64_type, p2)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << ptr_i8
+	b.register_extern('fopen', ptr_i8, p2)
+	mut p4 := []TypeID{}
+	p4 << ptr_i8
+	p4 << b.i64_type
+	p4 << b.i64_type
+	p4 << ptr_i8
+	b.register_extern('fread', b.i64_type, p4)
+	p4 = []TypeID{}
+	p4 << ptr_i8
+	p4 << b.i64_type
+	p4 << b.i64_type
+	p4 << ptr_i8
+	b.register_extern('fwrite', b.i64_type, p4)
+	p3 = []TypeID{}
+	p3 << ptr_i8
+	p3 << b.i64_type
+	p3 << b.i64_type
+	b.register_extern('fseek', b.i64_type, p3)
 	p1 = []TypeID{}
 	p1 << b.i64_type
 	b.register_extern('malloc', ptr_i8, p1)
@@ -141,6 +210,11 @@ fn (mut b Builder) register_functions() {
 	p3 << ptr_i8
 	p3 << b.i64_type
 	b.register_extern('memcpy', ptr_i8, p3)
+	p3 = []TypeID{}
+	p3 << ptr_i8
+	p3 << ptr_i8
+	p3 << b.i64_type
+	b.register_extern('memmove', ptr_i8, p3)
 	p3 = []TypeID{}
 	p3 << ptr_i8
 	p3 << ptr_i8
@@ -191,7 +265,7 @@ fn (mut b Builder) register_functions() {
 
 	for node in b.a.nodes {
 		if node.kind == .fn_decl {
-			if b.used_fns.len > 0 && node.value !in b.used_fns {
+			if b.used_fns.len > 0 && !b.fn_is_used(node.value) {
 				continue
 			}
 			ret_type := b.resolve_type(node.typ)
@@ -247,12 +321,33 @@ fn (b &Builder) has_fn_decl(name string) bool {
 fn (mut b Builder) build_functions() {
 	for node in b.a.nodes {
 		if node.kind == .fn_decl {
-			if b.used_fns.len > 0 && node.value !in b.used_fns {
+			if b.used_fns.len > 0 && !b.fn_is_used(node.value) {
 				continue
 			}
 			b.build_function(node)
 		}
 	}
+}
+
+fn (b &Builder) fn_is_used(name string) bool {
+	if name in b.used_fns {
+		return true
+	}
+	if name.contains('__') && name.replace('__', '.') in b.used_fns {
+		return true
+	}
+	if name.starts_with('array_') || name.starts_with('map_') || name.starts_with('string__')
+		|| name.starts_with('string.') || name.starts_with('strings__')
+		|| name.starts_with('strconv__') || name.starts_with('IError.') || name.starts_with('u8__')
+		|| name.starts_with('u8.') {
+		return true
+	}
+	if name in ['new_map', 'memdup', 'int_str', 'bool_str', 'print', 'println', 'eprint', 'eprintln',
+		'exit', 'arguments', 'tos', 'tos3', 'tos_clone', 'cstring_to_vstring', 'malloc_noscan',
+		'isnil', 'error', 'error_with_code'] {
+		return true
+	}
+	return false
 }
 
 fn (mut b Builder) build_function(node flat.Node) {
@@ -704,6 +799,11 @@ fn (mut b Builder) build_prefix(node flat.Node, _id flat.NodeId) ValueID {
 	if node.op == .amp && child.kind == .struct_init {
 		return b.build_heap_struct_init(child)
 	}
+	if node.op == .amp && child.kind == .ident {
+		if addr := b.vars[child.value] {
+			return addr
+		}
+	}
 	val := b.build_expr(child_id)
 	match node.op {
 		.minus {
@@ -720,6 +820,9 @@ fn (mut b Builder) build_prefix(node flat.Node, _id flat.NodeId) ValueID {
 		}
 		.amp {
 			return val
+		}
+		.mul {
+			return b.emit1(.load, b.deref_type(val), val)
 		}
 		else {
 			return val
@@ -755,12 +858,23 @@ fn (mut b Builder) build_call(node flat.Node) ValueID {
 			fn_node.value
 		} else {
 			mut found_name := fn_node.value
-			for fname, _ in b.fn_ids {
-				if fname.ends_with('.${fn_node.value}') {
-					found_name = fname
-					is_method = true
-					base_id = b.a.child(fn_node, 0)
-					break
+			if base.kind == .ident {
+				full_name := '${base.value}.${fn_node.value}'
+				c_name := full_name.replace('.', '__')
+				if full_name in b.fn_ids {
+					found_name = full_name
+				} else if c_name in b.fn_ids {
+					found_name = c_name
+				}
+			}
+			if found_name == fn_node.value {
+				for fname, _ in b.fn_ids {
+					if fname.ends_with('.${fn_node.value}') || fname.ends_with('__${fn_node.value}') {
+						found_name = fname
+						is_method = true
+						base_id = b.a.child(fn_node, 0)
+						break
+					}
 				}
 			}
 			found_name
@@ -769,17 +883,32 @@ fn (mut b Builder) build_call(node flat.Node) ValueID {
 		fn_name
 	}
 
+	if actual_name == 'FILE' {
+		if node.children_count > 1 {
+			return b.build_expr(b.a.child(&node, 1))
+		}
+		return b.m.get_or_add_const(b.m.type_store.get_ptr(b.i8_type), '0')
+	}
+
+	mut resolved_name := actual_name
+	if resolved_name !in b.fn_ids && resolved_name.contains('.') {
+		c_name := resolved_name.replace('.', '__')
+		if c_name in b.fn_ids {
+			resolved_name = c_name
+		}
+	}
+
 	mut fn_idx := 0
-	if idx := b.fn_ids[actual_name] {
+	if idx := b.fn_ids[resolved_name] {
 		fn_idx = idx
 	} else {
 		panic('ssa: unknown function `${actual_name}`')
 	}
-	fn_ref := b.m.add_value(.func_ref, b.void_type, actual_name, fn_idx)
+	fn_ref := b.m.add_value(.func_ref, b.void_type, resolved_name, fn_idx)
 	ret_type := b.m.funcs[fn_idx].typ
 
 	mut param_types := []TypeID{}
-	if ft_id := b.fn_types[actual_name] {
+	if ft_id := b.fn_types[resolved_name] {
 		ft := b.m.type_store.types[ft_id]
 		param_types = ft.params.clone()
 	}
@@ -992,6 +1121,12 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 	}
 	if name.starts_with('[]') || name == 'array' || name == 'Array' {
 		return b.array_type
+	}
+	if name == 'strings.Builder' || name == 'Builder' {
+		return b.array_type
+	}
+	if name.starts_with('map[') || name == 'map' || name == 'Map' {
+		return b.map_type
 	}
 	return match name {
 		'int' {
