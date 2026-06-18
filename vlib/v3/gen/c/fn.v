@@ -838,45 +838,15 @@ fn (mut g FlatGen) param_types_for(name string, fallback string) []types.Type {
 }
 
 fn (mut g FlatGen) param_types_from_decl(name string, fallback string) []types.Type {
-	mut cur_module := ''
-	for node in g.a.nodes {
-		match node.kind {
-			.file {
-				cur_module = ''
-			}
-			.module_decl {
-				cur_module = node.value
-			}
-			.fn_decl {
-				full_name := if cur_module.len > 0 && cur_module != 'main'
-					&& cur_module != 'builtin' {
-					'${cur_module}.${node.value}'
-				} else {
-					node.value
-				}
-				if name.contains('.') {
-					if node.value != name && full_name != name {
-						continue
-					}
-				} else {
-					if node.value != fallback && node.value != name && full_name != name
-						&& full_name != fallback {
-						continue
-					}
-				}
-				old_module := g.tc.cur_module
-				g.tc.cur_module = cur_module
-				mut ptypes := []types.Type{}
-				for i in 0 .. node.children_count {
-					child := g.a.child_node(&node, i)
-					if child.kind == .param {
-						ptypes << g.tc.parse_type(child.typ)
-					}
-				}
-				g.tc.cur_module = old_module
+	if name.contains('.') {
+		if ptypes := g.fn_decl_param_types[name] {
+			return ptypes
+		}
+	} else {
+		for candidate in [fallback, name] {
+			if ptypes := g.fn_decl_param_types[candidate] {
 				return ptypes
 			}
-			else {}
 		}
 	}
 	return []types.Type{}

@@ -22,8 +22,10 @@ mut:
 	tc                     types.TypeChecker
 	has_builtins           bool
 	tmp_count              int
+	line_start             bool
 	modules                map[string]string // alias -> full module name
 	fn_ptr_types           map[string]string // fn_ptr:ret|params -> typedef name
+	fn_decl_param_types    map[string][]types.Type
 	runtime_inits          []string
 	cur_fn_ret             types.Type = types.Type(types.void_)
 	cur_fn_ret_is_optional bool
@@ -41,6 +43,7 @@ pub fn FlatGen.new() FlatGen {
 		str_lits:      []string{}
 		defers:        []flat.NodeId{}
 		runtime_inits: []string{}
+		line_start:    true
 	}
 }
 
@@ -65,10 +68,13 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 	g.collect_gen_info()
 	const_code := g.precompute_consts()
 	orig_sb := g.sb
+	orig_line_start := g.line_start
 	g.sb = strings.new_builder(4096)
+	g.line_start = true
 	g.gen_fns_dispatch(no_parallel)
 	fn_code := g.sb.str()
 	g.sb = orig_sb
+	g.line_start = orig_line_start
 	g.preamble()
 	g.enum_decls()
 	g.type_alias_decls()
@@ -98,19 +104,31 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 fn (mut g FlatGen) collect_gen_info() {
 	for node in g.a.nodes {
 		match node.kind {
+			.file {
+				g.tc.cur_module = ''
+			}
 			.module_decl {
 				g.tc.cur_module = node.value
 			}
 			.fn_decl {
+				full_name := if g.tc.cur_module.len > 0 && g.tc.cur_module != 'main'
+					&& g.tc.cur_module != 'builtin' {
+					'${g.tc.cur_module}.${node.value}'
+				} else {
+					node.value
+				}
+				mut ptypes := []types.Type{}
 				for i in 0 .. node.children_count {
 					child := g.a.child_node(&node, i)
 					if child.kind == .param {
 						pt := g.tc.parse_type(child.typ)
+						ptypes << pt
 						if pt is types.FnType {
 							g.resolve_fn_ptr_type(g.tc.c_type(pt))
 						}
 					}
 				}
+				g.register_fn_decl_param_types(node.value, full_name, ptypes)
 			}
 			.global_decl {
 				for i in 0 .. node.children_count {
@@ -180,12 +198,24 @@ fn (mut g FlatGen) collect_gen_info() {
 	g.modules['strings'] = 'strings'
 }
 
+fn (mut g FlatGen) register_fn_decl_param_types(name string, full_name string, ptypes []types.Type) {
+	if name !in g.fn_decl_param_types {
+		g.fn_decl_param_types[name] = ptypes.clone()
+	}
+	if full_name !in g.fn_decl_param_types {
+		g.fn_decl_param_types[full_name] = ptypes.clone()
+	}
+}
+
 fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	orig := g.sb
+	orig_line_start := g.line_start
 	g.sb = strings.new_builder(64)
+	g.line_start = true
 	g.gen_expr(id)
 	result := g.sb.str()
 	g.sb = orig
+	g.line_start = orig_line_start
 	return result
 }
 
@@ -1174,10 +1204,13 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 			for ci in 0 .. val_node.children_count {
 				elem_id := g.a.child(&val_node, ci)
 				tmp2 := g.sb
+				tmp2_line_start := g.line_start
 				g.sb = strings.new_builder(64)
+				g.line_start = true
 				g.gen_expr(elem_id)
 				estr := g.sb.str()
 				g.sb = tmp2
+				g.line_start = tmp2_line_start
 				g.runtime_inits << '\t${qname}[${ci}] = ${estr};'
 			}
 		} else if g.is_runtime_assignable(val_id) {
@@ -1202,7 +1235,9 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 
 fn (mut g FlatGen) precompute_consts() string {
 	old_sb := g.sb
+	old_line_start := g.line_start
 	g.sb = strings.new_builder(1024)
+	g.line_start = true
 	mut emitted := map[string]bool{}
 	mut deferred := []string{}
 	for name, val_id in g.const_vals {
@@ -1248,6 +1283,7 @@ fn (mut g FlatGen) precompute_consts() string {
 	}
 	result := g.sb.str()
 	g.sb = old_sb
+	g.line_start = old_line_start
 	return result
 }
 
@@ -1391,20 +1427,28 @@ fn (g &FlatGen) op_str(op flat.Op) string {
 }
 
 fn (mut g FlatGen) write(s string) {
-	if g.sb.len == 0 || g.sb.last_n(1) == '\n' {
+	if g.line_start {
 		g.write_indent()
 	}
+	if s.len == 0 {
+		if g.indent > 0 {
+			g.line_start = false
+		}
+		return
+	}
 	g.sb.write_string(s)
+	g.line_start = s[s.len - 1] == `\n`
 }
 
 fn (mut g FlatGen) writeln(s string) {
 	if s.len > 0 {
-		if g.sb.len == 0 || g.sb.last_n(1) == '\n' {
+		if g.line_start {
 			g.write_indent()
 		}
 		g.sb.write_string(s)
 	}
 	g.sb.write_string('\n')
+	g.line_start = true
 }
 
 fn (mut g FlatGen) write_indent() {

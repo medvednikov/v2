@@ -286,8 +286,10 @@ fn (g &FlatGen) new_parallel_worker(worker_id int) &FlatGen {
 		tc:                     g.clone_parallel_type_checker()
 		has_builtins:           g.has_builtins
 		tmp_count:              (worker_id + 1) * 100_000
+		line_start:             true
 		modules:                g.modules.clone()
 		fn_ptr_types:           g.fn_ptr_types.clone()
+		fn_decl_param_types:    g.fn_decl_param_types.clone()
 		runtime_inits:          g.runtime_inits.clone()
 		cur_fn_ret:             g.cur_fn_ret
 		cur_fn_ret_is_optional: g.cur_fn_ret_is_optional
