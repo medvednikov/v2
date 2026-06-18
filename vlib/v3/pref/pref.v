@@ -18,27 +18,37 @@ pub fn new_preferences() &Preferences {
 
 fn detect_vroot() string {
 	if os.args.len > 0 && os.args[0].len > 0 {
-		mut dir := os.dir(os.args[0])
-		if !os.is_abs_path(dir) {
-			cwd := os.getwd()
-			if cwd.len > 0 {
-				dir = os.join_path_single(cwd, dir)
-			}
-		}
-		for _ in 0 .. 8 {
-			if os.is_dir(os.join_path_single(os.join_path_single(dir, 'vlib'), 'builtin')) {
-				return dir
-			}
-			parent := os.dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
+		vroot := detect_vroot_from(os.args[0])
+		if vroot.len > 0 {
+			return vroot
 		}
 	}
-	cwd := os.getwd()
-	if os.is_dir(os.join_path_single(os.join_path_single(cwd, 'vlib'), 'builtin')) {
-		return cwd
+	return detect_vroot_from(os.getwd())
+}
+
+fn detect_vroot_from(start string) string {
+	if start.len == 0 {
+		return ''
+	}
+	mut dir := start
+	if !os.is_abs_path(dir) {
+		cwd := os.getwd()
+		if cwd.len > 0 {
+			dir = os.join_path_single(cwd, dir)
+		}
+	}
+	if !os.is_dir(dir) {
+		dir = os.dir(dir)
+	}
+	for _ in 0 .. 8 {
+		if os.is_dir(os.join_path_single(os.join_path_single(dir, 'vlib'), 'builtin')) {
+			return dir
+		}
+		parent := os.dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
 	}
 	return ''
 }
@@ -75,7 +85,8 @@ pub fn file_has_incompatible_os_suffix(file string, current_os string) bool {
 	if os_name != 'macos' && (file.contains('_macos.') || file.contains('_darwin.')) {
 		return true
 	}
-	if os_name != 'macos' && os_name != 'freebsd' && os_name != 'openbsd' && os_name != 'netbsd' && os_name != 'dragonfly' && file.contains('_bsd.') {
+	if os_name != 'macos' && os_name != 'freebsd' && os_name != 'openbsd' && os_name != 'netbsd'
+		&& os_name != 'dragonfly' && file.contains('_bsd.') {
 		return true
 	}
 	if os_name != 'android' && file.contains('_android') {
@@ -99,7 +110,8 @@ pub fn file_has_incompatible_os_suffix(file string, current_os string) bool {
 	if os_name != 'solaris' && file.contains('_solaris.') {
 		return true
 	}
-	if file.contains('.amd64.') || file.contains('_amd64.') || file.contains('.arm64.') || file.contains('_arm64.') {
+	if file.contains('.amd64.') || file.contains('_amd64.') || file.contains('.arm64.')
+		|| file.contains('_arm64.') {
 		return true
 	}
 	return false
@@ -193,7 +205,8 @@ pub fn comptime_flag_value(p &Preferences, name string) bool {
 		}
 		'bsd' {
 			tos := p.normalized_target_os()
-			return tos == 'macos' || tos == 'freebsd' || tos == 'openbsd' || tos == 'netbsd' || tos == 'dragonfly'
+			return tos == 'macos' || tos == 'freebsd' || tos == 'openbsd' || tos == 'netbsd'
+				|| tos == 'dragonfly'
 		}
 		'x64', 'amd64' {
 			$if amd64 {
@@ -225,7 +238,8 @@ pub fn comptime_flag_value(p &Preferences, name string) bool {
 			}
 			return false
 		}
-		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding', 'nofloat' {
+		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
+		'nofloat' {
 			return name in p.user_defines
 		}
 		else {
