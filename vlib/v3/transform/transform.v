@@ -561,6 +561,9 @@ fn (mut t Transformer) transform_assign_stmt(id flat.NodeId, node flat.Node) []f
 	if node.children_count == 0 {
 		return arr1(id)
 	}
+	if expanded := t.try_expand_multi_return_assign(node) {
+		return expanded
+	}
 	if lowered := t.try_lower_map_index_assign(node) {
 		return lowered
 	}
@@ -641,6 +644,9 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 			}
 		}
 	}
+	if expanded := t.try_expand_multi_return_decl(node) {
+		return expanded
+	}
 	// Track the variable type for the common 2-child case.
 	if node.children_count == 2 {
 		lhs := t.a.child_node(&node, 0)
@@ -674,6 +680,72 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 		value:          node.value
 		typ:            if node.typ.len > 0 { node.typ } else { inferred_typ }
 	}))
+}
+
+fn (mut t Transformer) try_expand_multi_return_decl(node flat.Node) ?[]flat.NodeId {
+	if node.kind != .decl_assign || node.children_count < 3 || isnil(t.tc) {
+		return none
+	}
+	rhs_id := t.a.child(&node, 1)
+	if rhs_type := t.tc.expr_type(rhs_id) {
+		if rhs_type is types.MultiReturn {
+			tmp_name := t.new_temp('multi_ret')
+			mut result := []flat.NodeId{}
+			new_rhs := t.transform_expr(rhs_id)
+			t.drain_pending(mut result)
+			result << t.make_decl_assign(tmp_name, new_rhs)
+			for j, field_type in rhs_type.types {
+				lhs_idx := if j == 0 { 0 } else { j + 1 }
+				if lhs_idx >= node.children_count {
+					continue
+				}
+				lhs_id := t.a.child(&node, lhs_idx)
+				lhs := t.a.nodes[int(lhs_id)]
+				if lhs.kind != .ident || lhs.value == '_' {
+					continue
+				}
+				field_name := 'arg${j}'
+				field_type_name := field_type.name()
+				field := t.make_selector(t.make_ident(tmp_name), field_name, field_type_name)
+				result << t.make_decl_assign_typed(lhs.value, field, field_type_name)
+			}
+			return result
+		}
+	}
+	return none
+}
+
+fn (mut t Transformer) try_expand_multi_return_assign(node flat.Node) ?[]flat.NodeId {
+	if node.kind != .assign || node.children_count < 3 || isnil(t.tc) {
+		return none
+	}
+	rhs_id := t.a.child(&node, 1)
+	if rhs_type := t.tc.expr_type(rhs_id) {
+		if rhs_type is types.MultiReturn {
+			tmp_name := t.new_temp('multi_ret')
+			mut result := []flat.NodeId{}
+			new_rhs := t.transform_expr(rhs_id)
+			t.drain_pending(mut result)
+			result << t.make_decl_assign(tmp_name, new_rhs)
+			for j, field_type in rhs_type.types {
+				lhs_idx := if j == 0 { 0 } else { j + 1 }
+				if lhs_idx >= node.children_count {
+					continue
+				}
+				lhs_id := t.a.child(&node, lhs_idx)
+				lhs := t.a.nodes[int(lhs_id)]
+				if lhs.kind == .ident && lhs.value == '_' {
+					continue
+				}
+				field_name := 'arg${j}'
+				field_type_name := field_type.name()
+				field := t.make_selector(t.make_ident(tmp_name), field_name, field_type_name)
+				result << t.make_assign(t.transform_lvalue(lhs_id), field)
+			}
+			return result
+		}
+	}
+	return none
 }
 
 fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []flat.NodeId {
@@ -734,7 +806,7 @@ fn (mut t Transformer) transform_if_stmt(id flat.NodeId, node flat.Node) []flat.
 	if expanded := t.try_expand_if_guard(id, node) {
 		return expanded
 	}
-	new_id := t.transform_if_expr(id, node)
+	new_id := t.transform_if_branches_with_smartcast(id, node)
 	return arr1(new_id)
 }
 
@@ -868,6 +940,9 @@ fn (mut t Transformer) transform_call_expr(id flat.NodeId, node flat.Node) flat.
 }
 
 fn (mut t Transformer) transform_if_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	if lowered := t.try_expand_if_expr_value(id, node) {
+		return lowered
+	}
 	return t.transform_if_branches_with_smartcast(id, node)
 }
 

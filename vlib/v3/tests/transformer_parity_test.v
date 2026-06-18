@@ -44,6 +44,21 @@ fn first_decl_rhs(a &flat.FlatAst, fn_name string) flat.Node {
 	return flat.Node{}
 }
 
+fn decl_rhs(a &flat.FlatAst, fn_name string, name string) flat.Node {
+	f := find_fn(a, fn_name)
+	for i in 0 .. f.children_count {
+		stmt := a.child_node(&f, i)
+		if stmt.kind == .decl_assign && stmt.children_count == 2 {
+			lhs := a.child_node(stmt, 0)
+			if lhs.kind == .ident && lhs.value == name {
+				return *a.child_node(stmt, 1)
+			}
+		}
+	}
+	assert false
+	return flat.Node{}
+}
+
 fn count_kind(a &flat.FlatAst, id flat.NodeId, kind flat.NodeKind) int {
 	if int(id) < 0 {
 		return 0
@@ -70,6 +85,42 @@ fn count_call_name(a &flat.FlatAst, id flat.NodeId, name string) int {
 	}
 	for i in 0 .. node.children_count {
 		total += count_call_name(a, a.child(&node, i), name)
+	}
+	return total
+}
+
+fn count_wide_decl_assigns(a &flat.FlatAst, id flat.NodeId) int {
+	if int(id) < 0 {
+		return 0
+	}
+	node := a.nodes[int(id)]
+	mut total := if node.kind == .decl_assign && node.children_count > 2 { 1 } else { 0 }
+	for i in 0 .. node.children_count {
+		total += count_wide_decl_assigns(a, a.child(&node, i))
+	}
+	return total
+}
+
+fn count_wide_assigns(a &flat.FlatAst, id flat.NodeId) int {
+	if int(id) < 0 {
+		return 0
+	}
+	node := a.nodes[int(id)]
+	mut total := if node.kind == .assign && node.children_count > 2 { 1 } else { 0 }
+	for i in 0 .. node.children_count {
+		total += count_wide_assigns(a, a.child(&node, i))
+	}
+	return total
+}
+
+fn count_selector_value(a &flat.FlatAst, id flat.NodeId, value string) int {
+	if int(id) < 0 {
+		return 0
+	}
+	node := a.nodes[int(id)]
+	mut total := if node.kind == .selector && node.value == value { 1 } else { 0 }
+	for i in 0 .. node.children_count {
+		total += count_selector_value(a, a.child(&node, i), value)
 	}
 	return total
 }
@@ -160,6 +211,100 @@ fn choose(flag bool) int {
 	}
 	assert body_ids.len == 1
 	assert a.nodes[int(body_ids[0])].kind == .if_expr
+}
+
+fn test_if_expr_value_lowers_to_temp_and_branch_assigns() {
+	a := parse_transform_source('
+fn main() {
+	x := if true {
+		1
+	} else {
+		2
+	}
+}
+')
+	rhs := decl_rhs(a, 'main', 'x')
+	assert rhs.kind == .ident
+	assert rhs.value.starts_with('__if_val_')
+	main_fn := find_fn(a, 'main')
+	mut if_count := 0
+	mut assign_count := 0
+	for i in 0 .. main_fn.children_count {
+		child_id := a.child(&main_fn, i)
+		if_count += count_kind(a, child_id, .if_expr)
+		assign_count += count_kind(a, child_id, .assign)
+	}
+	assert if_count == 1
+	assert assign_count == 2
+}
+
+fn test_if_expr_call_arg_lowers_before_call() {
+	a := parse_transform_source('
+fn use(x int) int {
+	return x
+}
+
+fn main() {
+	x := use(if true { 1 } else { 2 })
+}
+')
+	rhs := decl_rhs(a, 'main', 'x')
+	assert rhs.kind == .call
+	assert rhs.children_count == 2
+	arg := a.child_node(&rhs, 1)
+	assert arg.kind == .ident
+	assert arg.value.starts_with('__if_val_')
+}
+
+fn test_multi_return_decl_lowers_to_temp_field_decls() {
+	a := parse_transform_source("
+fn pair() (int, string) {
+	return 1, 'ok'
+}
+
+fn main() {
+	a, b := pair()
+}
+")
+	main_fn := find_fn(a, 'main')
+	mut wide_decl_count := 0
+	for i in 0 .. main_fn.children_count {
+		wide_decl_count += count_wide_decl_assigns(a, a.child(&main_fn, i))
+	}
+	assert wide_decl_count == 0
+	a_rhs := decl_rhs(a, 'main', 'a')
+	b_rhs := decl_rhs(a, 'main', 'b')
+	assert a_rhs.kind == .selector
+	assert a_rhs.value == 'arg0'
+	assert b_rhs.kind == .selector
+	assert b_rhs.value == 'arg1'
+}
+
+fn test_multi_return_assign_lowers_to_temp_field_assigns() {
+	a := parse_transform_source("
+fn pair() (int, string) {
+	return 1, 'ok'
+}
+
+fn main() {
+	mut a := 0
+	mut b := ''
+	a, b = pair()
+}
+")
+	main_fn := find_fn(a, 'main')
+	mut wide_assign_count := 0
+	mut arg0_count := 0
+	mut arg1_count := 0
+	for i in 0 .. main_fn.children_count {
+		child_id := a.child(&main_fn, i)
+		wide_assign_count += count_wide_assigns(a, child_id)
+		arg0_count += count_selector_value(a, child_id, 'arg0')
+		arg1_count += count_selector_value(a, child_id, 'arg1')
+	}
+	assert wide_assign_count == 0
+	assert arg0_count == 1
+	assert arg1_count == 1
 }
 
 fn test_or_expr_lowers_to_temp_and_if() {

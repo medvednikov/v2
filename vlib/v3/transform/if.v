@@ -76,10 +76,7 @@ fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]f
 //   mut __if_tmp_N := zero_value
 //   if cond { __if_tmp_N = a } else { __if_tmp_N = b }
 //   x := __if_tmp_N
-//
-// Currently returns none -- this will be invoked from the assignment
-// transform once if-as-value detection is wired up.
-fn (mut t Transformer) try_expand_if_expr_value(_id flat.NodeId, node flat.Node) ?flat.NodeId {
+fn (mut t Transformer) try_expand_if_expr_value(id flat.NodeId, node flat.Node) ?flat.NodeId {
 	if node.kind != .if_expr {
 		return none
 	}
@@ -87,12 +84,170 @@ fn (mut t Transformer) try_expand_if_expr_value(_id flat.NodeId, node flat.Node)
 	if node.children_count < 3 {
 		return none
 	}
-	// TODO: When the caller (assignment transform) invokes this, we will:
-	//   1. Allocate a temp name via t.new_temp('__if_tmp')
-	//   2. Create a decl_assign for the temp with a zero-value RHS
-	//   3. Rewrite each branch's last expression into an assignment to the temp
-	//   4. Return the temp ident as the replacement value for the original RHS
-	return none
+	mut result_type := t.if_expr_result_type(id, node)
+	if result_type.len == 0 || result_type == 'void' {
+		return none
+	}
+
+	tmp_name := t.new_temp('if_val')
+	outer_pending := t.pending_stmts.clone()
+	t.pending_stmts.clear()
+
+	mut prelude := []flat.NodeId{}
+	prelude << t.make_decl_assign_typed(tmp_name, t.zero_value_for_type(result_type), result_type)
+	for stmt in t.build_if_value_chain(id, tmp_name, result_type) {
+		prelude << stmt
+	}
+
+	t.pending_stmts = outer_pending
+	for stmt in prelude {
+		t.pending_stmts << stmt
+	}
+	tmp := t.make_ident(tmp_name)
+	t.a.nodes[int(tmp)].typ = result_type
+	return tmp
+}
+
+fn (t &Transformer) if_expr_result_type(id flat.NodeId, node flat.Node) string {
+	mut result_type := t.node_type(id)
+	if result_type.len > 0 {
+		return result_type
+	}
+	if node.typ.len > 0 {
+		return t.normalize_type_alias(node.typ)
+	}
+	if !isnil(t.tc) {
+		if typ := t.tc.expr_type(id) {
+			name := typ.name()
+			if name.len > 0 {
+				return t.normalize_type_alias(name)
+			}
+		}
+	}
+	if node.children_count >= 2 {
+		then_type := t.stmt_value_type(t.a.child(&node, 1))
+		if then_type.len > 0 {
+			return t.normalize_type_alias(then_type)
+		}
+	}
+	if node.children_count >= 3 {
+		else_type := t.stmt_value_type(t.a.child(&node, 2))
+		if else_type.len > 0 {
+			return t.normalize_type_alias(else_type)
+		}
+	}
+	return ''
+}
+
+fn (mut t Transformer) build_if_value_chain(if_id flat.NodeId, target_name string, target_type string) []flat.NodeId {
+	if_node := t.a.nodes[int(if_id)]
+	if if_node.kind != .if_expr || if_node.children_count < 2 {
+		return []flat.NodeId{}
+	}
+	cond_id := t.a.child(&if_node, 0)
+	then_id := t.a.child(&if_node, 1)
+	has_else := if_node.children_count >= 3
+
+	all_is := t.extract_all_is_exprs(cond_id)
+	for info in all_is {
+		t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
+	}
+	new_cond := t.transform_expr(cond_id)
+	mut result := []flat.NodeId{}
+	t.drain_pending(mut result)
+
+	then_block := t.if_value_branch_block(then_id, target_name, target_type)
+	for _ in all_is {
+		t.pop_smartcast()
+	}
+
+	mut else_block := flat.empty_node
+	if has_else {
+		else_id := t.a.child(&if_node, 2)
+		else_node := t.a.nodes[int(else_id)]
+		if else_node.kind == .if_expr {
+			else_block = t.make_block(t.build_if_value_chain(else_id, target_name, target_type))
+		} else {
+			else_block = t.if_value_branch_block(else_id, target_name, target_type)
+		}
+	}
+	result << t.make_if(new_cond, then_block, else_block)
+	return result
+}
+
+fn (mut t Transformer) if_value_branch_block(branch_id flat.NodeId, target_name string, target_type string) flat.NodeId {
+	if int(branch_id) < 0 {
+		return t.make_block([]flat.NodeId{})
+	}
+	branch := t.a.nodes[int(branch_id)]
+	if branch.kind == .if_expr {
+		return t.make_block(t.build_if_value_chain(branch_id, target_name, target_type))
+	}
+	if branch.kind != .block {
+		mut result := []flat.NodeId{}
+		value := t.transform_expr(branch_id)
+		t.drain_pending(mut result)
+		result << t.make_assign(t.make_ident(target_name), value)
+		return t.make_block(result)
+	}
+	if branch.children_count == 0 {
+		return t.make_block([]flat.NodeId{})
+	}
+
+	mut stmt_ids := []flat.NodeId{cap: branch.children_count}
+	for i in 0 .. branch.children_count {
+		stmt_ids << t.a.child(&branch, i)
+	}
+	mut result := []flat.NodeId{}
+	if stmt_ids.len > 1 {
+		for stmt in t.transform_stmts(stmt_ids[..stmt_ids.len - 1]) {
+			result << stmt
+		}
+	}
+
+	tail_id := stmt_ids[stmt_ids.len - 1]
+	tail := t.a.nodes[int(tail_id)]
+	if tail.kind == .return_stmt {
+		for stmt in t.transform_stmt(tail_id) {
+			result << stmt
+		}
+		t.drain_pending(mut result)
+		return t.make_block(result)
+	}
+	if tail.kind == .expr_stmt && tail.children_count > 0 {
+		inner_id := t.a.child(&tail, 0)
+		inner := t.a.nodes[int(inner_id)]
+		if inner.kind == .call && t.is_noreturn_call(inner) {
+			for stmt in t.transform_stmt(tail_id) {
+				result << stmt
+			}
+			t.drain_pending(mut result)
+			return t.make_block(result)
+		}
+		if t.node_type(inner_id) == 'void' {
+			for stmt in t.transform_stmt(tail_id) {
+				result << stmt
+			}
+			t.drain_pending(mut result)
+			return t.make_block(result)
+		}
+		value := t.transform_expr(inner_id)
+		t.drain_pending(mut result)
+		result << t.make_assign(t.make_ident(target_name), value)
+		return t.make_block(result)
+	}
+	if t.is_stmt_kind(tail.kind) {
+		for stmt in t.transform_stmt(tail_id) {
+			result << stmt
+		}
+		t.drain_pending(mut result)
+		return t.make_block(result)
+	}
+	value := t.transform_expr(tail_id)
+	t.drain_pending(mut result)
+	result << t.make_assign(t.make_ident(target_name), value)
+	_ = target_type
+	return t.make_block(result)
 }
 
 // transform_is_condition transforms an `x is Type` condition node.
