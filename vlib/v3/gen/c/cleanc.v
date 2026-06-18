@@ -189,6 +189,95 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	return result
 }
 
+fn (mut g FlatGen) const_expr_to_string(id flat.NodeId, seen []string) string {
+	if int(id) < 0 || int(id) >= g.a.nodes.len {
+		return ''
+	}
+	node := g.a.nodes[int(id)]
+	return match node.kind {
+		.ident {
+			if node.value in g.const_vals && node.value !in seen {
+				mut next_seen := seen.clone()
+				next_seen << node.value
+				dep_expr := g.const_expr_to_string(g.const_vals[node.value], next_seen)
+				if dep_expr.trim_space().len > 0 {
+					return dep_expr
+				}
+			}
+			g.expr_to_string(id)
+		}
+		.infix {
+			lhs := g.const_expr_to_string(g.a.child(&node, 0), seen)
+			rhs := g.const_expr_to_string(g.a.child(&node, 1), seen)
+			'(${lhs}) ${g.op_str(node.op)} (${rhs})'
+		}
+		.prefix {
+			child := g.const_expr_to_string(g.a.child(&node, 0), seen)
+			'${g.op_str(node.op)}(${child})'
+		}
+		.paren {
+			child := g.const_expr_to_string(g.a.child(&node, 0), seen)
+			'(${child})'
+		}
+		.cast_expr {
+			target_type := g.tc.parse_type(node.value)
+			if target_type !is types.Primitive && target_type !is types.Char
+				&& target_type !is types.Rune && target_type !is types.ISize
+				&& target_type !is types.USize && target_type !is types.Pointer
+				&& target_type !is types.Enum {
+				return g.expr_to_string(id)
+			}
+			ct := g.tc.c_type(target_type)
+			child := g.const_expr_to_string(g.a.child(&node, 0), seen)
+			'(${ct})(${child})'
+		}
+		.array_literal {
+			mut parts := []string{}
+			for i in 0 .. node.children_count {
+				parts << g.const_expr_to_string(g.a.child(&node, i), seen)
+			}
+			'{${parts.join(', ')}}'
+		}
+		.int_literal, .float_literal, .bool_literal, .char_literal, .enum_val, .sizeof_expr {
+			g.expr_to_string(id)
+		}
+		else {
+			g.expr_to_string(id)
+		}
+	}
+}
+
+fn (g &FlatGen) const_ident_c_name(name string) string {
+	mod := if name in g.const_modules { g.const_modules[name] } else { '' }
+	if mod.len > 0 && mod != 'main' && mod != 'builtin' {
+		return c_name('${mod}.${name}')
+	}
+	return c_name(name)
+}
+
+fn (mut g FlatGen) fixed_array_len_expr(type_name string, fallback int) string {
+	if !type_name.starts_with('[') {
+		return '${fallback}'
+	}
+	idx := type_name.index_u8(`]`)
+	if idx <= 1 {
+		return '${fallback}'
+	}
+	raw_len := type_name[1..idx]
+	clean_len := raw_len.replace('_', '')
+	if clean_len.len > 0 && clean_len[0] >= `0` && clean_len[0] <= `9` {
+		return clean_len
+	}
+	if raw_len in g.const_vals {
+		expr := g.const_expr_to_string(g.const_vals[raw_len], []string{})
+		if expr.trim_space().len > 0 {
+			return expr
+		}
+		return g.const_ident_c_name(raw_len)
+	}
+	return c_name(raw_len)
+}
+
 fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 	if int(id) < 0 {
 		return
@@ -1453,11 +1542,11 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 	if val_node.kind == .empty {
 		return
 	}
-	tmp_sb := g.sb
-	g.sb = strings.new_builder(256)
-	g.gen_expr(val_id)
-	expr_str := g.sb.str()
-	g.sb = tmp_sb
+	expr_str := if g.is_const_expr(val_id) {
+		g.const_expr_to_string(val_id, []string{})
+	} else {
+		g.expr_to_string(val_id)
+	}
 	if expr_str.trim_space().len == 0 {
 		return
 	}
@@ -1555,7 +1644,7 @@ fn (g &FlatGen) is_const_expr(id flat.NodeId) bool {
 	}
 	node := g.a.nodes[int(id)]
 	return match node.kind {
-		.int_literal, .float_literal, .bool_literal, .char_literal, .enum_val {
+		.int_literal, .float_literal, .bool_literal, .char_literal, .enum_val, .sizeof_expr {
 			true
 		}
 		.prefix {

@@ -177,7 +177,8 @@ fn main() {
 			tcc_dir := os.join_path(os.home_dir(), 'code', 'v', 'thirdparty', 'tcc')
 			tcc_path := os.join_path(tcc_dir, 'tcc.exe')
 			tcc_includes := '-I${os.join_path(tcc_dir, 'lib', 'include')}'
-			cc_cmd = '${tcc_path} ${tcc_includes} ${warn_flags} -o ${bin_file} ${output_file} -lm'
+			tcc_lib := '-L${os.join_path(tcc_dir, 'lib')}'
+			cc_cmd = '${tcc_path} ${tcc_includes} ${tcc_lib} ${warn_flags} -o ${bin_file} ${output_file} -lm'
 			println('  > ${cc_cmd}')
 			result = os.execute(cc_cmd)
 		}

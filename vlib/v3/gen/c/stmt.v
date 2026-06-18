@@ -142,7 +142,8 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 							}
 							if expr_ct != base_ct && struct_init_ct != base_ct
 								&& !g.type_names_match(expr_type, base)
-								&& !g.call_constructs_type(ret_id, base) && expr_type !is types.Primitive {
+								&& !g.call_constructs_type(ret_id, base)
+								&& expr_type !is types.Primitive {
 								g.writeln('return (${ct}){.ok = false};')
 							} else {
 								g.write('return (${ct}){.ok = true, .value = ')
@@ -371,7 +372,12 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			if init_type is types.ArrayFixed {
 				c_elem := g.tc.c_type(init_type.elem_type)
 				lhs_str := g.decl_lhs_str(lhs_id)
-				g.writeln('${c_elem} ${lhs_str}[${init_type.len}] = {0};')
+				len_expr := g.fixed_array_len_expr(rhs.value, init_type.len)
+				if len_expr == '0' {
+					g.writeln('${c_elem} ${lhs_str}[0];')
+				} else {
+					g.writeln('${c_elem} ${lhs_str}[${len_expr}] = {0};')
+				}
 				if lhs.kind == .ident {
 					g.tc.cur_scope.insert(lhs.value, init_type)
 				}
