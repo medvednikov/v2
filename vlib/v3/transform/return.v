@@ -70,7 +70,7 @@ fn (mut t Transformer) return_block_from_branch(branch_id flat.NodeId, ret_typ s
 	branch := t.a.nodes[int(branch_id)]
 	if branch.kind != .block {
 		// single expression branch: just `return <expr>`
-		ret := t.make_return(t.transform_expr(branch_id), ret_typ)
+		ret := t.make_return(t.wrap_sum_return_expr(branch_id), ret_typ)
 		return t.make_block(arr1(ret))
 	}
 	mut stmt_ids := []flat.NodeId{}
@@ -84,7 +84,7 @@ fn (mut t Transformer) return_block_from_branch(branch_id flat.NodeId, ret_typ s
 	lead := stmt_ids[..stmt_ids.len - 1].clone()
 	new_lead := t.transform_stmts(lead)
 	tail_expr := t.branch_tail_expr(branch_id)
-	ret := t.make_return(t.transform_expr(tail_expr), ret_typ)
+	ret := t.make_return(t.wrap_sum_return_expr(tail_expr), ret_typ)
 	mut all := []flat.NodeId{}
 	for s in new_lead {
 		all << s

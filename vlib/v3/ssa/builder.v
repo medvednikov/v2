@@ -1,11 +1,13 @@
 module ssa
 
 import v3.flat
+import v3.types
 
 pub struct Builder {
 mut:
-	m                &Module       = unsafe { nil }
-	a                &flat.FlatAst = unsafe { nil }
+	m                &Module            = unsafe { nil }
+	a                &flat.FlatAst      = unsafe { nil }
+	tc               &types.TypeChecker = unsafe { nil }
 	used_fns         map[string]bool
 	cur_func         int
 	cur_block        BlockID
@@ -24,13 +26,14 @@ mut:
 }
 
 pub fn build(a_ &flat.FlatAst) &Module {
-	return build_with_used(a_, map[string]bool{})
+	return build_with_used(a_, map[string]bool{}, unsafe { nil })
 }
 
-pub fn build_with_used(a_ &flat.FlatAst, used_fns map[string]bool) &Module {
+pub fn build_with_used(a_ &flat.FlatAst, used_fns map[string]bool, tc &types.TypeChecker) &Module {
 	mut b := Builder{
 		m:        Module.new()
 		a:        unsafe { a_ }
+		tc:       unsafe { tc }
 		used_fns: used_fns
 	}
 	b.void_type = TypeID(0)

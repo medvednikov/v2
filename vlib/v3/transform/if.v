@@ -10,8 +10,6 @@ import v3.flat
 //   __or_tmp_N := maybe_call()
 //   if !__or_tmp_N.is_error { val := __or_tmp_N.data; body... }
 //
-// Currently returns none -- option/result type tracking is not yet in place,
-// but the infrastructure is here for when it is.
 fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
 	if node.kind != .if_expr || node.children_count < 2 {
 		return none
@@ -21,15 +19,48 @@ fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]f
 	if cond.kind != .decl_assign || cond.children_count < 2 {
 		return none
 	}
-	// The RHS of the decl_assign would need to be a call returning ?T or !T.
-	// We cannot determine that yet because optional/result type annotations
-	// are not propagated through the flat AST at this stage.
-	// When that information becomes available, the expansion is:
-	//   1. Create a temp: __or_tmp_N := <rhs_call>
-	//   2. Build condition: !__or_tmp_N.is_error
-	//   3. Inside then-block prepend: val := __or_tmp_N.data
-	//   4. Rebuild the if_expr with the new condition and augmented body
-	return none
+	lhs_id := t.a.child(&cond, 0)
+	rhs_id := t.a.child(&cond, 1)
+	lhs := t.a.nodes[int(lhs_id)]
+	if lhs.kind != .ident || lhs.value.len == 0 {
+		return none
+	}
+	rhs_type := t.node_type(rhs_id)
+	if !t.is_optional_type_name(rhs_type) {
+		return none
+	}
+	value_type := t.optional_base_type(rhs_type)
+	tmp_name := t.new_temp('if_guard')
+	tmp_decl := t.make_decl_assign_typed(tmp_name, t.transform_expr(rhs_id), rhs_type)
+	ok_cond := t.make_selector(t.make_ident(tmp_name), 'ok', 'bool')
+	value_decl := t.make_decl_assign_typed(lhs.value, t.make_selector(t.make_ident(tmp_name),
+		'value', value_type), value_type)
+
+	then_id := t.a.child(&node, 1)
+	then_node := t.a.nodes[int(then_id)]
+	t.var_types[lhs.value] = value_type
+	mut then_children := []flat.NodeId{}
+	then_children << value_decl
+	if then_node.kind == .block {
+		then_children << t.transform_stmts(t.a.children_of(&then_node))
+	} else {
+		then_children << t.transform_stmt(then_id)
+	}
+	then_block := t.make_block(then_children)
+
+	mut else_block := flat.empty_node
+	if node.children_count >= 3 {
+		else_id := t.a.child(&node, 2)
+		else_node := t.a.nodes[int(else_id)]
+		else_block = if else_node.kind == .block {
+			t.make_block(t.transform_stmts(t.a.children_of(&else_node)))
+		} else if else_node.kind == .if_expr {
+			t.transform_if_branches_with_smartcast(else_id, else_node)
+		} else {
+			t.make_block(t.transform_stmt(else_id))
+		}
+	}
+	return [tmp_decl, t.make_if(ok_cond, then_block, else_block)]
 }
 
 // try_expand_if_expr_value detects an if-expression used as a value and

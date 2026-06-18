@@ -91,10 +91,15 @@ fn (t &Transformer) node_type(id flat.NodeId) string {
 	if resolved.len > 0 {
 		return resolved
 	}
+	node := t.a.nodes[int(id)]
+	if node.typ.len > 0 {
+		return node.typ
+	}
 	if !isnil(t.tc) {
 		if typ := t.tc.expr_type(id) {
 			name := typ.name()
-			if name.len > 0 && name != 'void' && name != 'int' {
+			if name.len > 0 && name != 'void'
+				&& (name != 'int' || node.kind in [.ident, .int_literal, .infix, .prefix, .paren]) {
 				return name
 			}
 		}

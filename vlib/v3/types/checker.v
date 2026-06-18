@@ -506,6 +506,13 @@ fn (mut tc TypeChecker) annotate_for_in(_id flat.NodeId, node flat.Node) {
 			} else {
 				tc.insert_loop_var(key_id, clean.elem_type)
 			}
+		} else if clean is ArrayFixed {
+			if has_val {
+				tc.insert_loop_var(key_id, Type(int_))
+				tc.insert_loop_var(val_id, clean.elem_type)
+			} else {
+				tc.insert_loop_var(key_id, clean.elem_type)
+			}
 		} else if clean is Map {
 			if has_val {
 				tc.insert_loop_var(key_id, clean.key_type)
@@ -1001,6 +1008,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		return typ
 	}
 	node := tc.a.nodes[int(id)]
+	if node.typ.len > 0 {
+		return tc.parse_type(node.typ)
+	}
 	match node.kind {
 		.int_literal {
 			return Type(int_)
@@ -1650,8 +1660,8 @@ fn split_params(s string) []string {
 	return parts
 }
 
-const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default', 'do',
-	'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
+const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default',
+	'do', 'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
 	'register', 'restrict', 'return', 'short', 'signed', 'sizeof', 'static', 'struct', 'switch',
 	'typedef', 'union', 'unsigned', 'void', 'volatile', 'while']
 
@@ -1659,7 +1669,9 @@ fn c_name(name string) string {
 	if name.starts_with('C.') {
 		return name[2..]
 	}
-	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==', '__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<', '__lt').replace('.>', '__gt').replace('.', '__')
+	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
+		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',
+		'__lt').replace('.>', '__gt').replace('.', '__')
 	if n in c_reserved_words {
 		return 'v_${n}'
 	}

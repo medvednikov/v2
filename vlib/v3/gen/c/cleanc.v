@@ -32,9 +32,9 @@ mut:
 
 pub fn FlatGen.new() FlatGen {
 	return FlatGen{
-		sb: strings.new_builder(4096)
-		str_lits: []string{}
-		defers: []flat.NodeId{}
+		sb:            strings.new_builder(4096)
+		str_lits:      []string{}
+		defers:        []flat.NodeId{}
 		runtime_inits: []string{}
 	}
 }
@@ -231,7 +231,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write('_str_${sid}')
 		}
 		.string_interp {
-			g.gen_string_interp(node)
+			panic('internal error: string interpolation reached C backend after transform')
 		}
 		.ident {
 			looked_up := g.tc.cur_scope.lookup(node.value) or { types.Type(types.void_) }
@@ -281,6 +281,14 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			lhs_type := g.tc.resolve_type(lhs_id)
+			if lhs_type is types.String {
+				match node.op {
+					.plus, .eq, .ne, .lt, .gt, .le, .ge {
+						panic('internal error: string infix op reached C backend after transform')
+					}
+					else {}
+				}
+			}
 			if lhs_type is types.Enum {
 				g.expected_enum = lhs_type.name
 			}
@@ -298,11 +306,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				}
 
 				if op_name.len > 0 {
-					g.write('${c_name(lhs_type.name)}${op_name}(')
-					g.gen_expr(lhs_id)
-					g.write(', ')
-					g.gen_expr(rhs_id)
-					g.write(')')
+					panic('internal error: struct operator overload reached C backend after transform')
 				} else {
 					g.gen_expr(lhs_id)
 					g.write(' ${g.op_str(node.op)} ')
@@ -373,10 +377,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		}
 		.in_expr {
 			// NOTE: range membership, inline-array-literal membership, dynamic- and
-			// fixed-array membership, and `!in` negation are all lowered by the
-			// transformer (transform.transform_in_expr). Only MAP membership reaches
-			// the backend, because map__exists needs a C key pointer (compound
-			// literal) that cannot be expressed at the AST level.
+			// fixed-array membership, map membership, and `!in` negation are all
+			// lowered by the transformer (transform.transform_in_expr). The map
+			// path below is retained as a strict legacy fallback.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			rhs_type := g.tc.resolve_type(rhs_id)
@@ -394,9 +397,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.gen_expr(lhs_id)
 				g.write('})')
 			} else {
-				g.gen_expr(lhs_id)
-				g.write(' == ')
-				g.gen_expr(rhs_id)
+				panic('internal error: non-map membership reached C backend after transform')
 			}
 		}
 		.postfix {
@@ -627,7 +628,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			g.write('(${ct}){.ok = false}')
 		}
 		.or_expr {
-			g.gen_or_expr(node)
+			panic('internal error: or expression reached C backend after transform')
 		}
 		.block {
 			if node.children_count > 1 {
@@ -656,52 +657,10 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.is_expr {
-			expr_id := g.a.child(&node, 0)
-			expr_type := g.tc.resolve_type(expr_id)
-			clean := types.unwrap_pointer(expr_type)
-			if clean is types.SumType {
-				idx := g.sum_type_index(clean.name, node.value)
-				g.write('(')
-				if expr_type.is_pointer() {
-					g.gen_expr(expr_id)
-					g.write('->typ == ${idx}')
-				} else {
-					g.gen_expr(expr_id)
-					g.write('.typ == ${idx}')
-				}
-				g.write(')')
-			} else {
-				g.write('1')
-			}
+			panic('internal error: is expression reached C backend after transform')
 		}
 		.as_expr {
-			expr_id := g.a.child(&node, 0)
-			expr_type := g.tc.resolve_type(expr_id)
-			clean := types.unwrap_pointer(expr_type)
-			if clean is types.SumType {
-				qv := g.resolve_variant(clean.name, node.value)
-				field := g.sum_field_name(qv)
-				if g.variant_references_sum(qv, clean.name) {
-					g.write('(*')
-					if expr_type.is_pointer() {
-						g.gen_expr(expr_id)
-						g.write('->${field})')
-					} else {
-						g.gen_expr(expr_id)
-						g.write('.${field})')
-					}
-				} else {
-					if expr_type.is_pointer() {
-						g.gen_expr(expr_id)
-						g.write('->${field}')
-					} else {
-						g.gen_expr(expr_id)
-						g.write('.${field}')
-					}
-				}
-			} else {
-				g.gen_expr(expr_id)
-			}
+			panic('internal error: as expression reached C backend after transform')
 		}
 		.sizeof_expr {
 			if _ := g.tc.cur_scope.lookup(node.value) {

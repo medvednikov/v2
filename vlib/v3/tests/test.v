@@ -182,6 +182,20 @@ fn next_in_value() int {
 	return g_count
 }
 
+fn maybe_review_value(ok bool) ?int {
+	if ok {
+		return 42
+	}
+	return none
+}
+
+fn make_review_animal() Animal {
+	return Cat{
+		name: 'Milo'
+		age:  4
+	}
+}
+
 fn sum_many(a int, b int, c int, d int, e int, f int, g int, h int) int {
 	return a + b + c + d + e + f + g + h
 }
@@ -4139,5 +4153,56 @@ fn main() {
 	print_int(g_count) // 1
 	print_str('in operator lhs eval: ok')
 
-	print_str('=== ALL 102 TESTS PASSED ===')
+	print_str('--- 103. Transformer Semantic Lowering ---')
+	print_str('interp ${7} ${true}')
+
+	mut range_sum103 := 0
+	for i in 1 .. 4 {
+		range_sum103 = range_sum103 + i
+	}
+	print_int(range_sum103) // 6
+
+	mut str_sum103 := 0
+	for i, ch in 'abc' {
+		str_sum103 = str_sum103 + i + int(ch)
+	}
+	print_int(str_sum103) // 297
+
+	fixed103 := [3, 4, 5]
+	mut fixed_sum103 := 0
+	for x in fixed103 {
+		fixed_sum103 = fixed_sum103 + x
+	}
+	print_int(fixed_sum103) // 12
+
+	or_ok103 := maybe_review_value(true) or { 0 }
+	or_else103 := maybe_review_value(false) or { 9 }
+	print_int(or_ok103) // 42
+	print_int(or_else103) // 9
+	if guard103 := maybe_review_value(true) {
+		print_int(guard103) // 42
+	} else {
+		print_int(0)
+	}
+
+	mut map103 := map[string]int{}
+	map103['one'] = 1
+	map103['two'] = 2
+	map103['three'] = 3
+	print_int(map103['one'] + map103['three']) // 4
+	if 'two' in map103 {
+		print_str('map membership lowered: yes')
+	}
+
+	arr103 := []int{len: 3, init: 5}
+	print_int(arr103[0] + arr103[2]) // 10
+
+	animal103 := make_review_animal()
+	if animal103 is Cat {
+		cat103 := animal103 as Cat
+		print_str(cat103.name) // Milo
+	}
+	print_str('transformer semantic lowering: ok')
+
+	print_str('=== ALL 103 TESTS PASSED ===')
 }

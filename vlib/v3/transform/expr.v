@@ -163,16 +163,18 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			or_chain
 		}
 	} else {
-		new_lhs := t.transform_expr(lhs_id)
-		new_rhs := t.transform_expr(rhs_id)
 		rhs_type := t.node_type(rhs_id)
 		if rhs_type.starts_with('[]') {
 			// dynamic array membership -> array_contains_int/string(arr, val)
+			new_lhs := t.transform_expr(lhs_id)
+			new_rhs := t.transform_expr(rhs_id)
 			elem := rhs_type[2..]
 			fn_name := if elem == 'string' { 'array_contains_string' } else { 'array_contains_int' }
 			t.make_call(fn_name, arr2(new_rhs, new_lhs))
 		} else if is_fixed_array_type(rhs_type) {
 			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
+			new_lhs := t.transform_expr(lhs_id)
+			new_rhs := t.transform_expr(rhs_id)
 			elem := rhs_type.all_before('[')
 			len_str := rhs_type.all_after('[').all_before(']')
 			fn_name := if elem == 'string' {
@@ -182,10 +184,13 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			}
 			len_lit := t.make_int_literal(len_str.int())
 			t.make_call(fn_name, arr3(new_rhs, len_lit, new_lhs))
+		} else if t.clean_map_type(rhs_type).starts_with('map[') {
+			t.lower_map_membership(lhs_id, rhs_id, rhs_type)
 		} else {
-			// map / unknown containment: the backend renders the membership test.
-			// map__exists needs a C key pointer (compound literal) that cannot be
-			// expressed at the AST level, so this stays in the backend by design.
+			// Unknown containment is kept as in_expr so the backend can reject or
+			// handle genuinely unresolved cases.
+			new_lhs := t.transform_expr(lhs_id)
+			new_rhs := t.transform_expr(rhs_id)
 			in_start := t.a.children.len
 			t.a.children << new_lhs
 			t.a.children << new_rhs
@@ -265,6 +270,31 @@ fn (mut t Transformer) transform_fixed_array_len(_id flat.NodeId, node flat.Node
 	return t.make_int_literal(fixed_array_len(base_type))
 }
 
+fn (t &Transformer) clean_map_type(typ string) string {
+	if typ.starts_with('&') {
+		return typ[1..]
+	}
+	return typ
+}
+
+fn (mut t Transformer) runtime_addr(expr flat.NodeId, typ string) flat.NodeId {
+	if typ.starts_with('&') {
+		return expr
+	}
+	return t.make_prefix(.amp, expr)
+}
+
+fn (mut t Transformer) lower_map_membership(lhs_id flat.NodeId, rhs_id flat.NodeId, rhs_type string) flat.NodeId {
+	map_type := t.clean_map_type(rhs_type)
+	key_type := t.map_key_type(map_type)
+	map_expr := t.stable_expr_for_reuse(rhs_id)
+	key_name := t.new_temp('map_key')
+	key_decl := t.make_decl_assign_typed(key_name, t.transform_expr(lhs_id), key_type)
+	t.pending_stmts << key_decl
+	return t.make_call_typed('map__exists', arr2(t.runtime_addr(map_expr, rhs_type), t.make_prefix(.amp,
+		t.make_ident(key_name))), 'bool')
+}
+
 fn (mut t Transformer) transform_enum_shorthand(id flat.NodeId, node flat.Node, expected_enum string) flat.NodeId {
 	if expected_enum.len == 0 {
 		return id
@@ -299,6 +329,10 @@ pub fn (mut t Transformer) make_call_typed(fn_name string, args []flat.NodeId, t
 	})
 }
 
+pub fn (mut t Transformer) make_empty() flat.NodeId {
+	return t.a.add(.empty)
+}
+
 pub fn (mut t Transformer) make_method_call(receiver flat.NodeId, method_name string, args []flat.NodeId) flat.NodeId {
 	// Build selector: receiver.method_name
 	sel_start := t.a.children.len
@@ -322,6 +356,82 @@ pub fn (mut t Transformer) make_method_call(receiver flat.NodeId, method_name st
 	})
 }
 
+pub fn (mut t Transformer) make_selector(base flat.NodeId, field string, typ string) flat.NodeId {
+	return t.make_selector_op(base, field, typ, .dot)
+}
+
+pub fn (mut t Transformer) make_selector_op(base flat.NodeId, field string, typ string, op flat.Op) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << base
+	return t.a.add_node(flat.Node{
+		kind:           .selector
+		op:             op
+		children_start: start
+		children_count: 1
+		value:          field
+		typ:            typ
+	})
+}
+
+pub fn (mut t Transformer) make_index(base flat.NodeId, index flat.NodeId, typ string) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << base
+	t.a.children << index
+	return t.a.add_node(flat.Node{
+		kind:           .index
+		children_start: start
+		children_count: 2
+		typ:            typ
+	})
+}
+
+pub fn (mut t Transformer) make_cast(target_type string, expr flat.NodeId, typ string) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << expr
+	return t.a.add_node(flat.Node{
+		kind:           .cast_expr
+		children_start: start
+		children_count: 1
+		value:          target_type
+		typ:            typ
+	})
+}
+
+pub fn (mut t Transformer) make_postfix(expr flat.NodeId, op flat.Op) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << expr
+	return t.a.add_node(flat.Node{
+		kind:           .postfix
+		op:             op
+		children_start: start
+		children_count: 1
+	})
+}
+
+pub fn (mut t Transformer) make_struct_init(name string) flat.NodeId {
+	return t.a.add_node(flat.Node{
+		kind:  .struct_init
+		value: name
+		typ:   name
+	})
+}
+
+pub fn (mut t Transformer) make_array_init(elem_type string) flat.NodeId {
+	return t.a.add_node(flat.Node{
+		kind:  .array_init
+		value: elem_type
+		typ:   '[]${elem_type}'
+	})
+}
+
+pub fn (mut t Transformer) make_map_init(map_type string) flat.NodeId {
+	return t.a.add_node(flat.Node{
+		kind:  .map_init
+		value: map_type
+		typ:   map_type
+	})
+}
+
 pub fn (mut t Transformer) make_string_literal(value string) flat.NodeId {
 	return t.a.add_val(.string_literal, value)
 }
@@ -330,8 +440,20 @@ pub fn (mut t Transformer) make_int_literal(value int) flat.NodeId {
 	return t.a.add_val(.int_literal, '${value}')
 }
 
+pub fn (mut t Transformer) make_float_literal(value string) flat.NodeId {
+	return t.a.add_val(.float_literal, value)
+}
+
 pub fn (mut t Transformer) make_bool_literal(value bool) flat.NodeId {
 	return t.a.add_val(.bool_literal, if value { 'true' } else { 'false' })
+}
+
+pub fn (mut t Transformer) make_sizeof_type(type_name string) flat.NodeId {
+	return t.a.add_node(flat.Node{
+		kind:  .sizeof_expr
+		value: type_name
+		typ:   'int'
+	})
 }
 
 // is_fixed_array_type reports whether a v-type string denotes a fixed array
@@ -340,11 +462,18 @@ fn is_fixed_array_type(s string) bool {
 	if s.starts_with('[]') || s.starts_with('map[') {
 		return false
 	}
-	return s.contains('[') && s.ends_with(']')
+	return s.contains('[') && (s.ends_with(']') || s.starts_with('['))
 }
 
 fn fixed_array_len(s string) int {
 	return s.all_after('[').all_before(']').int()
+}
+
+fn fixed_array_elem_type(s string) string {
+	if s.starts_with('[') {
+		return s.all_after(']')
+	}
+	return s.all_before('[')
 }
 
 const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default',

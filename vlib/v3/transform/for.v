@@ -62,9 +62,43 @@ fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []f
 	key_id := t.a.child(&node, 0) // loop var ident — pass through (do not transform a binding)
 	val_id := t.a.child(&node, 1) // may be flat.empty_node (-1)
 	container_id := t.a.child(&node, 2)
-	new_container := t.transform_expr(container_id)
+	iter_type := t.detect_for_in_type(node)
+	has_index := int(val_id) >= 0
+	container_is_range := if int(container_id) >= 0 {
+		t.a.nodes[int(container_id)].kind == .range
+	} else {
+		false
+	}
+	if header_count == 4 {
+		range_end_id := t.a.child(&node, 3)
+		body_ids := t.a.children_of(&node)[header_count..].clone()
+		return t.lower_range_for_in(id, node, key_id, container_id, range_end_id, body_ids)
+	}
+	if container_is_range {
+		range_node := t.a.nodes[int(container_id)]
+		if range_node.children_count >= 2 {
+			body_ids := t.a.children_of(&node)[header_count..].clone()
+			return t.lower_range_for_in(id, node, key_id, t.a.child(&range_node, 0), t.a.child(&range_node,
+				1), body_ids)
+		}
+	}
+	if iter_type.starts_with('map[') {
+		return t.rebuild_for_in_stmt(id, node)
+	}
+	if iter_type.starts_with('[]') || iter_type == 'string' || is_fixed_array_type(iter_type) {
+		body_ids := t.a.children_of(&node)[header_count..].clone()
+		return t.lower_indexed_for_in(id, node, key_id, val_id, container_id, iter_type, has_index,
+			body_ids)
+	}
+	return t.rebuild_for_in_stmt(id, node)
+}
 
-	// register loop-variable types (best effort) — read var NAMES from child0/child1 idents
+fn (mut t Transformer) rebuild_for_in_stmt(_id flat.NodeId, node flat.Node) []flat.NodeId {
+	header_count := node.value.int()
+	key_id := t.a.child(&node, 0)
+	val_id := t.a.child(&node, 1)
+	container_id := t.a.child(&node, 2)
+	new_container := t.transform_expr(container_id)
 	iter_type := t.detect_for_in_type(node)
 	has_index := int(val_id) >= 0
 	container_is_range := if int(container_id) >= 0 {
@@ -143,6 +177,90 @@ fn (mut t Transformer) transform_for_in_body(id flat.NodeId, node flat.Node) []f
 	}))
 }
 
+fn (mut t Transformer) lower_range_for_in(id flat.NodeId, node flat.Node, key_id flat.NodeId, low_id flat.NodeId, high_id flat.NodeId, body_ids []flat.NodeId) []flat.NodeId {
+	if int(key_id) < 0 {
+		return arr1(id)
+	}
+	key := t.a.nodes[int(key_id)]
+	if key.kind != .ident || key.value.len == 0 {
+		return arr1(id)
+	}
+	t.var_types[key.value] = 'int'
+	low := t.transform_expr(low_id)
+	high := t.stable_expr_for_reuse(high_id)
+	init := t.make_decl_assign_typed(key.value, low, 'int')
+	cond := t.make_infix(.lt, t.make_ident(key.value), high)
+	post := t.make_expr_stmt(t.make_postfix(t.make_ident(key.value), .inc))
+	new_body := t.transform_stmts(body_ids)
+	return arr1(t.make_for_stmt(init, cond, post, new_body, node))
+}
+
+fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_id flat.NodeId, val_id flat.NodeId, container_id flat.NodeId, iter_type string, has_index bool, body_ids []flat.NodeId) []flat.NodeId {
+	if int(key_id) < 0 {
+		return arr1(id)
+	}
+	key := t.a.nodes[int(key_id)]
+	if key.kind != .ident || key.value.len == 0 {
+		return arr1(id)
+	}
+	elem_type := t.infer_for_in_elem_type(iter_type, node)
+	if elem_type.len == 0 {
+		return arr1(id)
+	}
+	idx_name := if has_index {
+		key.value
+	} else {
+		t.new_temp('for_idx')
+	}
+	elem_name := if has_index {
+		if int(val_id) < 0 {
+			return arr1(id)
+		}
+		val := t.a.nodes[int(val_id)]
+		if val.kind != .ident || val.value.len == 0 {
+			return arr1(id)
+		}
+		val.value
+	} else {
+		key.value
+	}
+	t.var_types[idx_name] = 'int'
+	t.var_types[elem_name] = elem_type
+	container := t.stable_expr_for_reuse(container_id)
+	len_expr := if is_fixed_array_type(iter_type) {
+		t.make_int_literal(fixed_array_len(iter_type))
+	} else {
+		t.make_selector(container, 'len', 'int')
+	}
+	init := t.make_decl_assign_typed(idx_name, t.make_int_literal(0), 'int')
+	cond := t.make_infix(.lt, t.make_ident(idx_name), len_expr)
+	post := t.make_expr_stmt(t.make_postfix(t.make_ident(idx_name), .inc))
+	elem_expr := t.make_index(container, t.make_ident(idx_name), elem_type)
+	elem_decl := t.make_decl_assign_typed(elem_name, elem_expr, elem_type)
+	mut new_body := []flat.NodeId{}
+	new_body << elem_decl
+	new_body << t.transform_stmts(body_ids)
+	return arr1(t.make_for_stmt(init, cond, post, new_body, node))
+}
+
+fn (mut t Transformer) make_for_stmt(init flat.NodeId, cond flat.NodeId, post flat.NodeId, body []flat.NodeId, src flat.Node) flat.NodeId {
+	start := t.a.children.len
+	t.a.children << init
+	t.a.children << cond
+	t.a.children << post
+	for id in body {
+		t.a.children << id
+	}
+	return t.a.add_node(flat.Node{
+		kind:           .for_stmt
+		op:             src.op
+		children_start: start
+		children_count: 3 + body.len
+		pos:            src.pos
+		typ:            src.typ
+	})
+}
+
 fn (mut t Transformer) detect_for_in_type(node flat.Node) string {
 	if node.typ.len > 0 {
 		return node.typ
@@ -151,7 +269,7 @@ fn (mut t Transformer) detect_for_in_type(node flat.Node) string {
 	container_idx := if header_count >= 3 { header_count - 1 } else { 2 }
 	if node.children_count > container_idx {
 		iter_id := t.a.child(&node, container_idx)
-		return t.resolve_expr_type(iter_id)
+		return t.node_type(iter_id)
 	}
 	return ''
 }
@@ -171,6 +289,9 @@ fn (t &Transformer) infer_for_in_elem_type(iter_type string, node flat.Node) str
 	}
 	if iter_type == 'string' {
 		return 'u8'
+	}
+	if is_fixed_array_type(iter_type) {
+		return fixed_array_elem_type(iter_type)
 	}
 	// Check if the iterable is a range expression
 	if node.children_count > 0 {

@@ -27,7 +27,8 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 			val_node := t.a.nodes[int(val_id)]
 			field_type := field_types[child.value] or { '' }
 			// Check if the value is an enum shorthand and the field type is an enum
-			new_val := if val_node.kind == .enum_val && field_type.len > 0 && field_type in t.enum_types {
+			new_val := if val_node.kind == .enum_val && field_type.len > 0
+				&& field_type in t.enum_types {
 				t.transform_enum_shorthand(val_id, val_node, field_type)
 			} else {
 				t.transform_expr(val_id)
@@ -112,9 +113,7 @@ fn (mut t Transformer) add_missing_struct_defaults(id flat.NodeId, node flat.Nod
 	if node.value.len == 0 {
 		return id
 	}
-	_ = t.structs[node.value] or {
-		return id
-	}
+	_ = t.structs[node.value] or { return id }
 	// TODO: Compare provided field_init children against known fields,
 	// and insert default values for missing fields once FieldInfo carries defaults.
 	return id
@@ -123,6 +122,10 @@ fn (mut t Transformer) add_missing_struct_defaults(id flat.NodeId, node flat.Nod
 // transform_array_init_expr transforms .array_init nodes (e.g. `[]int{len: n}`).
 // Recursively transforms any child expressions (len, cap, init values).
 fn (mut t Transformer) transform_array_init_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	lowered := t.lower_array_init_to_runtime(id, node)
+	if lowered != id {
+		return lowered
+	}
 	if node.children_count == 0 {
 		return id
 	}
@@ -149,6 +152,9 @@ fn (mut t Transformer) transform_array_init_expr(id flat.NodeId, node flat.Node)
 // transform_map_init_expr transforms .map_init nodes.
 // Recursively transforms all child key/value expressions.
 fn (mut t Transformer) transform_map_init_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	if node.value.starts_with('map[') || node.typ.starts_with('map[') {
+		return t.lower_map_init_to_runtime(id, node)
+	}
 	if node.children_count == 0 {
 		return id
 	}

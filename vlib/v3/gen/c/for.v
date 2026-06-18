@@ -54,19 +54,11 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 	body_start := header_count
 
 	if header_count == 4 {
-		g.write('for (int ${var_name} = ')
-		g.gen_expr(g.a.child(&node, 2))
-		g.write('; ${var_name} < ')
-		g.gen_expr(g.a.child(&node, 3))
-		g.writeln('; ${var_name}++) {')
+		panic('internal error: range for-in reached C backend after transform')
 	} else if header_count == 3 {
 		container := g.a.child_node(&node, 2)
 		if container.kind == .range {
-			g.write('for (int ${var_name} = ')
-			g.gen_expr(g.a.child(container, 0))
-			g.write('; ${var_name} < ')
-			g.gen_expr(g.a.child(container, 1))
-			g.writeln('; ${var_name}++) {')
+			panic('internal error: range for-in reached C backend after transform')
 		} else {
 			container_type := g.tc.resolve_type(g.a.child(&node, 2))
 			has_index := int(val_id) >= 0
@@ -97,34 +89,8 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 					g.tc.cur_scope.insert(key_var, container_type.key_type)
 				}
 				g.tc.cur_scope.insert(val_var_, container_type.value_type)
-			} else if container_type is types.Array {
-				c_elem := g.tc.c_type(container_type.elem_type)
-				container_str := g.expr_to_string(g.a.child(&node, 2))
-				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${container_str}.len; ${idx_var}++) {')
-				g.indent++
-				g.writeln('${c_elem} ${elem_var} = *(${c_elem}*)array_get(${container_str}, ${idx_var});')
-				g.tc.cur_scope.insert(elem_var, container_type.elem_type)
-			} else if container_type is types.String {
-				container_str := g.expr_to_string(g.a.child(&node, 2))
-				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${container_str}.len; ${idx_var}++) {')
-				g.indent++
-				g.writeln('u8 ${elem_var} = ((u8*)${container_str}.str)[${idx_var}];')
-				g.tc.cur_scope.insert(elem_var, types.Type(types.u8_))
-			} else if container_type is types.ArrayFixed {
-				af := container_type as types.ArrayFixed
-				c_elem := g.tc.c_type(af.elem_type)
-				arr_len := '${af.len}'
-				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${arr_len}; ${idx_var}++) {')
-				g.indent++
-				g.write('${c_elem} ${elem_var} = ')
-				g.gen_expr(g.a.child(&node, 2))
-				g.writeln('[${idx_var}];')
-				g.tc.cur_scope.insert(elem_var, af.elem_type)
 			} else {
-				g.writeln('for (int ${idx_var} = 0; ${idx_var} < 0; ${idx_var}++) {')
-				g.indent++
-				g.writeln('int ${elem_var} = 0;')
-				g.tc.cur_scope.insert(elem_var, types.Type(types.int_))
+				panic('internal error: non-map for-in reached C backend after transform: ${container.kind} `${container.value}` type `${container_type.name()}`')
 			}
 			if has_index && container_type !is types.Map {
 				g.tc.cur_scope.insert(idx_var, types.Type(types.int_))
