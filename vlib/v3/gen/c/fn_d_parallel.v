@@ -272,33 +272,35 @@ fn (mut g FlatGen) preseed_parallel_fn_ptr_type(typ types.Type) {
 
 fn (g &FlatGen) new_parallel_worker(worker_id int) &FlatGen {
 	return &FlatGen{
-		sb:                     strings.new_builder(64_000)
-		a:                      unsafe { g.a }
-		used_fns:               g.used_fns.clone()
-		str_lits:               g.str_lits.clone()
-		str_lit_ids:            g.str_lit_ids.clone()
-		global_types:           g.global_types.clone()
-		enum_vals:              g.enum_vals.clone()
-		interfaces:             g.interfaces.clone()
-		const_vals:             g.const_vals.clone()
-		const_modules:          g.const_modules.clone()
-		global_modules:         g.global_modules.clone()
-		tc:                     g.clone_parallel_type_checker()
-		has_builtins:           g.has_builtins
-		tmp_count:              (worker_id + 1) * 100_000
-		line_start:             true
-		modules:                g.modules.clone()
-		fn_ptr_types:           g.fn_ptr_types.clone()
-		fn_decl_param_types:    g.fn_decl_param_types.clone()
-		runtime_inits:          g.runtime_inits.clone()
-		cur_fn_ret:             g.cur_fn_ret
-		cur_fn_ret_is_optional: g.cur_fn_ret_is_optional
-		cur_fn_ret_base:        g.cur_fn_ret_base
-		expected_expr_type:     g.expected_expr_type
-		expected_enum:          g.expected_enum
-		needed_optional_types:  g.needed_optional_types.clone()
-		emitted_fns:            g.emitted_fns.clone()
-		array_method_cache:     g.array_method_cache.clone()
+		sb:                      strings.new_builder(64_000)
+		a:                       unsafe { g.a }
+		used_fns:                g.used_fns.clone()
+		str_lits:                g.str_lits.clone()
+		str_lit_ids:             g.str_lit_ids.clone()
+		global_types:            g.global_types.clone()
+		enum_vals:               g.enum_vals.clone()
+		interfaces:              g.interfaces.clone()
+		const_vals:              g.const_vals.clone()
+		const_modules:           g.const_modules.clone()
+		global_modules:          g.global_modules.clone()
+		tc:                      g.clone_parallel_type_checker()
+		has_builtins:            g.has_builtins
+		tmp_count:               (worker_id + 1) * 100_000
+		line_start:              true
+		modules:                 g.modules.clone()
+		fn_ptr_types:            g.fn_ptr_types.clone()
+		fn_decl_param_types:     g.fn_decl_param_types.clone()
+		struct_decl_infos:       g.struct_decl_infos.clone()
+		struct_decl_short_infos: g.struct_decl_short_infos.clone()
+		runtime_inits:           g.runtime_inits.clone()
+		cur_fn_ret:              g.cur_fn_ret
+		cur_fn_ret_is_optional:  g.cur_fn_ret_is_optional
+		cur_fn_ret_base:         g.cur_fn_ret_base
+		expected_expr_type:      g.expected_expr_type
+		expected_enum:           g.expected_enum
+		needed_optional_types:   g.needed_optional_types.clone()
+		emitted_fns:             g.emitted_fns.clone()
+		array_method_cache:      g.array_method_cache.clone()
 	}
 }
 

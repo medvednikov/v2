@@ -6,35 +6,37 @@ import v3.types
 
 pub struct FlatGen {
 mut:
-	sb                     strings.Builder
-	indent                 int
-	a                      &flat.FlatAst = unsafe { nil }
-	used_fns               map[string]bool
-	str_lits               []string
-	str_lit_ids            map[string]int
-	global_types           map[string]types.Type
-	enum_vals              map[string]int
-	defers                 []flat.NodeId
-	interfaces             map[string][]string
-	const_vals             map[string]flat.NodeId
-	const_modules          map[string]string
-	global_modules         map[string]string
-	tc                     types.TypeChecker
-	has_builtins           bool
-	tmp_count              int
-	line_start             bool
-	modules                map[string]string // alias -> full module name
-	fn_ptr_types           map[string]string // fn_ptr:ret|params -> typedef name
-	fn_decl_param_types    map[string][]types.Type
-	runtime_inits          []string
-	cur_fn_ret             types.Type = types.Type(types.void_)
-	cur_fn_ret_is_optional bool
-	cur_fn_ret_base        types.Type = types.Type(types.void_)
-	expected_expr_type     types.Type = types.Type(types.void_)
-	expected_enum          string
-	needed_optional_types  map[string]string
-	emitted_fns            map[string]bool
-	array_method_cache     map[string]string
+	sb                      strings.Builder
+	indent                  int
+	a                       &flat.FlatAst = unsafe { nil }
+	used_fns                map[string]bool
+	str_lits                []string
+	str_lit_ids             map[string]int
+	global_types            map[string]types.Type
+	enum_vals               map[string]int
+	defers                  []flat.NodeId
+	interfaces              map[string][]string
+	const_vals              map[string]flat.NodeId
+	const_modules           map[string]string
+	global_modules          map[string]string
+	tc                      types.TypeChecker
+	has_builtins            bool
+	tmp_count               int
+	line_start              bool
+	modules                 map[string]string // alias -> full module name
+	fn_ptr_types            map[string]string // fn_ptr:ret|params -> typedef name
+	fn_decl_param_types     map[string][]types.Type
+	struct_decl_infos       map[string]StructDeclInfo
+	struct_decl_short_infos map[string]StructDeclInfo
+	runtime_inits           []string
+	cur_fn_ret              types.Type = types.Type(types.void_)
+	cur_fn_ret_is_optional  bool
+	cur_fn_ret_base         types.Type = types.Type(types.void_)
+	expected_expr_type      types.Type = types.Type(types.void_)
+	expected_enum           string
+	needed_optional_types   map[string]string
+	emitted_fns             map[string]bool
+	array_method_cache      map[string]string
 }
 
 pub fn FlatGen.new() FlatGen {
@@ -130,6 +132,15 @@ fn (mut g FlatGen) collect_gen_info() {
 				}
 				g.register_fn_decl_param_types(node.value, full_name, ptypes)
 			}
+			.struct_decl {
+				full_name := if g.tc.cur_module.len > 0 && g.tc.cur_module != 'main'
+					&& g.tc.cur_module != 'builtin' {
+					'${g.tc.cur_module}.${node.value}'
+				} else {
+					node.value
+				}
+				g.register_struct_decl_info(node.value, full_name, g.tc.cur_module, node)
+			}
 			.global_decl {
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
@@ -204,6 +215,18 @@ fn (mut g FlatGen) register_fn_decl_param_types(name string, full_name string, p
 	}
 	if full_name !in g.fn_decl_param_types {
 		g.fn_decl_param_types[full_name] = ptypes.clone()
+	}
+}
+
+fn (mut g FlatGen) register_struct_decl_info(name string, full_name string, module_name string, node flat.Node) {
+	info := StructDeclInfo{
+		node:      node
+		module:    module_name
+		full_name: full_name
+	}
+	g.struct_decl_infos[full_name] = info
+	if name !in g.struct_decl_short_infos {
+		g.struct_decl_short_infos[name] = info
 	}
 }
 

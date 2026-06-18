@@ -136,8 +136,19 @@ fn (mut g FlatGen) gen_if_else(node flat.Node) {
 	if node.children_count > 2 {
 		else_node := g.a.child_node(&node, 2)
 		if else_node.kind == .if_expr {
-			g.write('} else ')
-			g.gen_if(*else_node)
+			else_cond := g.a.child_node(else_node, 0)
+			if else_cond.kind == .decl_assign {
+				g.writeln('} else {')
+				g.tc.push_scope()
+				g.indent++
+				g.gen_if(*else_node)
+				g.indent--
+				g.tc.pop_scope()
+				g.writeln('}')
+			} else {
+				g.write('} else ')
+				g.gen_if(*else_node)
+			}
 		} else if else_node.kind == .block {
 			g.writeln('} else {')
 			g.tc.push_scope()

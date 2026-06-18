@@ -166,48 +166,18 @@ fn (g &FlatGen) find_struct_decl(type_name string) ?StructDeclInfo {
 	} else {
 		type_name
 	}
-	mut cur_module := ''
-	for node in g.a.nodes {
-		if node.kind == .module_decl {
-			cur_module = node.value
-			continue
-		}
-		if node.kind != .struct_decl || node.value != short_name {
-			continue
-		}
-		full_name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
-			'${cur_module}.${node.value}'
-		} else {
-			node.value
-		}
-		if preferred_name == full_name {
-			return StructDeclInfo{
-				node:      node
-				module:    cur_module
-				full_name: full_name
-			}
+	if info := g.struct_decl_infos[preferred_name] {
+		if info.node.value == short_name {
+			return info
 		}
 	}
-	cur_module = ''
-	for node in g.a.nodes {
-		if node.kind == .module_decl {
-			cur_module = node.value
-			continue
+	if type_name.contains('.') {
+		if info := g.struct_decl_infos[type_name] {
+			return info
 		}
-		if node.kind != .struct_decl || node.value != short_name {
-			continue
-		}
-		full_name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
-			'${cur_module}.${node.value}'
-		} else {
-			node.value
-		}
-		if type_name == node.value || type_name == full_name {
-			return StructDeclInfo{
-				node:      node
-				module:    cur_module
-				full_name: full_name
-			}
+	} else {
+		if info := g.struct_decl_short_infos[type_name] {
+			return info
 		}
 	}
 	return none
