@@ -178,19 +178,23 @@ fn (mut g Gen) gen_func(func_idx int) {
 
 	// Spill params from registers to stack
 	mut reg_idx := 0
+	mut stack_arg_off := 16
 	for _, pid in func.params {
-		if reg_idx >= 8 {
-			break
-		}
 		param_val := g.m.values[pid]
 		param_size := g.m.type_size(param_val.typ)
 		n_words := if param_size > 8 { (param_size + 7) / 8 } else { 1 }
 		off := g.stack_map[pid]
-		for wi in 0 .. n_words {
-			if reg_idx < 8 {
+		if reg_idx + n_words <= 8 {
+			for wi in 0 .. n_words {
 				g.emit_store_fp(reg_idx, off - wi * 8)
 				reg_idx++
 			}
+		} else {
+			for wi in 0 .. n_words {
+				g.emit_load_fp(8, stack_arg_off + wi * 8)
+				g.emit_store_fp(8, off - wi * 8)
+			}
+			stack_arg_off += n_words * 8
 		}
 	}
 
@@ -468,18 +472,28 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 	fn_ref := g.m.values[fn_ref_id]
 	fn_name := fn_ref.name
 
+	out_stack_size := g.call_stack_arg_size(instr)
+	if out_stack_size > 0 {
+		g.emit_sub_sp(out_stack_size)
+	}
+
 	mut arg_reg := 0
+	mut stack_off := 0
 	for ai in 1 .. instr.operands.len {
 		arg_id := instr.operands[ai]
 		arg_val := g.m.values[arg_id]
 
 		if arg_val.kind == .string_literal {
-			if arg_reg + 2 > 8 {
-				panic('arm64: too many arguments for `${fn_name}`, stack arguments not implemented')
+			if arg_reg + 2 <= 8 {
+				g.materialize_string(arg_id, arg_reg)
+				g.emit32(asm_mov_reg(Reg(arg_reg + 1), Reg(10)))
+				arg_reg += 2
+			} else {
+				g.materialize_string(arg_id, 8)
+				g.emit_store_sp(8, stack_off)
+				g.emit_store_sp(10, stack_off + 8)
+				stack_off += 16
 			}
-			g.materialize_string(arg_id, arg_reg)
-			g.emit32(asm_mov_reg(Reg(arg_reg + 1), Reg(10)))
-			arg_reg += 2
 		} else {
 			arg_type_id := arg_val.typ
 			arg_size := g.m.type_size(arg_type_id)
@@ -487,44 +501,62 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 				typ := g.m.type_store.types[arg_type_id]
 				if typ.kind == .struct_t {
 					n_words := (arg_size + 7) / 8
-					if arg_reg + n_words > 8 {
-						panic('arm64: too many arguments for `${fn_name}`, stack arguments not implemented')
-					}
-					if off := g.stack_map[arg_id] {
-						for wi in 0 .. n_words {
-							g.emit_load_fp(arg_reg + wi, off - wi * 8)
+					if arg_reg + n_words <= 8 {
+						if off := g.stack_map[arg_id] {
+							for wi in 0 .. n_words {
+								g.emit_load_fp(arg_reg + wi, off - wi * 8)
+							}
+						} else {
+							src_reg := g.load_val(arg_id, arg_reg)
+							if src_reg != arg_reg {
+								g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+							}
 						}
+						arg_reg += n_words
 					} else {
-						src_reg := g.load_val(arg_id, arg_reg)
-						if src_reg != arg_reg {
-							g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+						if off := g.stack_map[arg_id] {
+							for wi in 0 .. n_words {
+								g.emit_load_fp(8, off - wi * 8)
+								g.emit_store_sp(8, stack_off + wi * 8)
+							}
+						} else {
+							src_reg := g.load_val(arg_id, 8)
+							g.emit_store_sp(src_reg, stack_off)
 						}
+						stack_off += n_words * 8
 					}
-					arg_reg += n_words
 					continue
 				}
-			}
-
-			if arg_reg >= 8 {
-				panic('arm64: too many arguments for `${fn_name}`, stack arguments not implemented')
 			}
 
 			if arg_val.kind == .instruction {
 				arg_instr := g.m.instrs[arg_val.index]
 				if arg_instr.op == .alloca {
 					if alloca_off := g.alloca_offset[arg_id] {
-						g.emit_lea_fp(arg_reg, alloca_off)
-						arg_reg += 1
+						if arg_reg < 8 {
+							g.emit_lea_fp(arg_reg, alloca_off)
+							arg_reg += 1
+						} else {
+							g.emit_lea_fp(8, alloca_off)
+							g.emit_store_sp(8, stack_off)
+							stack_off += 8
+						}
 						continue
 					}
 				}
 			}
 
-			src_reg := g.load_val(arg_id, arg_reg)
-			if src_reg != arg_reg {
-				g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+			if arg_reg < 8 {
+				src_reg := g.load_val(arg_id, arg_reg)
+				if src_reg != arg_reg {
+					g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+				}
+				arg_reg += 1
+			} else {
+				src_reg := g.load_val(arg_id, 8)
+				g.emit_store_sp(src_reg, stack_off)
+				stack_off += 8
 			}
-			arg_reg += 1
 		}
 	}
 
@@ -538,7 +570,11 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		g.emit32(asm_bl(0))
 	}
 
-	if instr.typ != ssa.TypeID(0) {
+	if out_stack_size > 0 {
+		g.emit_add_sp(out_stack_size)
+	}
+
+	if instr.typ != 0 {
 		ret_size := g.m.type_size(instr.typ)
 		if ret_size > 8 && instr.typ > 0 && instr.typ < g.m.type_store.types.len {
 			typ := g.m.type_store.types[instr.typ]
@@ -556,6 +592,37 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		}
 		g.store_val(0, val_id)
 	}
+}
+
+fn (g &Gen) call_stack_arg_size(instr ssa.Instruction) int {
+	mut arg_reg := 0
+	mut stack_words := 0
+	for ai in 1 .. instr.operands.len {
+		arg_id := instr.operands[ai]
+		if arg_id <= 0 || arg_id >= g.m.values.len {
+			continue
+		}
+		arg_val := g.m.values[arg_id]
+		mut n_words := 1
+		if arg_val.kind == .string_literal {
+			n_words = 2
+		} else {
+			arg_size := g.m.type_size(arg_val.typ)
+			if arg_size > 8 && arg_val.typ > 0 && arg_val.typ < g.m.type_store.types.len
+				&& g.m.type_store.types[arg_val.typ].kind == .struct_t {
+				n_words = (arg_size + 7) / 8
+			}
+		}
+		if arg_reg + n_words <= 8 {
+			arg_reg += n_words
+		} else {
+			stack_words += n_words
+		}
+	}
+	if stack_words == 0 {
+		return 0
+	}
+	return (stack_words * 8 + 15) & ~0xF
 }
 
 // ==================== Value loading/storing ====================
@@ -761,6 +828,16 @@ fn (mut g Gen) emit_store_fp(reg int, offset int) {
 	}
 }
 
+fn (mut g Gen) emit_store_sp(reg int, offset int) {
+	if offset >= 0 && offset < 32768 && offset % 8 == 0 {
+		g.emit32(asm_str_imm(Reg(reg), sp, u32(offset / 8)))
+	} else {
+		g.emit_mov_imm(11, i64(offset))
+		g.emit32(asm_add_reg(Reg(11), sp, Reg(11)))
+		g.emit32(asm_str(Reg(reg), Reg(11)))
+	}
+}
+
 fn (mut g Gen) emit_load_fp(reg int, offset int) {
 	if offset >= -255 && offset < 0 {
 		g.emit32(asm_ldur(Reg(reg), fp, i32(offset)))
@@ -786,7 +863,7 @@ fn (mut g Gen) emit_lea_fp(reg int, offset int) {
 
 fn (g &Gen) ptr_elem_type(val_id int) ssa.TypeID {
 	if val_id <= 0 || val_id >= g.m.values.len {
-		return ssa.TypeID(0)
+		return 0
 	}
 	typ_id := g.m.values[val_id].typ
 	if typ_id > 0 && typ_id < g.m.type_store.types.len {
@@ -795,7 +872,7 @@ fn (g &Gen) ptr_elem_type(val_id int) ssa.TypeID {
 			return typ.elem_type
 		}
 	}
-	return ssa.TypeID(0)
+	return 0
 }
 
 fn (mut g Gen) emit_store_typed(src_reg int, ptr_reg int, typ ssa.TypeID) {

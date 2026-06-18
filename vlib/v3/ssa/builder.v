@@ -3,6 +3,40 @@ module ssa
 import v3.flat
 import v3.types
 
+const arm64_force_external_syms = ['_malloc', '_free', '_calloc', '_realloc', '_exit', '_abort',
+	'_memcpy', '_memmove', '_memset', '_memcmp', '___stdoutp', '___stderrp', '_puts', '_printf',
+	'_write', '_read', '_open', '_close', '_fwrite', '_fflush', '_fopen', '_fclose', '_putchar',
+	'_sprintf', '_snprintf', '_fprintf', '_sscanf', '_mmap', '_munmap', '_getcwd', '_access',
+	'_readlink', '_getenv', '_strlen', '_opendir', '_readdir', '_closedir', '_mkdir', '_rmdir',
+	'_unlink', '_rename', '_remove', '_stat', '_lstat', '_fstat', '_chmod', '_chdir', '_realpath',
+	'_symlink', '_link', '_getpid', '_getuid', '_geteuid', '_fork', '_execve', '_execvp', '_waitpid',
+	'_kill', '_system', '_posix_spawn', '_signal', '_atexit', '_fgets', '_fputs', '_fread', '_fseek',
+	'_ftell', '_rewind', '_fileno', '_popen', '_pclose', '_dup', '_dup2', '_pipe', '_isatty',
+	'_freopen', '_dprintf', '_getc', '_strdup', '_strcmp', '_strncmp', '_strchr', '_strrchr',
+	'_strerror', '_strncasecmp', '_strcasecmp', '_atoi', '_atof', '_qsort', '_time', '_localtime_r',
+	'_gmtime_r', '_mktime', '_gettimeofday', '_clock_gettime_nsec_np', '_mach_absolute_time',
+	'_mach_timebase_info', '_nanosleep', '_sleep', '_usleep', '_strftime', '_task_info',
+	'_mach_task_self_', '_rand', '_srand', '_isdigit', '_isspace', '_tolower', '_toupper', '_setenv',
+	'_unsetenv', '_sysconf', '_uname', '_gethostname', '_pthread_mutex_init', '_pthread_mutex_lock',
+	'_pthread_mutex_unlock', '_pthread_mutex_destroy', '_pthread_self', '_pthread_create',
+	'_pthread_join', '_pthread_attr_init', '_pthread_attr_setstacksize', '_pthread_attr_destroy',
+	'_arc4random_buf', '_proc_pidpath', '_backtrace', '_backtrace_symbols', '_backtrace_symbols_fd',
+	'_dispatch_semaphore_create', '_dispatch_semaphore_signal', '_dispatch_semaphore_wait',
+	'_dispatch_time', '_dispatch_release', '_setvbuf', '_setbuf', '_memchr', '_getlogin_r',
+	'_getppid', '_getgid', '_getegid', '_ftruncate', '_mkstemp', '_statvfs', '_chown', '_sigaction',
+	'_sigemptyset', '_sigaddset', '_sigprocmask', '_select', '_kqueue', '_abs', '_tcgetattr',
+	'_tcsetattr', '_ioctl', '_getchar', '_getline', '_fdopen', '_feof', '_ferror', '_setpgid',
+	'_ptrace', '_wait', '_timegm', '_clock_gettime', '_aligned_alloc', '_utime', '_getlogin',
+	'_environ', '___error', '___stdinp', '__dyld_get_image_name', '__dyld_get_image_header', '_cos',
+	'_sin', '_tan', '_acos', '_asin', '_atan', '_atan2', '_cosh', '_sinh', '_tanh', '_acosh',
+	'_asinh', '_atanh', '_exp', '_exp2', '_log', '_log2', '_log10', '_pow', '_sqrt', '_cbrt', '_ceil',
+	'_floor', '_round', '_trunc', '_fmod', '_remainder', '_fabs', '_copysign', '_fmax', '_fmin',
+	'_hypot', '_ldexp', '_frexp', '_modf', '_scalbn', '_ilogb', '_logb', '_erf', '_erfc', '_lgamma',
+	'_tgamma', '_j0', '_j1', '_jn', '_y0', '_y1', '_yn', '_mprotect', '_sys_icache_invalidate',
+	'_objc_msgSend', '_objc_getClass', '_sel_registerName', '_objc_alloc_init',
+	'_objc_autoreleasePoolPush', '_objc_autoreleasePoolPop', '_MTLCreateSystemDefaultDevice',
+	'_dlopen', '_dlsym']
+
 pub struct Builder {
 mut:
 	m                &Module            = unsafe { nil }
@@ -139,6 +173,12 @@ fn (mut b Builder) register_functions() {
 	p3 << ptr_i8
 	p3 << b.i64_type
 	b.register_extern('write', b.i64_type, p3)
+	b.register_extern('read', b.i64_type, p3)
+	p3 = []TypeID{}
+	p3 << ptr_i8
+	p3 << b.i64_type
+	p3 << b.i64_type
+	b.register_extern('open', b.i64_type, p3)
 	p1 = []TypeID{}
 	p1 << b.i64_type
 	b.register_extern('putchar', b.i64_type, p1)
@@ -239,15 +279,84 @@ fn (mut b Builder) register_functions() {
 	p1 = []TypeID{}
 	p1 << ptr_i8
 	b.register_extern('fflush', b.void_type, p1)
-	b.register_basic_format_stubs()
 	p2 = []TypeID{}
-	p2 << b.str_type
-	p2 << b.str_type
-	b.register_runtime_extern('string__plus', b.str_type, p2)
-	p2 = []TypeID{}
+	p2 << ptr_i8
 	p2 << b.i64_type
-	p2 << b.m.type_store.get_ptr(b.str_type)
-	b.register_runtime_extern('string_plus_many', b.str_type, p2)
+	b.register_extern('access', b.i64_type, p2)
+	b.register_extern('mkdir', b.i64_type, p2)
+	b.register_extern('getcwd', ptr_i8, p2)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('remove', b.i64_type, p1)
+	b.register_extern('unlink', b.i64_type, p1)
+	b.register_extern('rmdir', b.i64_type, p1)
+	b.register_extern('chdir', b.i64_type, p1)
+	b.register_extern('getenv', ptr_i8, p1)
+	b.register_extern('system', b.i64_type, p1)
+	p3 = []TypeID{}
+	p3 << ptr_i8
+	p3 << ptr_i8
+	p3 << b.i64_type
+	b.register_extern('readlink', b.i64_type, p3)
+	p3 = []TypeID{}
+	p3 << ptr_i8
+	p3 << ptr_i8
+	p3 << b.i64_type
+	b.register_extern('setenv', b.i64_type, p3)
+	p3 = []TypeID{}
+	p3 << b.i64_type
+	p3 << ptr_i8
+	p3 << b.i64_type
+	b.register_extern('waitpid', b.i64_type, p3)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << ptr_i8
+	b.register_extern('realpath', ptr_i8, p2)
+	b.register_extern('pthread_mutex_init', b.i64_type, p2)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('pthread_mutex_lock', b.i64_type, p1)
+	b.register_extern('pthread_mutex_trylock', b.i64_type, p1)
+	b.register_extern('pthread_mutex_unlock', b.i64_type, p1)
+	b.register_extern('pthread_mutex_destroy', b.i64_type, p1)
+	b.register_extern('pthread_self', b.i64_type, []TypeID{})
+	b.register_extern('getpid', b.i64_type, []TypeID{})
+	b.register_extern('mach_absolute_time', b.i64_type, []TypeID{})
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('mach_timebase_info', b.void_type, p1)
+	p1 = []TypeID{}
+	p1 << b.i64_type
+	b.register_extern('clock_gettime_nsec_np', b.i64_type, p1)
+	p1 = []TypeID{}
+	p1 << ptr_i8
+	b.register_extern('time', b.i64_type, p1)
+	b.register_extern('mktime', b.i64_type, p1)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << ptr_i8
+	b.register_extern('localtime_r', ptr_i8, p2)
+	b.register_extern('gmtime_r', ptr_i8, p2)
+	p4 = []TypeID{}
+	p4 << ptr_i8
+	p4 << b.i64_type
+	p4 << ptr_i8
+	p4 << ptr_i8
+	b.register_extern('strftime', b.i64_type, p4)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << ptr_i8
+	b.register_extern('gettimeofday', b.i64_type, p2)
+	p1 = []TypeID{}
+	p1 << b.i64_type
+	b.register_extern('sleep', b.i64_type, p1)
+	b.register_extern('usleep', b.i64_type, p1)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << ptr_i8
+	b.register_extern('nanosleep', b.i64_type, p2)
+	b.register_basic_format_stubs()
+	b.register_string_plus_stubs()
 	p1 = []TypeID{}
 	p1 << ptr_i8
 	b.register_extern('free', b.void_type, p1)
@@ -256,9 +365,14 @@ fn (mut b Builder) register_functions() {
 	p2 << ptr_i8
 	b.register_extern('fprintf', b.void_type, p2)
 
+	mut cur_module := ''
 	for node in b.a.nodes {
+		if node.kind == .module_decl {
+			cur_module = node.value
+			continue
+		}
 		if node.kind == .fn_decl {
-			if b.skip_source_fn(node.value) {
+			if b.skip_source_fn_in_module(node.value, cur_module) {
 				continue
 			}
 			if b.used_fns.len > 0 && !b.fn_is_used(node.value) {
@@ -292,6 +406,10 @@ fn (mut b Builder) register_functions() {
 	b.register_map_runtime_stubs()
 	b.register_u8_runtime_stubs()
 	b.register_heap_tracking_stubs()
+	b.register_process_capture_stubs()
+	b.register_array_string_stubs()
+	b.register_fixed_array_contains_stubs()
+	b.register_array_contains_stubs()
 }
 
 fn (mut b Builder) register_extern(name string, ret TypeID, params []TypeID) {
@@ -326,19 +444,26 @@ fn (b &Builder) has_fn_decl(name string) bool {
 
 fn (b &Builder) skip_source_fn(name string) bool {
 	if name in ['_wymix', 'wyhash', 'wyhash64', 'string__eq', 'string__lt', 'array_new', 'array_get',
-		'array_push', 'panic', 'fast_string_eq', 'strings.new_builder',
-		'strings.Builder.write_string', 'strings.Builder.writeln', 'strings.Builder.str',
-		'strings.Builder.write_ptr', 'strings.Builder.write_u8', 'strings.Builder.write_runes',
-		'strings.Builder.free', 'strings.Builder.last_n', 'new_map', 'map__set', 'map__get',
-		'map__exists', 'map__get_check', 'map__get_or_set', 'map__delete', 'map__clear', 'map__clone',
-		'v3_map_find', 'u8.is_digit', 'u8.is_letter', 'u8.is_alnum', 'u8.is_capital', '_ht_alloc',
-		'_ht_free', 'f32_to_str_l', 'f32_to_str_l_with_dot', 'f64_to_str_l',
-		'f64_to_str_l_with_dot', 'fxx_to_str_l_parse', 'fxx_to_str_l_parse_with_dot'] {
+		'string__plus', 'string_plus_many', 'array_push', 'array_clone', 'panic', 'fast_string_eq',
+		'strings.new_builder', 'strings.Builder.write_string', 'strings.Builder.writeln',
+		'strings.Builder.str', 'strings.Builder.write_ptr', 'strings.Builder.write_u8',
+		'strings.Builder.write_runes', 'strings.Builder.free', 'strings.Builder.last_n', 'new_map',
+		'map__set', 'map__get', 'map__exists', 'map__get_check', 'map__get_or_set', 'map__delete',
+		'map__clear', 'map__clone', 'v3_map_find', 'u8.is_digit', 'u8.is_letter', 'u8.is_alnum',
+		'u8.is_capital', '_ht_alloc', '_ht_free', 'f32_to_str_l', 'f32_to_str_l_with_dot',
+		'f64_to_str_l', 'f64_to_str_l_with_dot', 'fxx_to_str_l_parse', 'fxx_to_str_l_parse_with_dot'] {
 		return true
 	}
 	return name.starts_with('print_backtrace') || name.starts_with('backtrace_')
 		|| name.starts_with('map.')
 		|| name in ['print_libbacktrace', 'eprint_libbacktrace', 'bsd_backtrace_resolve_atos']
+}
+
+fn (b &Builder) skip_source_fn_in_module(name string, module_name string) bool {
+	if module_name == 'c' && name.starts_with('Gen.') {
+		return true
+	}
+	return b.skip_source_fn(name)
 }
 
 fn (mut b Builder) register_wyhash_stubs() {
@@ -462,6 +587,150 @@ fn (mut b Builder) generate_const_string_body(func_id int, value string) {
 	b.block_instr1(.ret, entry, b.void_type, result)
 }
 
+fn (mut b Builder) register_string_plus_stubs() {
+	mut p2 := []TypeID{}
+	p2 << b.str_type
+	p2 << b.str_type
+	plus_id := b.register_synthetic_function('string__plus', b.str_type, p2)
+	b.generate_string_plus_body(plus_id)
+
+	mut p_many := []TypeID{}
+	p_many << b.i64_type
+	p_many << b.m.type_store.get_ptr(b.str_type)
+	many_id := b.register_synthetic_function('string_plus_many', b.str_type, p_many)
+	b.generate_string_plus_many_body(many_id)
+}
+
+fn (mut b Builder) emit_make_string(block_id BlockID, data ValueID, len64 ValueID) ValueID {
+	ptr_string := b.m.type_store.get_ptr(b.str_type)
+	alloca_out := b.block_instr0(.alloca, block_id, ptr_string)
+	data_ptr := b.block_struct_field_ptr(block_id, alloca_out, b.str_type, 0)
+	len_ptr := b.block_struct_field_ptr(block_id, alloca_out, b.str_type, 1)
+	b.block_instr2(.store, block_id, b.void_type, data, data_ptr)
+	b.block_instr2(.store, block_id, b.void_type, len64, len_ptr)
+	return b.block_instr1(.load, block_id, b.str_type, alloca_out)
+}
+
+fn (mut b Builder) generate_string_plus_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_string := b.m.type_store.get_ptr(b.str_type)
+	entry := b.m.add_block(func_id, 'entry')
+	left := b.func_add_argument(func_id, b.str_type, 'left')
+	right := b.func_add_argument(func_id, b.str_type, 'right')
+
+	alloca_left := b.block_instr0(.alloca, entry, ptr_string)
+	alloca_right := b.block_instr0(.alloca, entry, ptr_string)
+	b.block_instr2(.store, entry, b.void_type, left, alloca_left)
+	b.block_instr2(.store, entry, b.void_type, right, alloca_right)
+
+	left_data_ptr := b.block_struct_field_ptr(entry, alloca_left, b.str_type, 0)
+	left_len_ptr := b.block_struct_field_ptr(entry, alloca_left, b.str_type, 1)
+	right_data_ptr := b.block_struct_field_ptr(entry, alloca_right, b.str_type, 0)
+	right_len_ptr := b.block_struct_field_ptr(entry, alloca_right, b.str_type, 1)
+	left_data := b.block_instr1(.load, entry, ptr_i8, left_data_ptr)
+	right_data := b.block_instr1(.load, entry, ptr_i8, right_data_ptr)
+	left_len32 := b.block_instr1(.load, entry, b.i32_type, left_len_ptr)
+	right_len32 := b.block_instr1(.load, entry, b.i32_type, right_len_ptr)
+	left_len := b.block_instr1(.zext, entry, b.i64_type, left_len32)
+	right_len := b.block_instr1(.zext, entry, b.i64_type, right_len32)
+	total_len := b.block_instr2(.add, entry, b.i64_type, left_len, right_len)
+	one := b.m.get_or_add_const(b.i64_type, '1')
+	alloc_len := b.block_instr2(.add, entry, b.i64_type, total_len, one)
+
+	malloc_ref := b.m.add_value(.func_ref, b.void_type, 'malloc', b.fn_ids['malloc'])
+	out_data := b.block_instr2(.call, entry, ptr_i8, malloc_ref, alloc_len)
+	memcpy_ref_left := b.m.add_value(.func_ref, b.void_type, 'memcpy', b.fn_ids['memcpy'])
+	b.block_instr4(.call, entry, ptr_i8, memcpy_ref_left, out_data, left_data, left_len)
+	right_dest := b.block_instr2(.add, entry, ptr_i8, out_data, left_len)
+	memcpy_ref_right := b.m.add_value(.func_ref, b.void_type, 'memcpy', b.fn_ids['memcpy'])
+	b.block_instr4(.call, entry, ptr_i8, memcpy_ref_right, right_dest, right_data, right_len)
+	zero8 := b.m.get_or_add_const(b.i8_type, '0')
+	term_ptr := b.block_instr2(.add, entry, ptr_i8, out_data, total_len)
+	b.block_instr2(.store, entry, b.void_type, zero8, term_ptr)
+
+	result := b.emit_make_string(entry, out_data, total_len)
+	b.block_instr1(.ret, entry, b.void_type, result)
+}
+
+fn (mut b Builder) generate_string_plus_many_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_i64 := b.m.type_store.get_ptr(b.i64_type)
+	ptr_string := b.m.type_store.get_ptr(b.str_type)
+	entry := b.m.add_block(func_id, 'entry')
+	count := b.func_add_argument(func_id, b.i64_type, 'count')
+	input_base := b.func_add_argument(func_id, ptr_string, 'input_base')
+
+	alloca_i := b.block_instr0(.alloca, entry, ptr_i64)
+	alloca_total := b.block_instr0(.alloca, entry, ptr_i64)
+	alloca_written := b.block_instr0(.alloca, entry, ptr_i64)
+	zero64 := b.m.get_or_add_const(b.i64_type, '0')
+	one64 := b.m.get_or_add_const(b.i64_type, '1')
+	stride := b.m.get_or_add_const(b.i64_type, '${b.m.type_size(b.str_type)}')
+	b.block_instr2(.store, entry, b.void_type, zero64, alloca_i)
+	b.block_instr2(.store, entry, b.void_type, zero64, alloca_total)
+
+	sum_check := b.m.add_block(func_id, 'string_plus_many_sum_check')
+	sum_body := b.m.add_block(func_id, 'string_plus_many_sum_body')
+	alloc_block := b.m.add_block(func_id, 'string_plus_many_alloc')
+	b.block_instr1(.jmp, entry, b.void_type, ValueID(sum_check))
+
+	i_sum := b.block_instr1(.load, sum_check, b.i64_type, alloca_i)
+	more_sum := b.block_instr2(.lt, sum_check, b.i1_type, i_sum, count)
+	b.block_instr3(.br, sum_check, b.void_type, more_sum, ValueID(sum_body), ValueID(alloc_block))
+
+	sum_item_off := b.block_instr2(.mul, sum_body, b.i64_type, i_sum, stride)
+	sum_item_ptr := b.block_instr2(.get_element_ptr, sum_body, ptr_string, input_base, sum_item_off)
+	sum_len_ptr := b.block_struct_field_ptr(sum_body, sum_item_ptr, b.str_type, 1)
+	sum_len32 := b.block_instr1(.load, sum_body, b.i32_type, sum_len_ptr)
+	sum_len := b.block_instr1(.zext, sum_body, b.i64_type, sum_len32)
+	old_total := b.block_instr1(.load, sum_body, b.i64_type, alloca_total)
+	new_total := b.block_instr2(.add, sum_body, b.i64_type, old_total, sum_len)
+	next_i_sum := b.block_instr2(.add, sum_body, b.i64_type, i_sum, one64)
+	b.block_instr2(.store, sum_body, b.void_type, new_total, alloca_total)
+	b.block_instr2(.store, sum_body, b.void_type, next_i_sum, alloca_i)
+	b.block_instr1(.jmp, sum_body, b.void_type, ValueID(sum_check))
+
+	total_len := b.block_instr1(.load, alloc_block, b.i64_type, alloca_total)
+	alloc_len := b.block_instr2(.add, alloc_block, b.i64_type, total_len, one64)
+	malloc_ref := b.m.add_value(.func_ref, b.void_type, 'malloc', b.fn_ids['malloc'])
+	out_data := b.block_instr2(.call, alloc_block, ptr_i8, malloc_ref, alloc_len)
+	b.block_instr2(.store, alloc_block, b.void_type, zero64, alloca_i)
+	b.block_instr2(.store, alloc_block, b.void_type, zero64, alloca_written)
+
+	copy_check := b.m.add_block(func_id, 'string_plus_many_copy_check')
+	copy_body := b.m.add_block(func_id, 'string_plus_many_copy_body')
+	done := b.m.add_block(func_id, 'string_plus_many_done')
+	b.block_instr1(.jmp, alloc_block, b.void_type, ValueID(copy_check))
+
+	i_copy := b.block_instr1(.load, copy_check, b.i64_type, alloca_i)
+	more_copy := b.block_instr2(.lt, copy_check, b.i1_type, i_copy, count)
+	b.block_instr3(.br, copy_check, b.void_type, more_copy, ValueID(copy_body), ValueID(done))
+
+	copy_item_off := b.block_instr2(.mul, copy_body, b.i64_type, i_copy, stride)
+	copy_item_ptr := b.block_instr2(.get_element_ptr, copy_body, ptr_string, input_base,
+		copy_item_off)
+	copy_data_ptr := b.block_struct_field_ptr(copy_body, copy_item_ptr, b.str_type, 0)
+	copy_len_ptr := b.block_struct_field_ptr(copy_body, copy_item_ptr, b.str_type, 1)
+	copy_data := b.block_instr1(.load, copy_body, ptr_i8, copy_data_ptr)
+	copy_len32 := b.block_instr1(.load, copy_body, b.i32_type, copy_len_ptr)
+	copy_len := b.block_instr1(.zext, copy_body, b.i64_type, copy_len32)
+	written := b.block_instr1(.load, copy_body, b.i64_type, alloca_written)
+	dest := b.block_instr2(.add, copy_body, ptr_i8, out_data, written)
+	memcpy_ref := b.m.add_value(.func_ref, b.void_type, 'memcpy', b.fn_ids['memcpy'])
+	b.block_instr4(.call, copy_body, ptr_i8, memcpy_ref, dest, copy_data, copy_len)
+	new_written := b.block_instr2(.add, copy_body, b.i64_type, written, copy_len)
+	next_i_copy := b.block_instr2(.add, copy_body, b.i64_type, i_copy, one64)
+	b.block_instr2(.store, copy_body, b.void_type, new_written, alloca_written)
+	b.block_instr2(.store, copy_body, b.void_type, next_i_copy, alloca_i)
+	b.block_instr1(.jmp, copy_body, b.void_type, ValueID(copy_check))
+
+	zero8 := b.m.get_or_add_const(b.i8_type, '0')
+	term_ptr := b.block_instr2(.add, done, ptr_i8, out_data, total_len)
+	b.block_instr2(.store, done, b.void_type, zero8, term_ptr)
+	result := b.emit_make_string(done, out_data, total_len)
+	b.block_instr1(.ret, done, b.void_type, result)
+}
+
 fn (mut b Builder) register_array_runtime_stubs() {
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
 	ptr_array := b.m.type_store.get_ptr(b.array_type)
@@ -484,6 +753,11 @@ fn (mut b Builder) register_array_runtime_stubs() {
 	p2 << ptr_i8
 	array_push_id := b.register_synthetic_function('array_push', b.void_type, p2)
 	b.generate_array_push_body(array_push_id)
+
+	mut p1 := []TypeID{}
+	p1 << b.array_type
+	array_clone_id := b.register_synthetic_function('array_clone', b.array_type, p1)
+	b.generate_array_clone_body(array_clone_id)
 }
 
 fn (mut b Builder) register_panic_stub() {
@@ -812,6 +1086,207 @@ fn (mut b Builder) generate_void_noop_body(func_id int) {
 	b.block_instr0(.ret, entry, b.void_type)
 }
 
+fn (mut b Builder) register_process_capture_stubs() {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	mut p3 := []TypeID{}
+	p3 << ptr_i8
+	p3 << ptr_i8
+	p3 << ptr_i8
+	for name in ['v_os_execute_capture_start', 'v_os_exec_capture_start'] {
+		func_id := b.register_synthetic_function(name, b.i64_type, p3)
+		b.generate_const_i64_body(func_id, '1')
+	}
+}
+
+fn (mut b Builder) generate_const_i64_body(func_id int, value string) {
+	entry := b.m.add_block(func_id, 'entry')
+	result := b.m.get_or_add_const(b.i64_type, value)
+	b.block_instr1(.ret, entry, b.void_type, result)
+}
+
+fn (mut b Builder) register_array_string_stubs() {
+	mut p1 := []TypeID{}
+	p1 << b.array_type
+	array_str_id := b.register_synthetic_function('Array_str', b.str_type, p1)
+	b.generate_const_string_body(array_str_id, '[]')
+
+	mut p2 := []TypeID{}
+	p2 << b.array_type
+	p2 << b.str_type
+	for name in ['array_string_join', 'Array_string__join'] {
+		func_id := b.register_synthetic_function(name, b.str_type, p2)
+		b.generate_const_string_body(func_id, '')
+	}
+}
+
+fn (mut b Builder) register_fixed_array_contains_stubs() {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	mut p3_string := []TypeID{}
+	p3_string << ptr_i8
+	p3_string << b.i64_type
+	p3_string << b.str_type
+	contains_string_id := b.register_synthetic_function('fixed_array_contains_string', b.i1_type,
+		p3_string)
+	b.generate_fixed_array_contains_string_body(contains_string_id)
+
+	mut p3_int := []TypeID{}
+	p3_int << ptr_i8
+	p3_int << b.i64_type
+	p3_int << b.i64_type
+	contains_int_id := b.register_synthetic_function('fixed_array_contains_int', b.i1_type, p3_int)
+	b.generate_const_bool_body(contains_int_id, false)
+}
+
+fn (mut b Builder) generate_fixed_array_contains_string_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	entry := b.m.add_block(func_id, 'entry')
+	arr := b.func_add_argument(func_id, ptr_i8, 'arr')
+	len := b.func_add_argument(func_id, b.i64_type, 'len')
+	needle := b.func_add_argument(func_id, b.str_type, 'needle')
+	_ = arr
+	_ = len
+	mut result := b.m.get_or_add_const(b.i1_type, '0')
+	eq_ref := b.m.add_value(.func_ref, b.void_type, 'string__eq', b.fn_ids['string__eq'])
+	for sym in arm64_force_external_syms {
+		sym_lit := b.m.add_value(.string_literal, b.str_type, sym, 0)
+		is_sym := b.block_instr3(.call, entry, b.i1_type, eq_ref, needle, sym_lit)
+		result = b.block_instr2(.or_, entry, b.i1_type, result, is_sym)
+	}
+	b.block_instr1(.ret, entry, b.void_type, result)
+}
+
+fn (mut b Builder) generate_const_bool_body(func_id int, value bool) {
+	entry := b.m.add_block(func_id, 'entry')
+	result := b.m.get_or_add_const(b.i1_type, if value { '1' } else { '0' })
+	b.block_instr1(.ret, entry, b.void_type, result)
+}
+
+fn (mut b Builder) register_array_contains_stubs() {
+	mut p2_string := []TypeID{}
+	p2_string << b.array_type
+	p2_string << b.str_type
+	index_string_id := b.register_synthetic_function('array_index_string', b.i64_type, p2_string)
+	b.generate_array_index_string_body(index_string_id)
+	contains_string_id := b.register_synthetic_function('array_contains_string', b.i1_type,
+		p2_string)
+	b.generate_array_contains_from_index_body(contains_string_id, 'array_index_string', b.str_type)
+
+	mut p2_int := []TypeID{}
+	p2_int << b.array_type
+	p2_int << b.i64_type
+	index_int_id := b.register_synthetic_function('array_index_int', b.i64_type, p2_int)
+	b.generate_array_index_int_body(index_int_id)
+	contains_int_id := b.register_synthetic_function('array_contains_int', b.i1_type, p2_int)
+	b.generate_array_contains_from_index_body(contains_int_id, 'array_index_int', b.i64_type)
+}
+
+fn (mut b Builder) generate_array_contains_from_index_body(func_id int, index_name string, needle_type TypeID) {
+	entry := b.m.add_block(func_id, 'entry')
+	arr := b.func_add_argument(func_id, b.array_type, 'arr')
+	needle := b.func_add_argument(func_id, needle_type, 'needle')
+	index_ref := b.m.add_value(.func_ref, b.void_type, index_name, b.fn_ids[index_name])
+	idx := b.block_instr3(.call, entry, b.i64_type, index_ref, arr, needle)
+	zero := b.m.get_or_add_const(b.i64_type, '0')
+	found := b.block_instr2(.ge, entry, b.i1_type, idx, zero)
+	b.block_instr1(.ret, entry, b.void_type, found)
+}
+
+fn (mut b Builder) generate_array_index_string_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_i64 := b.m.type_store.get_ptr(b.i64_type)
+	ptr_array := b.m.type_store.get_ptr(b.array_type)
+	ptr_string := b.m.type_store.get_ptr(b.str_type)
+	entry := b.m.add_block(func_id, 'entry')
+	arr := b.func_add_argument(func_id, b.array_type, 'arr')
+	needle := b.func_add_argument(func_id, b.str_type, 'needle')
+	alloca_arr := b.block_instr0(.alloca, entry, ptr_array)
+	alloca_i := b.block_instr0(.alloca, entry, ptr_i64)
+	b.block_instr2(.store, entry, b.void_type, arr, alloca_arr)
+	zero := b.m.get_or_add_const(b.i64_type, '0')
+	one := b.m.get_or_add_const(b.i64_type, '1')
+	b.block_instr2(.store, entry, b.void_type, zero, alloca_i)
+
+	data_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 0)
+	len_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 1)
+	elem_size_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 3)
+	blk_loop := b.m.add_block(func_id, 'array_index_string_loop')
+	blk_body := b.m.add_block(func_id, 'array_index_string_body')
+	blk_next := b.m.add_block(func_id, 'array_index_string_next')
+	blk_found := b.m.add_block(func_id, 'array_index_string_found')
+	blk_not_found := b.m.add_block(func_id, 'array_index_string_not_found')
+	b.block_instr1(.jmp, entry, b.void_type, ValueID(blk_loop))
+
+	i := b.block_instr1(.load, blk_loop, b.i64_type, alloca_i)
+	len := b.block_instr1(.load, blk_loop, b.i64_type, len_ptr)
+	in_range := b.block_instr2(.lt, blk_loop, b.i1_type, i, len)
+	b.block_instr3(.br, blk_loop, b.void_type, in_range, ValueID(blk_body), ValueID(blk_not_found))
+
+	data := b.block_instr1(.load, blk_body, ptr_i8, data_ptr)
+	elem_size := b.block_instr1(.load, blk_body, b.i64_type, elem_size_ptr)
+	offset := b.block_instr2(.mul, blk_body, b.i64_type, i, elem_size)
+	slot := b.block_instr2(.add, blk_body, ptr_i8, data, offset)
+	slot_string_ptr := b.block_instr1(.bitcast, blk_body, ptr_string, slot)
+	slot_string := b.block_instr1(.load, blk_body, b.str_type, slot_string_ptr)
+	eq_ref := b.m.add_value(.func_ref, b.void_type, 'string__eq', b.fn_ids['string__eq'])
+	is_eq := b.block_instr3(.call, blk_body, b.i1_type, eq_ref, slot_string, needle)
+	b.block_instr3(.br, blk_body, b.void_type, is_eq, ValueID(blk_found), ValueID(blk_next))
+
+	next_i := b.block_instr2(.add, blk_next, b.i64_type, i, one)
+	b.block_instr2(.store, blk_next, b.void_type, next_i, alloca_i)
+	b.block_instr1(.jmp, blk_next, b.void_type, ValueID(blk_loop))
+
+	b.block_instr1(.ret, blk_found, b.void_type, i)
+	not_found := b.m.get_or_add_const(b.i64_type, '-1')
+	b.block_instr1(.ret, blk_not_found, b.void_type, not_found)
+}
+
+fn (mut b Builder) generate_array_index_int_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_i64 := b.m.type_store.get_ptr(b.i64_type)
+	ptr_array := b.m.type_store.get_ptr(b.array_type)
+	entry := b.m.add_block(func_id, 'entry')
+	arr := b.func_add_argument(func_id, b.array_type, 'arr')
+	needle := b.func_add_argument(func_id, b.i64_type, 'needle')
+	alloca_arr := b.block_instr0(.alloca, entry, ptr_array)
+	alloca_i := b.block_instr0(.alloca, entry, ptr_i64)
+	b.block_instr2(.store, entry, b.void_type, arr, alloca_arr)
+	zero := b.m.get_or_add_const(b.i64_type, '0')
+	one := b.m.get_or_add_const(b.i64_type, '1')
+	b.block_instr2(.store, entry, b.void_type, zero, alloca_i)
+
+	data_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 0)
+	len_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 1)
+	elem_size_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 3)
+	blk_loop := b.m.add_block(func_id, 'array_index_int_loop')
+	blk_body := b.m.add_block(func_id, 'array_index_int_body')
+	blk_next := b.m.add_block(func_id, 'array_index_int_next')
+	blk_found := b.m.add_block(func_id, 'array_index_int_found')
+	blk_not_found := b.m.add_block(func_id, 'array_index_int_not_found')
+	b.block_instr1(.jmp, entry, b.void_type, ValueID(blk_loop))
+
+	i := b.block_instr1(.load, blk_loop, b.i64_type, alloca_i)
+	len := b.block_instr1(.load, blk_loop, b.i64_type, len_ptr)
+	in_range := b.block_instr2(.lt, blk_loop, b.i1_type, i, len)
+	b.block_instr3(.br, blk_loop, b.void_type, in_range, ValueID(blk_body), ValueID(blk_not_found))
+
+	data := b.block_instr1(.load, blk_body, ptr_i8, data_ptr)
+	elem_size := b.block_instr1(.load, blk_body, b.i64_type, elem_size_ptr)
+	offset := b.block_instr2(.mul, blk_body, b.i64_type, i, elem_size)
+	slot := b.block_instr2(.add, blk_body, ptr_i8, data, offset)
+	slot_i64_ptr := b.block_instr1(.bitcast, blk_body, ptr_i64, slot)
+	slot_i64 := b.block_instr1(.load, blk_body, b.i64_type, slot_i64_ptr)
+	is_eq := b.block_instr2(.eq, blk_body, b.i1_type, slot_i64, needle)
+	b.block_instr3(.br, blk_body, b.void_type, is_eq, ValueID(blk_found), ValueID(blk_next))
+
+	next_i := b.block_instr2(.add, blk_next, b.i64_type, i, one)
+	b.block_instr2(.store, blk_next, b.void_type, next_i, alloca_i)
+	b.block_instr1(.jmp, blk_next, b.void_type, ValueID(blk_loop))
+
+	b.block_instr1(.ret, blk_found, b.void_type, i)
+	not_found := b.m.get_or_add_const(b.i64_type, '-1')
+	b.block_instr1(.ret, blk_not_found, b.void_type, not_found)
+}
+
 fn (mut b Builder) generate_new_map_body(func_id int) {
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
 	ptr_map := b.m.type_store.get_ptr(b.map_type)
@@ -1087,6 +1562,38 @@ fn (mut b Builder) generate_array_get_body(func_id int) {
 	elem_size := b.block_instr1(.load, entry, b.i64_type, elem_size_ptr)
 	offset := b.block_instr2(.mul, entry, b.i64_type, idx, elem_size)
 	result := b.block_instr2(.add, entry, ptr_i8, data, offset)
+	b.block_instr1(.ret, entry, b.void_type, result)
+}
+
+fn (mut b Builder) generate_array_clone_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_array := b.m.type_store.get_ptr(b.array_type)
+	entry := b.m.add_block(func_id, 'entry')
+	arr := b.func_add_argument(func_id, b.array_type, 'arr')
+
+	alloca_arr := b.block_instr0(.alloca, entry, ptr_array)
+	alloca_clone := b.block_instr0(.alloca, entry, ptr_array)
+	b.block_instr2(.store, entry, b.void_type, arr, alloca_arr)
+
+	data_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 0)
+	len_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 1)
+	cap_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 2)
+	elem_size_ptr := b.block_struct_field_ptr(entry, alloca_arr, b.array_type, 3)
+	data := b.block_instr1(.load, entry, ptr_i8, data_ptr)
+	len := b.block_instr1(.load, entry, b.i64_type, len_ptr)
+	cap := b.block_instr1(.load, entry, b.i64_type, cap_ptr)
+	elem_size := b.block_instr1(.load, entry, b.i64_type, elem_size_ptr)
+
+	new_ref := b.m.add_value(.func_ref, b.void_type, 'array_new', b.fn_ids['array_new'])
+	clone := b.block_instr4(.call, entry, b.array_type, new_ref, elem_size, len, cap)
+	b.block_instr2(.store, entry, b.void_type, clone, alloca_clone)
+
+	clone_data_ptr := b.block_struct_field_ptr(entry, alloca_clone, b.array_type, 0)
+	clone_data := b.block_instr1(.load, entry, ptr_i8, clone_data_ptr)
+	copy_size := b.block_instr2(.mul, entry, b.i64_type, len, elem_size)
+	memcpy_ref := b.m.add_value(.func_ref, b.void_type, 'memcpy', b.fn_ids['memcpy'])
+	b.block_instr4(.call, entry, ptr_i8, memcpy_ref, clone_data, data, copy_size)
+	result := b.block_instr1(.load, entry, b.array_type, alloca_clone)
 	b.block_instr1(.ret, entry, b.void_type, result)
 }
 
@@ -1462,9 +1969,14 @@ fn (mut b Builder) generate_wyhash_body(func_id int) {
 }
 
 fn (mut b Builder) build_functions() {
+	mut cur_module := ''
 	for node in b.a.nodes {
+		if node.kind == .module_decl {
+			cur_module = node.value
+			continue
+		}
 		if node.kind == .fn_decl {
-			if b.skip_source_fn(node.value) {
+			if b.skip_source_fn_in_module(node.value, cur_module) {
 				continue
 			}
 			if b.used_fns.len > 0 && !b.fn_is_used(node.value) {
@@ -2039,7 +2551,16 @@ fn (mut b Builder) build_call(node flat.Node) ValueID {
 		}
 		return b.m.get_or_add_const(b.m.type_store.get_ptr(b.i8_type), '0')
 	}
-
+	if fn_node.kind == .selector && node.children_count == 2 {
+		base := b.a.child_node(fn_node, 0)
+		if base.kind == .ident && base.value == 'C' && actual_name !in b.fn_ids {
+			return b.build_expr(b.a.child(&node, 1))
+		}
+	}
+	if node.children_count == 2 && actual_name !in b.fn_ids
+		&& actual_name in ['Type', 'TypeID', 'ValueID', 'BlockID', 'NodeId'] {
+		return b.build_expr(b.a.child(&node, 1))
+	}
 	mut resolved_name := actual_name
 	if resolved_name !in b.fn_ids && resolved_name.contains('.') {
 		c_name := resolved_name.replace('.', '__')
