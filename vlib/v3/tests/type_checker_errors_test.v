@@ -55,15 +55,19 @@ fn test_type_checker_reports_core_semantic_errors() {
 	run_bad(v3_bin, 'bad_missing_return',
 		'fn f(x bool) int {\n\tif x {\n\t\treturn 1\n\t}\n}\nfn main() {}\n',
 		'missing return at end of function `f`')
-	run_bad(v3_bin, 'bad_map_compound',
-		"fn main() {\n\tmut m := map[string]int{}\n\tm['a'] += 1\n}\n",
-		'map index compound assignment is not supported')
-	run_bad(v3_bin, 'bad_map_postfix', "fn main() {\n\tmut m := map[string]int{}\n\tm['a']++\n}\n",
-		'map index postfix mutation is not supported')
 	run_bad(v3_bin, 'bad_interface_method_set',
 		'interface Speaker {\n\tspeak() string\n}\nstruct Person {}\nfn takes_speaker(s Speaker) {}\nfn main() {\n\ttakes_speaker(Person{})\n}\n',
 		'cannot use `Person` as argument 1 to `takes_speaker`; expected `Speaker`')
+	run_bad(v3_bin, 'bad_fn_value_call',
+		"fn add(a int, b int) int {\n\treturn a + b\n}\nfn main() {\n\tf := add\n\t_ := f('bad', 4)\n}\n",
+		'cannot use `string` as argument 1 to `f`; expected `int`')
 	alias_out := run_good(v3_bin, 'alias_method',
 		'type UserId = int\n\nfn (id UserId) str() string {\n\treturn int_str(int(id))\n}\n\nfn main() {\n\tid := UserId(1)\n\tprintln(id.str())\n}\n')
 	assert alias_out == '1'
+	map_mutation_out := run_good(v3_bin, 'map_mutation_lowering',
+		"fn main() {\n\tmut m := map[string]int{}\n\tm['a'] = 1\n\tm['a'] += 2\n\tm['a']++\n\tm['a'] -= 1\n\tprintln(int_str(m['a']))\n}\n")
+	assert map_mutation_out == '3'
+	map_array_append_out := run_good(v3_bin, 'map_array_append_lowering',
+		"fn main() {\n\tmut m := map[string][]int{}\n\tm['a'] << 1\n\tm['a'] << 2\n\tprintln(int_str(m['a'].len))\n}\n")
+	assert map_array_append_out == '2'
 }
