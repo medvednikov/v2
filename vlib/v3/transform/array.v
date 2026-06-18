@@ -55,9 +55,18 @@ fn (mut t Transformer) lower_array_literal_to_runtime(id flat.NodeId, node flat.
 	t.pending_stmts << t.make_decl_assign_typed(tmp_name, t.make_array_new_call(elem_type,
 		t.make_int_literal(0), t.make_int_literal(node.children_count)), array_type)
 	for i in 0 .. node.children_count {
+		elem_id := t.a.child(&node, i)
+		elem := t.a.nodes[int(elem_id)]
+		if elem.kind == .prefix && elem.value == '...' && elem.children_count > 0 {
+			spread := t.transform_expr(t.a.child(&elem, 0))
+			call := t.make_call_typed('array_push_many', arr2(t.make_prefix(.amp,
+				t.make_ident(tmp_name)), spread), 'void')
+			t.pending_stmts << t.make_expr_stmt(call)
+			continue
+		}
 		value_name := t.new_temp('arr_val')
-		t.pending_stmts << t.make_decl_assign_typed(value_name,
-			t.transform_expr(t.a.child(&node, i)), elem_type)
+		t.pending_stmts << t.make_decl_assign_typed(value_name, t.transform_expr(elem_id),
+			elem_type)
 		call := t.make_call_typed('array_push', arr2(t.make_prefix(.amp, t.make_ident(tmp_name)), t.make_prefix(.amp,
 			t.make_ident(value_name))), 'void')
 		t.pending_stmts << t.make_expr_stmt(call)

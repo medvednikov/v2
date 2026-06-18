@@ -41,6 +41,7 @@ mut:
 	fn_ret_types    map[string]string
 	fn_param_types  map[string][]string
 	enum_types      map[string][]string
+	cur_file        string
 	cur_module      string
 	cur_fn_name     string
 	cur_fn_ret_type string
@@ -188,6 +189,9 @@ fn (mut t Transformer) collect_types() {
 
 fn (mut t Transformer) transform_all() {
 	for i, node in t.a.nodes {
+		if node.kind == .file {
+			t.cur_file = node.value
+		}
 		if node.kind == .module_decl {
 			t.cur_module = node.value
 		}
@@ -331,6 +335,9 @@ pub fn (mut t Transformer) transform_stmt(id flat.NodeId) []flat.NodeId {
 		.assert_stmt {
 			return t.transform_children_stmt(id, node)
 		}
+		.select_stmt {
+			return t.transform_children_stmt(id, node)
+		}
 		else {
 			return arr1(id)
 		}
@@ -376,6 +383,9 @@ pub fn (mut t Transformer) transform_expr(id flat.NodeId) flat.NodeId {
 		.paren {
 			return t.transform_paren_expr(id, node)
 		}
+		.postfix {
+			return t.transform_postfix_expr(id, node)
+		}
 		.cast_expr {
 			return t.transform_cast_expr(id, node)
 		}
@@ -397,8 +407,18 @@ pub fn (mut t Transformer) transform_expr(id flat.NodeId) flat.NodeId {
 		.match_stmt {
 			return t.lower_one_match(node)
 		}
-		.ident, .int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
-		.nil_literal, .none_expr, .enum_val, .sizeof_expr, .typeof_expr {
+		.typeof_expr {
+			return t.transform_typeof_expr(id, node)
+		}
+		.ident {
+			return t.transform_ident_expr(id, node)
+		}
+		.fn_literal, .lambda_expr, .spawn_expr, .lock_expr, .dump_expr, .assoc, .range,
+		.select_stmt, .select_branch {
+			return t.transform_children_expr(id, node)
+		}
+		.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal, .nil_literal,
+		.none_expr, .enum_val, .sizeof_expr, .offsetof_expr {
 			// leaf/simple nodes - pass through unchanged
 			return id
 		}
@@ -661,6 +681,13 @@ fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []fla
 		return arr1(id)
 	}
 	child_id := t.a.children[node.children_start]
+	child := t.a.nodes[int(child_id)]
+	if child.kind == .or_expr && !t.is_map_index_or_expr(child) {
+		_ = t.lower_or_expr_to_temp(child_id, child)
+		mut result := []flat.NodeId{}
+		t.drain_pending(mut result)
+		return result
+	}
 	if lowered := t.try_lower_map_index_append_stmt(child_id) {
 		return lowered
 	}
@@ -747,6 +774,44 @@ fn (mut t Transformer) transform_children_stmt(id flat.NodeId, node flat.Node) [
 }
 
 // --- expr handlers (skeleton - identity transforms with child recursion) ---
+
+fn (mut t Transformer) transform_children_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	if node.children_count == 0 {
+		return id
+	}
+	mut new_children := []flat.NodeId{cap: node.children_count}
+	for i in 0 .. node.children_count {
+		child_id := t.a.child(&node, i)
+		if int(child_id) < 0 {
+			new_children << child_id
+			continue
+		}
+		child := t.a.nodes[int(child_id)]
+		if t.is_stmt_kind(child.kind) {
+			expanded := t.transform_stmt(child_id)
+			if expanded.len == 1 {
+				new_children << expanded[0]
+			} else {
+				new_children << t.make_block(expanded)
+			}
+		} else {
+			new_children << t.transform_expr(child_id)
+		}
+	}
+	start := t.a.children.len
+	for nc in new_children {
+		t.a.children << nc
+	}
+	return t.a.add_node(flat.Node{
+		kind:           node.kind
+		op:             node.op
+		children_start: start
+		children_count: new_children.len
+		pos:            node.pos
+		value:          node.value
+		typ:            node.typ
+	})
+}
 
 fn (mut t Transformer) transform_infix_expr(id flat.NodeId, node flat.Node) flat.NodeId {
 	if node.children_count < 2 {
@@ -948,38 +1013,7 @@ fn (mut t Transformer) transform_or_expr(id flat.NodeId, node flat.Node) flat.No
 	if t.is_map_index_or_expr(node) {
 		return t.transform_map_index_or_expr(id, node)
 	}
-	expr_id := t.a.child(&node, 0)
-	body_id := t.a.child(&node, 1)
-	new_expr := t.transform_expr(expr_id)
-	mut new_body_ids := []flat.NodeId{}
-	body := t.a.nodes[int(body_id)]
-	old_err := t.var_types['err'] or { '' }
-	t.var_types['err'] = 'IError'
-	if body.kind == .block {
-		mut child_ids := []flat.NodeId{}
-		for i in 0 .. body.children_count {
-			child_ids << t.a.child(&body, i)
-		}
-		new_body_ids = t.transform_stmts(child_ids)
-	} else {
-		new_body_ids << t.transform_expr(body_id)
-	}
-	if old_err.len > 0 {
-		t.var_types['err'] = old_err
-	} else {
-		t.var_types.delete('err')
-	}
-	new_body := t.make_block(new_body_ids)
-	start := t.a.children.len
-	t.a.children << new_expr
-	t.a.children << new_body
-	return t.a.add_node(flat.Node{
-		kind:           .or_expr
-		children_start: start
-		children_count: 2
-		value:          node.value
-		typ:            node.typ
-	})
+	return t.lower_or_expr_to_temp(id, node)
 }
 
 fn (mut t Transformer) transform_prefix_expr(id flat.NodeId, node flat.Node) flat.NodeId {
@@ -1023,6 +1057,25 @@ fn (mut t Transformer) transform_paren_expr(id flat.NodeId, node flat.Node) flat
 	t.a.children << new_child
 	return t.a.add_node(flat.Node{
 		kind:           .paren
+		op:             node.op
+		children_start: start
+		children_count: 1
+		pos:            node.pos
+		value:          node.value
+		typ:            node.typ
+	})
+}
+
+fn (mut t Transformer) transform_postfix_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	if node.children_count == 0 {
+		return id
+	}
+	child_id := t.a.child(&node, 0)
+	new_child := t.transform_expr(child_id)
+	start := t.a.children.len
+	t.a.children << new_child
+	return t.a.add_node(flat.Node{
+		kind:           .postfix
 		op:             node.op
 		children_start: start
 		children_count: 1
@@ -1086,6 +1139,35 @@ fn (mut t Transformer) transform_array_literal(id flat.NodeId, node flat.Node) f
 
 fn (mut t Transformer) transform_map_init(id flat.NodeId, node flat.Node) flat.NodeId {
 	return t.transform_map_init_expr(id, node)
+}
+
+fn (mut t Transformer) transform_typeof_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	if node.children_count == 0 {
+		return id
+	}
+	expr_id := t.a.child(&node, 0)
+	mut typ := t.node_type(expr_id)
+	if typ.len == 0 {
+		typ = t.reliable_stringify_type(expr_id)
+	}
+	if typ.len == 0 {
+		typ = t.resolve_expr_type(expr_id)
+	}
+	if typ.len == 0 {
+		typ = 'unknown'
+	}
+	return t.make_string_literal(typ)
+}
+
+fn (mut t Transformer) transform_ident_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	match node.value {
+		'@VMODROOT' {
+			return t.make_string_literal(t.vmod_root())
+		}
+		else {
+			return id
+		}
+	}
 }
 
 // --- helper methods ---
@@ -1353,7 +1435,7 @@ pub fn (mut t Transformer) drain_pending(mut result []flat.NodeId) {
 fn (t &Transformer) is_stmt_kind(kind flat.NodeKind) bool {
 	return kind in [.expr_stmt, .assign, .decl_assign, .selector_assign, .index_assign, .return_stmt,
 		.block, .for_stmt, .for_in_stmt, .break_stmt, .continue_stmt, .match_stmt, .defer_stmt,
-		.assert_stmt, .goto_stmt, .label_stmt, .if_expr]
+		.assert_stmt, .goto_stmt, .label_stmt, .if_expr, .select_stmt, .select_branch, .asm_stmt]
 }
 
 // --- type resolution helpers (will move to types.v later) ---

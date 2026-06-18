@@ -70,8 +70,11 @@ fn (mut t Transformer) return_block_from_branch(branch_id flat.NodeId, ret_typ s
 	branch := t.a.nodes[int(branch_id)]
 	if branch.kind != .block {
 		// single expression branch: just `return <expr>`
-		ret := t.make_return(t.wrap_sum_return_expr(branch_id), ret_typ)
-		return t.make_block(arr1(ret))
+		mut all := []flat.NodeId{}
+		ret_val := t.wrap_sum_return_expr(branch_id)
+		t.drain_pending(mut all)
+		all << t.make_return(ret_val, ret_typ)
+		return t.make_block(all)
 	}
 	mut stmt_ids := []flat.NodeId{}
 	for i in 0 .. branch.children_count {
@@ -84,11 +87,13 @@ fn (mut t Transformer) return_block_from_branch(branch_id flat.NodeId, ret_typ s
 	lead := stmt_ids[..stmt_ids.len - 1].clone()
 	new_lead := t.transform_stmts(lead)
 	tail_expr := t.branch_tail_expr(branch_id)
-	ret := t.make_return(t.wrap_sum_return_expr(tail_expr), ret_typ)
 	mut all := []flat.NodeId{}
 	for s in new_lead {
 		all << s
 	}
+	ret_val := t.wrap_sum_return_expr(tail_expr)
+	t.drain_pending(mut all)
+	ret := t.make_return(ret_val, ret_typ)
 	all << ret
 	return t.make_block(all)
 }
@@ -139,20 +144,132 @@ fn (mut t Transformer) try_expand_return_if(_id flat.NodeId, node flat.Node) ?[]
 	return arr1(t.build_return_if_chain(val_id, node.typ))
 }
 
-// try_expand_return_match detects a `return match x { ... }` pattern where
-// the return value is a match expression. By the time this runs, match
-// expressions should already be lowered to if_expr chains by lower_match_stmts,
-// so this would see an if_expr chain rather than a match_stmt.
-//
-// For now, returns none. This will be implemented after confirming that
-// match lowering always runs before the return expansion pass.
+fn (mut t Transformer) match_branch_return_block(branch flat.Node, body_start_idx int, ret_typ string) flat.NodeId {
+	mut body_ids := []flat.NodeId{}
+	for i in body_start_idx .. branch.children_count {
+		body_ids << t.a.child(&branch, i)
+	}
+	if body_ids.len == 0 {
+		return t.make_block([]flat.NodeId{})
+	}
+	mut all := []flat.NodeId{}
+	if body_ids.len > 1 {
+		lead := body_ids[..body_ids.len - 1].clone()
+		for stmt in t.transform_stmts(lead) {
+			all << stmt
+		}
+	}
+	tail_id := body_ids[body_ids.len - 1]
+	tail := t.a.nodes[int(tail_id)]
+	if tail.kind == .return_stmt {
+		for stmt in t.transform_stmt(tail_id) {
+			all << stmt
+		}
+		return t.make_block(all)
+	}
+	tail_expr := if tail.kind == .expr_stmt && tail.children_count > 0 {
+		t.a.child(&tail, 0)
+	} else {
+		tail_id
+	}
+	ret_val := t.wrap_sum_return_expr(tail_expr)
+	t.drain_pending(mut all)
+	all << t.make_return(ret_val, ret_typ)
+	return t.make_block(all)
+}
+
+fn (mut t Transformer) build_return_match_chain(match_expr_id flat.NodeId, orig_expr_id flat.NodeId, branches []flat.NodeId, idx int, ret_typ string) flat.NodeId {
+	if idx >= branches.len {
+		return t.a.add(flat.NodeKind.empty)
+	}
+	branch := t.a.nodes[int(branches[idx])]
+	is_else := branch.value == 'else'
+	body_start_idx := if is_else { 0 } else { t.count_conds(branch) }
+
+	mut sc_pushed := 0
+	if !is_else {
+		n_conds := t.count_conds(branch)
+		if n_conds == 1 {
+			cond_val := t.a.nodes[int(t.a.child(&branch, 0))]
+			if cond_val.kind == .ident && t.is_sum_variant(cond_val.value) {
+				subj := t.expr_key(match_expr_id)
+				sum_name := t.find_sum_type_for_variant(cond_val.value)
+				if subj.len > 0 && sum_name.len > 0 {
+					t.push_smartcast(subj, cond_val.value, sum_name)
+					sc_pushed++
+				}
+				orig_subj := t.expr_key(orig_expr_id)
+				if orig_subj.len > 0 && orig_subj != subj && sum_name.len > 0 {
+					t.push_smartcast(orig_subj, cond_val.value, sum_name)
+					sc_pushed++
+				}
+			}
+		}
+	}
+
+	body_block := t.match_branch_return_block(branch, body_start_idx, ret_typ)
+	for _ in 0 .. sc_pushed {
+		t.pop_smartcast()
+	}
+	if is_else {
+		return body_block
+	}
+
+	cond_id := t.build_match_cond(match_expr_id, branch)
+	mut if_ids := []flat.NodeId{}
+	if_ids << cond_id
+	if_ids << body_block
+	if idx + 1 < branches.len {
+		if_ids << t.build_return_match_chain(match_expr_id, orig_expr_id, branches, idx + 1,
+			ret_typ)
+	}
+	if_start := t.a.children.len
+	for id in if_ids {
+		t.a.children << id
+	}
+	return t.a.add_node(flat.Node{
+		kind:           .if_expr
+		children_start: if_start
+		children_count: if_ids.len
+	})
+}
+
+// try_expand_return_match detects a `return match x { ... }` pattern and expands
+// it into an if/else-if chain where every branch tail is an explicit return.
 fn (mut t Transformer) try_expand_return_match(_id flat.NodeId, node flat.Node) ?[]flat.NodeId {
 	if node.children_count == 0 {
 		return none
 	}
-	// After match lowering, the return value would be an if_expr chain.
-	// We could walk the chain and wrap each leaf in a return statement,
-	// similar to try_expand_return_if but recursively through the chain.
-	// For now, return none until the ordering guarantee is confirmed.
-	return none
+	val_id := t.a.child(&node, 0)
+	val := t.a.nodes[int(val_id)]
+	if val.kind != .match_stmt || val.children_count < 2 {
+		return none
+	}
+	match_expr_id := t.a.child(&val, 0)
+	match_expr := t.a.nodes[int(match_expr_id)]
+	needs_temp := match_expr.kind !in [.ident, .int_literal, .bool_literal, .string_literal,
+		.char_literal]
+
+	mut result := []flat.NodeId{}
+	mut actual_expr_id := flat.empty_node
+	if needs_temp {
+		tmp_name := t.new_temp('match')
+		match_type := t.node_type(match_expr_id)
+		new_expr := t.transform_expr(match_expr_id)
+		t.drain_pending(mut result)
+		result << t.make_decl_assign_typed(tmp_name, new_expr, match_type)
+		actual_expr_id = t.make_ident(tmp_name)
+		t.a.nodes[int(actual_expr_id)].typ = match_type
+		t.var_types[tmp_name] = match_type
+	} else {
+		actual_expr_id = t.transform_expr(match_expr_id)
+		t.drain_pending(mut result)
+	}
+
+	mut branches := []flat.NodeId{}
+	for i in 1 .. val.children_count {
+		branches << t.a.child(&val, i)
+	}
+	result << t.build_return_match_chain(actual_expr_id, match_expr_id, branches, 0, node.typ)
+	return result
 }

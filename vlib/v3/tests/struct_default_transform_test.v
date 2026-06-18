@@ -73,7 +73,8 @@ fn main() {
 
 	name_field := find_field(a, init, 'name')
 	name_value := a.child_node(&name_field, 0)
-	assert call_name(a, *name_value) == 'string__plus'
+	assert name_value.kind == .string_literal
+	assert name_value.value == 'v3'
 
 	age_field := find_field(a, init, 'age')
 	age_value := a.child_node(&age_field, 0)

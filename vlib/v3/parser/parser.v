@@ -87,6 +87,25 @@ pub fn (mut p Parser) parse_into(path string) {
 	})
 }
 
+fn vmod_root_for_file(path string) string {
+	mut dir := if path.len > 0 { os.dir(path) } else { os.getwd() }
+	if dir.len == 0 {
+		dir = os.getwd()
+	}
+	original_dir := dir
+	for {
+		if os.exists(os.join_path(dir, 'v.mod')) {
+			return dir
+		}
+		parent := os.dir(dir)
+		if parent == dir || parent.len == 0 {
+			return original_dir
+		}
+		dir = parent
+	}
+	return dir
+}
+
 fn (mut p Parser) next() {
 	p.prev_tok = p.tok
 	if p.has_peek {
@@ -2336,6 +2355,9 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 			p.next()
 			if name == '@FILE' {
 				return p.a.add_val(.string_literal, p.cur_file)
+			}
+			if name == '@VMODROOT' {
+				return p.a.add_val(.string_literal, vmod_root_for_file(p.cur_file))
 			}
 			if name == '@LINE' {
 				return p.a.add_val(.int_literal, '0')

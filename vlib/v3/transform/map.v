@@ -80,6 +80,11 @@ fn (mut t Transformer) make_map_get_expr(map_expr flat.NodeId, base_type string,
 	return t.make_prefix(.mul, cast)
 }
 
+fn (mut t Transformer) make_map_get_check_expr(map_expr flat.NodeId, base_type string, key_name string) flat.NodeId {
+	return t.make_call_typed('map__get_check', arr2(t.runtime_addr(map_expr, base_type), t.make_prefix(.amp,
+		t.make_ident(key_name))), 'voidptr')
+}
+
 fn (mut t Transformer) make_map_set_stmt(map_expr flat.NodeId, base_type string, key_name string, value_name string) flat.NodeId {
 	call := t.make_call_typed('map__set', arr3(t.runtime_addr(map_expr, base_type), t.make_prefix(.amp,
 		t.make_ident(key_name)), t.make_prefix(.amp, t.make_ident(value_name))), 'void')
@@ -129,42 +134,64 @@ fn (mut t Transformer) transform_map_index_or_expr(id flat.NodeId, node flat.Nod
 	}
 	expr_id := t.a.child(&node, 0)
 	body_id := t.a.child(&node, 1)
-	expr := t.a.nodes[int(expr_id)]
-	if expr.kind != .index || expr.children_count < 2 {
-		return id
+	info := t.map_index_info(expr_id) or { return id }
+	map_expr := t.stable_expr_for_reuse(info.base_id)
+	key_name := t.new_temp('map_key')
+	ptr_name := t.new_temp('map_ptr')
+	val_name := t.new_temp('map_val')
+	t.pending_stmts << t.make_decl_assign_typed(key_name, t.transform_expr(info.key_id),
+		info.key_type)
+	t.pending_stmts << t.make_decl_assign_typed(ptr_name, t.make_map_get_check_expr(map_expr,
+		info.base_type, key_name), 'voidptr')
+	t.pending_stmts << t.make_decl_assign_typed(val_name, t.zero_value_for_type(info.value_type),
+		info.value_type)
+
+	ptr_ident := t.make_ident(ptr_name)
+	found_cond := t.make_infix(.ne, ptr_ident, t.a.add(.nil_literal))
+	ptr_value := t.make_prefix(.mul, t.make_cast('&${info.value_type}', t.make_ident(ptr_name),
+		'&${info.value_type}'))
+	then_block := t.make_block(arr1(t.make_assign(t.make_ident(val_name), ptr_value)))
+	else_block := t.make_block(t.lower_map_or_body_to_stmts(body_id, val_name, info.value_type))
+	t.pending_stmts << t.make_if(found_cond, then_block, else_block)
+	return t.make_ident(val_name)
+}
+
+fn (mut t Transformer) lower_map_or_body_to_stmts(body_id flat.NodeId, target_name string, target_type string) []flat.NodeId {
+	if int(body_id) < 0 {
+		return []flat.NodeId{}
 	}
-	base := t.transform_expr(t.a.child(&expr, 0))
-	key := t.transform_expr(t.a.child(&expr, 1))
-	index_start := t.a.children.len
-	t.a.children << base
-	t.a.children << key
-	new_index := t.a.add_node(flat.Node{
-		kind:           .index
-		op:             expr.op
-		children_start: index_start
-		children_count: 2
-		pos:            expr.pos
-		value:          expr.value
-		typ:            expr.typ
-	})
 	body := t.a.nodes[int(body_id)]
-	new_body := if body.kind == .block {
-		t.make_block(t.transform_stmts(t.a.children_of(&body)))
-	} else {
-		t.transform_expr(body_id)
+	if body.kind != .block {
+		return arr1(t.make_assign(t.make_ident(target_name), t.transform_expr(body_id)))
 	}
-	start := t.a.children.len
-	t.a.add_child(new_index)
-	t.a.add_child(new_body)
-	return t.a.add_node(flat.Node{
-		kind:           .or_expr
-		op:             node.op
-		children_start: start
-		children_count: 2
-		pos:            node.pos
-		value:          node.value
-		typ:            node.typ
-	})
+	mut result := []flat.NodeId{}
+	for i in 0 .. body.children_count {
+		child_id := t.a.child(&body, i)
+		child := t.a.nodes[int(child_id)]
+		is_last := i == body.children_count - 1
+		if is_last && child.kind == .expr_stmt && child.children_count > 0 {
+			inner_id := t.a.child(&child, 0)
+			if t.node_type(inner_id) == 'void' {
+				expanded := t.transform_stmt(child_id)
+				t.drain_pending(mut result)
+				for eid in expanded {
+					result << eid
+				}
+			} else {
+				value := t.transform_expr(inner_id)
+				t.drain_pending(mut result)
+				result << t.make_assign(t.make_ident(target_name), value)
+			}
+		} else {
+			expanded := t.transform_stmt(child_id)
+			t.drain_pending(mut result)
+			for eid in expanded {
+				result << eid
+			}
+		}
+	}
+	_ = target_type
+	return result
 }
 
 fn (mut t Transformer) try_lower_map_index_assign(node flat.Node) ?[]flat.NodeId {

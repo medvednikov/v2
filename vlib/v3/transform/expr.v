@@ -27,6 +27,11 @@ fn (mut t Transformer) transform_infix_string_ops(_id flat.NodeId, node flat.Nod
 
 	match node.op {
 		.plus {
+			lhs := t.a.nodes[int(new_lhs)]
+			rhs := t.a.nodes[int(new_rhs)]
+			if lhs.kind == .string_literal && rhs.kind == .string_literal {
+				return t.make_string_literal(lhs.value + rhs.value)
+			}
 			return t.make_call('string__plus', arr2(new_lhs, new_rhs))
 		}
 		.eq {
