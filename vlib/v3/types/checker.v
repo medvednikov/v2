@@ -2602,6 +2602,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 	if smart_type := tc.smartcast_type(id) {
 		return smart_type
 	}
+	if node.kind == .index {
+		return tc.resolve_index_type(node)
+	}
 	if node.kind != .ident && node.kind != .infix && node.kind != .selector
 		&& !(tc.smartcasts.len > 0 && (node.kind == .ident || node.kind == .selector)) {
 		if typ := tc.expr_types[int(id)] {
@@ -3039,29 +3042,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			})
 		}
 		.index {
-			mut base_type := tc.resolve_type(tc.a.child(&node, 0))
-			if base_type is Alias {
-				base_type = base_type.base_type
-			}
-			if node.value == 'range' {
-				if base_type is Array {
-					return base_type
-				}
-				return Type(string_)
-			}
-			if base_type is Map {
-				return base_type.value_type
-			}
-			if base_type is Array {
-				return base_type.elem_type
-			}
-			if base_type is ArrayFixed {
-				return base_type.elem_type
-			}
-			if base_type is String {
-				return Type(u8_)
-			}
-			return unknown_type('cannot index `${base_type.name()}`')
+			return tc.resolve_index_type(node)
 		}
 		.array_init {
 			t := tc.parse_type(node.value)
@@ -3151,6 +3132,32 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			return unknown_type('unhandled node kind .${node.kind}')
 		}
 	}
+}
+
+fn (tc &TypeChecker) resolve_index_type(node flat.Node) Type {
+	mut base_type := tc.resolve_type(tc.a.child(&node, 0))
+	if base_type is Alias {
+		base_type = base_type.base_type
+	}
+	if node.value == 'range' {
+		if base_type is Array {
+			return base_type
+		}
+		return Type(string_)
+	}
+	if base_type is Map {
+		return base_type.value_type
+	}
+	if base_type is Array {
+		return base_type.elem_type
+	}
+	if base_type is ArrayFixed {
+		return base_type.elem_type
+	}
+	if base_type is String {
+		return Type(u8_)
+	}
+	return unknown_type('cannot index `${base_type.name()}`')
 }
 
 pub fn (tc &TypeChecker) c_type(t Type) string {

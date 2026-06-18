@@ -197,7 +197,7 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 
 fn array_index_info(t types.Type) (bool, bool, types.Array) {
 	if t is types.Array {
-		return true, false, t
+		return true, false, t as types.Array
 	}
 	if t is types.Alias && t.base_type is types.Array {
 		return true, false, t.base_type as types.Array

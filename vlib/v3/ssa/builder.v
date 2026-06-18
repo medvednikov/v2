@@ -18,6 +18,7 @@ mut:
 	i1_type          TypeID
 	void_type        TypeID
 	str_type         TypeID
+	array_type       TypeID
 	fn_types         map[string]TypeID
 	fn_ids           map[string]int
 	struct_types     map[string]TypeID
@@ -51,6 +52,22 @@ pub fn build_with_used(a_ &flat.FlatAst, used_fns map[string]bool, tc &types.Typ
 		kind:        .struct_t
 		fields:      str_fields
 		field_names: str_field_names
+	})
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	mut array_fields := []TypeID{}
+	array_fields << ptr_i8
+	array_fields << b.i64_type
+	array_fields << b.i64_type
+	array_fields << b.i64_type
+	mut array_field_names := []string{}
+	array_field_names << 'data'
+	array_field_names << 'len'
+	array_field_names << 'cap'
+	array_field_names << 'elem_size'
+	b.array_type = b.m.type_store.register(Type{
+		kind:        .struct_t
+		fields:      array_fields
+		field_names: array_field_names
 	})
 	b.register_types()
 	b.register_globals()
@@ -111,11 +128,24 @@ fn (mut b Builder) register_functions() {
 	p1 = []TypeID{}
 	p1 << b.i64_type
 	b.register_extern('malloc', ptr_i8, p1)
+	p2 = []TypeID{}
+	p2 << b.i64_type
+	p2 << b.i64_type
+	b.register_extern('calloc', ptr_i8, p2)
+	p2 = []TypeID{}
+	p2 << ptr_i8
+	p2 << b.i64_type
+	b.register_extern('realloc', ptr_i8, p2)
 	p3 = []TypeID{}
 	p3 << ptr_i8
 	p3 << ptr_i8
 	p3 << b.i64_type
 	b.register_extern('memcpy', ptr_i8, p3)
+	p3 = []TypeID{}
+	p3 << ptr_i8
+	p3 << ptr_i8
+	p3 << b.i64_type
+	b.register_extern('memcmp', b.i64_type, p3)
 	p1 = []TypeID{}
 	p1 << b.i64_type
 	b.register_extern('exit', b.void_type, p1)
@@ -563,6 +593,10 @@ fn (mut b Builder) build_expr(id flat.NodeId) ValueID {
 		.string_interp {
 			return b.build_string_interp(node)
 		}
+		.sizeof_expr {
+			size := b.m.type_size(b.resolve_type(node.value))
+			return b.m.get_or_add_const(b.i64_type, '${size}')
+		}
 		.ident {
 			if addr := b.vars[node.value] {
 				addr_val := b.m.values[addr]
@@ -955,6 +989,9 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 	if name.starts_with('&') {
 		inner := b.resolve_type(name[1..])
 		return b.m.type_store.get_ptr(inner)
+	}
+	if name.starts_with('[]') || name == 'array' || name == 'Array' {
+		return b.array_type
 	}
 	return match name {
 		'int' {
