@@ -413,8 +413,11 @@ pub fn (mut t Transformer) transform_expr(id flat.NodeId) flat.NodeId {
 		.ident {
 			return t.transform_ident_expr(id, node)
 		}
-		.fn_literal, .lambda_expr, .spawn_expr, .lock_expr, .dump_expr, .assoc, .range,
-		.select_stmt, .select_branch {
+		.assoc {
+			return t.transform_assoc_expr(id, node)
+		}
+		.fn_literal, .lambda_expr, .spawn_expr, .lock_expr, .dump_expr, .range, .select_stmt,
+		.select_branch {
 			return t.transform_children_expr(id, node)
 		}
 		.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal, .nil_literal,
@@ -764,6 +767,9 @@ fn (mut t Transformer) transform_expr_stmt(id flat.NodeId, node flat.Node) []fla
 		return lowered
 	}
 	if lowered := t.try_lower_map_index_postfix_stmt(child_id) {
+		return lowered
+	}
+	if lowered := t.try_lower_array_append_stmt(child_id) {
 		return lowered
 	}
 	if lowered := t.try_lower_flag_enum_stmt(child_id) {

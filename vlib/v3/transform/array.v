@@ -73,3 +73,45 @@ fn (mut t Transformer) lower_array_literal_to_runtime(id flat.NodeId, node flat.
 	}
 	return t.make_ident(tmp_name)
 }
+
+fn (mut t Transformer) try_lower_array_append_stmt(id flat.NodeId) ?[]flat.NodeId {
+	if int(id) < 0 {
+		return none
+	}
+	node := t.a.nodes[int(id)]
+	if node.kind != .infix || node.op != .left_shift || node.children_count < 2 {
+		return none
+	}
+	lhs_id := t.a.child(&node, 0)
+	mut lhs_type := t.lvalue_type(lhs_id)
+	mut array_type := lhs_type
+	if array_type.starts_with('&') {
+		array_type = array_type[1..]
+	}
+	if !array_type.starts_with('[]') {
+		return none
+	}
+	elem_type := array_type[2..]
+	rhs_id := t.a.child(&node, 1)
+	mut rhs_type := t.node_type(rhs_id)
+
+	mut result := []flat.NodeId{}
+	lhs := t.transform_lvalue(lhs_id)
+	t.drain_pending(mut result)
+	rhs := t.transform_expr(rhs_id)
+	t.drain_pending(mut result)
+	if rhs_type.len == 0 {
+		rhs_type = t.node_type(rhs)
+	}
+
+	lhs_addr := t.runtime_addr(lhs, lhs_type)
+	if rhs_type.starts_with('[]') {
+		result << t.make_expr_stmt(t.make_call_typed('array_push_many', arr2(lhs_addr, rhs), 'void'))
+		return result
+	}
+	value_name := t.new_temp('arr_val')
+	result << t.make_decl_assign_typed(value_name, rhs, elem_type)
+	result << t.make_expr_stmt(t.make_call_typed('array_push', arr2(lhs_addr, t.make_prefix(.amp,
+		t.make_ident(value_name))), 'void'))
+	return result
+}

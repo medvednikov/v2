@@ -59,6 +59,18 @@ fn decl_rhs(a &flat.FlatAst, fn_name string, name string) flat.Node {
 	return flat.Node{}
 }
 
+fn first_return_expr(a &flat.FlatAst, fn_name string) flat.Node {
+	f := find_fn(a, fn_name)
+	for i in 0 .. f.children_count {
+		stmt := a.child_node(&f, i)
+		if stmt.kind == .return_stmt && stmt.children_count > 0 {
+			return *a.child_node(stmt, 0)
+		}
+	}
+	assert false
+	return flat.Node{}
+}
+
 fn count_kind(a &flat.FlatAst, id flat.NodeId, kind flat.NodeKind) int {
 	if int(id) < 0 {
 		return 0
@@ -85,6 +97,18 @@ fn count_call_name(a &flat.FlatAst, id flat.NodeId, name string) int {
 	}
 	for i in 0 .. node.children_count {
 		total += count_call_name(a, a.child(&node, i), name)
+	}
+	return total
+}
+
+fn count_infix_op(a &flat.FlatAst, id flat.NodeId, op flat.Op) int {
+	if int(id) < 0 {
+		return 0
+	}
+	node := a.nodes[int(id)]
+	mut total := if node.kind == .infix && node.op == op { 1 } else { 0 }
+	for i in 0 .. node.children_count {
+		total += count_infix_op(a, a.child(&node, i), op)
 	}
 	return total
 }
@@ -305,6 +329,94 @@ fn main() {
 	assert wide_assign_count == 0
 	assert arg0_count == 1
 	assert arg1_count == 1
+}
+
+fn test_assoc_expr_lowers_to_temp_and_field_assigns() {
+	a := parse_transform_source('
+struct Point {
+	x int
+	y int
+}
+
+fn main() {
+	p := Point{x: 1, y: 2}
+	q := Point{...p, y: 3}
+}
+')
+	rhs := decl_rhs(a, 'main', 'q')
+	assert rhs.kind == .ident
+	assert rhs.value.starts_with('__assoc_')
+	main_fn := find_fn(a, 'main')
+	mut assoc_count := 0
+	mut assign_count := 0
+	for i in 0 .. main_fn.children_count {
+		child_id := a.child(&main_fn, i)
+		assoc_count += count_kind(a, child_id, .assoc)
+		assign_count += count_kind(a, child_id, .assign)
+	}
+	assert assoc_count == 0
+	assert assign_count == 1
+}
+
+fn test_return_assoc_expr_lowers_before_return() {
+	a := parse_transform_source('
+struct Point {
+	x int
+	y int
+}
+
+fn moved(p Point) Point {
+	return Point{...p, x: 4}
+}
+')
+	ret := first_return_expr(a, 'moved')
+	assert ret.kind == .ident
+	assert ret.value.starts_with('__assoc_')
+	moved_fn := find_fn(a, 'moved')
+	mut assoc_count := 0
+	for i in 0 .. moved_fn.children_count {
+		assoc_count += count_kind(a, a.child(&moved_fn, i), .assoc)
+	}
+	assert assoc_count == 0
+}
+
+fn test_array_append_stmt_lowers_to_runtime_push() {
+	a := parse_transform_source('
+fn main() {
+	mut xs := []int{}
+	xs << 3
+}
+')
+	main_fn := find_fn(a, 'main')
+	mut push_count := 0
+	mut left_shift_count := 0
+	for i in 0 .. main_fn.children_count {
+		child_id := a.child(&main_fn, i)
+		push_count += count_call_name(a, child_id, 'array_push')
+		left_shift_count += count_infix_op(a, child_id, .left_shift)
+	}
+	assert push_count == 1
+	assert left_shift_count == 0
+}
+
+fn test_array_append_many_stmt_lowers_to_runtime_push_many() {
+	a := parse_transform_source('
+fn main() {
+	mut xs := []int{}
+	ys := []int{}
+	xs << ys
+}
+')
+	main_fn := find_fn(a, 'main')
+	mut push_many_count := 0
+	mut left_shift_count := 0
+	for i in 0 .. main_fn.children_count {
+		child_id := a.child(&main_fn, i)
+		push_many_count += count_call_name(a, child_id, 'array_push_many')
+		left_shift_count += count_infix_op(a, child_id, .left_shift)
+	}
+	assert push_many_count == 1
+	assert left_shift_count == 0
 }
 
 fn test_or_expr_lowers_to_temp_and_if() {

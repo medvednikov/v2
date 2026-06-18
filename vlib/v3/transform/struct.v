@@ -192,6 +192,59 @@ fn (t &Transformer) lookup_struct_info(name string) ?StructInfo {
 	return none
 }
 
+fn (mut t Transformer) transform_assoc_expr(id flat.NodeId, node flat.Node) flat.NodeId {
+	if node.kind != .assoc || node.children_count == 0 {
+		return id
+	}
+	base_id := t.a.child(&node, 0)
+	mut assoc_type := node.value
+	if assoc_type.len == 0 {
+		assoc_type = t.node_type(base_id)
+	}
+	mut field_types := map[string]string{}
+	if info := t.lookup_struct_info(assoc_type) {
+		for field in info.fields {
+			field_types[field.name] = field.typ
+		}
+	}
+
+	tmp_name := t.new_temp('assoc')
+	outer_pending := t.pending_stmts.clone()
+	t.pending_stmts.clear()
+
+	mut prelude := []flat.NodeId{}
+	base := t.transform_expr(base_id)
+	t.drain_pending(mut prelude)
+	prelude << t.make_decl_assign_typed(tmp_name, base, assoc_type)
+
+	for i in 1 .. node.children_count {
+		field_id := t.a.child(&node, i)
+		field := t.a.nodes[int(field_id)]
+		if field.kind != .field_init || field.children_count == 0 {
+			continue
+		}
+		value_id := t.a.child(&field, 0)
+		value_node := t.a.nodes[int(value_id)]
+		field_type := field_types[field.value] or { '' }
+		value := if value_node.kind == .enum_val && field_type.len > 0 && field_type in t.enum_types {
+			t.transform_enum_shorthand(value_id, value_node, field_type)
+		} else {
+			t.transform_expr(value_id)
+		}
+		t.drain_pending(mut prelude)
+		prelude << t.make_assign(t.make_selector(t.make_ident(tmp_name), field.value, field_type),
+			value)
+	}
+
+	t.pending_stmts = outer_pending
+	for stmt in prelude {
+		t.pending_stmts << stmt
+	}
+	result := t.make_ident(tmp_name)
+	t.a.nodes[int(result)].typ = assoc_type
+	return result
+}
+
 // transform_array_init_expr transforms .array_init nodes (e.g. `[]int{len: n}`).
 // Recursively transforms any child expressions (len, cap, init values).
 fn (mut t Transformer) transform_array_init_expr(id flat.NodeId, node flat.Node) flat.NodeId {
