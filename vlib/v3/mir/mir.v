@@ -2,6 +2,50 @@ module mir
 
 import v3.ssa
 
+pub enum TargetArch {
+	unknown
+	arm64
+}
+
+pub enum AbiKind {
+	unknown
+	aapcs64
+}
+
+pub struct Target {
+pub:
+	arch         TargetArch
+	abi          AbiKind
+	pointer_size int
+	int_arg_regs int
+	ret_regs     int
+	stack_align  int
+}
+
+pub enum AbiLocationKind {
+	none
+	register
+	stack
+	indirect
+}
+
+pub struct AbiLocation {
+pub:
+	kind           AbiLocationKind
+	register_index int
+	register_count int
+	stack_offset   int
+	size           int
+}
+
+pub struct FunctionAbi {
+pub:
+	params          []AbiLocation
+	ret             AbiLocation
+	stack_args_size int
+	stack_align     int
+}
+
 pub struct Value {
 pub mut:
 	id    int
@@ -38,11 +82,13 @@ pub mut:
 	blocks      []ssa.BlockID
 	params      []ssa.ValueID
 	is_c_extern bool
+	abi         FunctionAbi
 }
 
 @[heap]
 pub struct Module {
 pub mut:
+	target     Target
 	type_store ssa.TypeStore
 	values     []Value
 	instrs     []Instruction
@@ -51,8 +97,37 @@ pub mut:
 	globals    []ssa.GlobalVar
 }
 
+// default_target returns a conservative target descriptor for target-neutral MIR.
+pub fn default_target() Target {
+	return Target{
+		arch:         .unknown
+		abi:          .unknown
+		pointer_size: 8
+		stack_align:  8
+	}
+}
+
+// arm64_target returns the target descriptor used by the native ARM64 pipeline.
+pub fn arm64_target() Target {
+	return Target{
+		arch:         .arm64
+		abi:          .aapcs64
+		pointer_size: 8
+		int_arg_regs: 8
+		ret_regs:     8
+		stack_align:  16
+	}
+}
+
+// lower_from_ssa lowers an SSA module into target-neutral MIR.
 pub fn lower_from_ssa(m &ssa.Module) Module {
+	return lower_from_ssa_for_target(m, default_target())
+}
+
+// lower_from_ssa_for_target lowers an SSA module into MIR with target ABI metadata.
+pub fn lower_from_ssa_for_target(m &ssa.Module, target Target) Module {
 	mut mod := Module{
+		target:     target
 		type_store: m.type_store
 		values:     []Value{len: m.values.len}
 		instrs:     []Instruction{len: m.instrs.len}
@@ -101,6 +176,12 @@ pub fn lower_from_ssa(m &ssa.Module) Module {
 			params:      f.params
 			is_c_extern: f.is_c_extern
 		}
+	}
+
+	for i, f in mod.funcs {
+		mut func := f
+		func.abi = mod.build_function_abi(func)
+		mod.funcs[i] = func
 	}
 
 	return mod
@@ -185,4 +266,100 @@ pub fn (m &Module) type_align(typ_id ssa.TypeID) int {
 		return 4
 	}
 	return 1
+}
+
+fn (m &Module) build_function_abi(f Function) FunctionAbi {
+	mut params := []AbiLocation{}
+	mut next_reg := 0
+	mut next_stack := 0
+	word_size := m.target_word_size()
+	for pid in f.params {
+		size := m.value_size(pid)
+		n_words := words_for(size, word_size)
+		if m.target.int_arg_regs > 0 && next_reg + n_words <= m.target.int_arg_regs {
+			params << AbiLocation{
+				kind:           .register
+				register_index: next_reg
+				register_count: n_words
+				size:           size
+			}
+			next_reg += n_words
+			continue
+		}
+		stack_offset := align_to(next_stack, word_size)
+		params << AbiLocation{
+			kind:           .stack
+			register_count: n_words
+			stack_offset:   stack_offset
+			size:           size
+		}
+		next_stack = stack_offset + align_to(size, word_size)
+	}
+
+	ret_size := m.type_size(f.typ)
+	ret_words := words_for(ret_size, word_size)
+	ret := if ret_size == 0 {
+		AbiLocation{
+			kind: .none
+		}
+	} else if m.target.ret_regs > 0 && ret_words <= m.target.ret_regs {
+		AbiLocation{
+			kind:           .register
+			register_index: 0
+			register_count: ret_words
+			size:           ret_size
+		}
+	} else {
+		AbiLocation{
+			kind:           .indirect
+			register_index: 0
+			register_count: 1
+			size:           ret_size
+		}
+	}
+	return FunctionAbi{
+		params:          params
+		ret:             ret
+		stack_args_size: align_to(next_stack, m.target_stack_align())
+		stack_align:     m.target_stack_align()
+	}
+}
+
+fn (m &Module) value_size(val_id ssa.ValueID) int {
+	if val_id <= 0 || val_id >= m.values.len {
+		return m.target_word_size()
+	}
+	size := m.type_size(m.values[val_id].typ)
+	if size > 0 {
+		return size
+	}
+	return m.target_word_size()
+}
+
+fn (m &Module) target_word_size() int {
+	if m.target.pointer_size > 0 {
+		return m.target.pointer_size
+	}
+	return 8
+}
+
+fn (m &Module) target_stack_align() int {
+	if m.target.stack_align > 0 {
+		return m.target.stack_align
+	}
+	return m.target_word_size()
+}
+
+fn words_for(size int, word_size int) int {
+	if size <= 0 {
+		return 0
+	}
+	return (size + word_size - 1) / word_size
+}
+
+fn align_to(value int, alignment int) int {
+	if alignment <= 1 {
+		return value
+	}
+	return (value + alignment - 1) & ~(alignment - 1)
 }

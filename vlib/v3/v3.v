@@ -5,7 +5,9 @@ import v3.bench
 import v3.flat
 import v3.gen.arm64
 import v3.gen.c as cgen
+import v3.insel
 import v3.markused
+import v3.mir
 import v3.parser
 import v3.pref
 import v3.ssa
@@ -24,7 +26,6 @@ fn main() {
 	mut output_file := ''
 	mut backend := 'c'
 	mut is_prod := false
-	mut is_selfhost := false
 	mut is_strict := false
 	mut no_parallel := false
 	mut i := 0
@@ -39,7 +40,6 @@ fn main() {
 			is_prod = true
 			i++
 		} else if args[i] == '-selfhost' {
-			is_selfhost = true
 			i++
 		} else if args[i] == '-strict' {
 			is_strict = true
@@ -120,14 +120,16 @@ fn main() {
 	mut tc := types.TypeChecker.new(a)
 	tc.collect(a)
 	tc.annotate_types()
+	tc.reject_unlowered_map_mutation = true
+	for uf in user_files {
+		tc.diagnostic_files[uf] = true
+	}
 	b.step('check')
 
 	tc.check_semantics()
 	if tc.errors.len > 0 {
-		if is_selfhost || is_strict {
-			print_type_errors(tc.errors)
-			exit(1)
-		}
+		print_type_errors(tc.errors)
+		exit(1)
 	}
 
 	// Mark used functions (dead-code elimination)
@@ -143,6 +145,13 @@ fn main() {
 			optimize.optimize(mut m)
 			b.step('optimize')
 		}
+
+		mut mir_mod := mir.lower_from_ssa_for_target(m, mir.arm64_target())
+		b.step('mir')
+
+		selected := insel.select_(mut mir_mod)
+		_ = selected
+		b.step('insel')
 
 		mut g := arm64.Gen.new(m)
 		g.gen()
