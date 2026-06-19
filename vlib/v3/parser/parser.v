@@ -1447,6 +1447,11 @@ fn (mut p Parser) parse_comptime_if() flat.NodeId {
 	}
 	p.next() // skip 'if'
 	cond := p.parse_comptime_cond()
+	if comptime_cond_has_type_test(cond) {
+		p.skip_block()
+		p.skip_comptime_else()
+		return flat.empty_node
+	}
 	taken := eval_comptime_cond(p.prefs, cond)
 	if taken {
 		result := p.block_stmt()
@@ -1512,33 +1517,32 @@ fn (p &Parser) comptime_cond_token_text() string {
 	return ''
 }
 
+fn comptime_cond_has_type_test(cond string) bool {
+	return cond.contains(' is ') || cond.contains(' !is ')
+}
+
 fn (mut p Parser) skip_comptime_else() {
-	if p.tok == .semicolon && p.peek() == .dollar {
-		p.next()
-	}
-	if p.tok != .dollar {
-		return
-	}
-	if p.peek() != .key_else {
-		return
-	}
-	p.next() // skip $
-	p.next() // skip else
-	if p.tok == .dollar || (p.tok == .semicolon && p.peek() == .dollar) {
+	for {
 		if p.tok == .semicolon {
 			p.next()
 		}
-		// $else $if — skip nested
-		p.next() // skip $
-		if p.tok == .key_if {
-			p.next()
-			for p.tok != .lcbr && p.tok != .eof {
-				p.next()
-			}
+		if p.tok != .dollar || p.peek() != .key_else {
+			return
 		}
-		p.skip_block()
-		p.skip_comptime_else()
-	} else {
+		p.next() // skip $
+		p.next() // skip else
+		if p.tok == .semicolon {
+			p.next()
+		}
+		if p.tok != .dollar || p.peek() != .key_if {
+			p.skip_block()
+			return
+		}
+		p.next() // skip $
+		p.next() // skip if
+		for p.tok != .lcbr && p.tok != .eof {
+			p.next()
+		}
 		p.skip_block()
 	}
 }

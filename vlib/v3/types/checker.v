@@ -237,11 +237,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 			}
 			.fn_decl {
 				qname := tc.qualify_fn_name(node.value)
-				tc.fn_ret_types[qname] = tc.parse_type(node.typ)
-				if tc.cur_module in ['', 'main', 'builtin'] && qname != node.value
-					&& node.value !in tc.fn_ret_types {
-					tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
-				}
+				ret_type := tc.parse_type(node.typ)
 				mut ptypes := []Type{}
 				mut is_variadic := false
 				for i in 0 .. node.children_count {
@@ -253,12 +249,10 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 						ptypes << tc.parse_type(child.typ)
 					}
 				}
-				tc.fn_param_types[qname] = ptypes
-				tc.fn_variadic[qname] = is_variadic
+				tc.register_fn_signature(qname, ret_type, ptypes, is_variadic)
 				if tc.cur_module in ['', 'main', 'builtin'] && qname != node.value
 					&& node.value !in tc.fn_param_types {
-					tc.fn_param_types[node.value] = ptypes
-					tc.fn_variadic[node.value] = is_variadic
+					tc.register_fn_signature(node.value, ret_type, ptypes, is_variadic)
 				}
 			}
 			.struct_decl {
@@ -283,7 +277,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				}
 			}
 			.c_fn_decl {
-				tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
+				ret_type := tc.parse_type(node.typ)
 				mut ptypes := []Type{}
 				mut is_variadic := false
 				for i in 0 .. node.children_count {
@@ -295,8 +289,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 						ptypes << tc.parse_type(child.typ)
 					}
 				}
-				tc.fn_param_types[node.value] = ptypes
-				tc.fn_variadic[node.value] = is_variadic
+				tc.register_fn_signature(node.value, ret_type, ptypes, is_variadic)
 			}
 			.interface_decl {
 				iface_name := tc.qualify_name(node.value)
@@ -371,7 +364,6 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 		}
 	}
 	tc.resolve_const_types()
-	tc.register_runtime_methods()
 }
 
 fn (mut tc TypeChecker) resolve_const_types() {
@@ -468,135 +460,25 @@ fn (tc &TypeChecker) has_active_import(alias string) bool {
 	return file_import_key(tc.cur_file, alias) in tc.file_imports
 }
 
-fn (mut tc TypeChecker) register_runtime_methods() {
-	tc.fn_ret_types['check_fwrite'] = tc.parse_type('!int')
-	tc.fn_param_types['check_fwrite'] = tarr1(tc.parse_type('int'))
-	tc.fn_ret_types['os.check_fwrite'] = tc.parse_type('!int')
-	tc.fn_ret_types['malloc_noscan'] = tc.parse_type('voidptr')
-	tc.fn_ret_types['u8.vstring'] = tc.parse_type('string')
-	tc.fn_ret_types['u8.vstring_with_len'] = tc.parse_type('string')
-	tc.fn_ret_types['IError.msg'] = tc.parse_type('string')
-	tc.fn_ret_types['IError.code'] = tc.parse_type('int')
-	tc.fn_ret_types['string__plus'] = tc.parse_type('string')
-	tc.fn_ret_types['string__eq'] = tc.parse_type('bool')
-	tc.fn_ret_types['string__lt'] = tc.parse_type('bool')
-	tc.fn_ret_types['array_contains_int'] = tc.parse_type('bool')
-	tc.fn_ret_types['array_contains_string'] = tc.parse_type('bool')
-	tc.fn_ret_types['fixed_array_contains_int'] = tc.parse_type('bool')
-	tc.fn_ret_types['fixed_array_contains_string'] = tc.parse_type('bool')
-	tc.fn_ret_types['string_plus_many'] = tc.parse_type('string')
-	tc.fn_ret_types['int_str'] = tc.parse_type('string')
-	tc.fn_ret_types['bool_str'] = tc.parse_type('string')
-	tc.fn_ret_types['strconv__format_int'] = tc.parse_type('string')
-	tc.fn_ret_types['strconv__format_uint'] = tc.parse_type('string')
-	tc.fn_ret_types['strconv__f32_to_str_l'] = tc.parse_type('string')
-	tc.fn_ret_types['strconv__f64_to_str_l'] = tc.parse_type('string')
-	tc.fn_param_types['bool_str'] = tarr1(tc.parse_type('bool'))
-	tc.fn_param_types['int_str'] = tarr1(tc.parse_type('int'))
-	tc.fn_param_types['strconv__format_int'] = tarr2(tc.parse_type('i64'), tc.parse_type('int'))
-	tc.fn_param_types['strconv__format_uint'] = tarr2(tc.parse_type('u64'), tc.parse_type('int'))
-	tc.fn_param_types['strconv__f32_to_str_l'] = tarr1(tc.parse_type('f32'))
-	tc.fn_param_types['strconv__f64_to_str_l'] = tarr1(tc.parse_type('f64'))
-	tc.fn_ret_types['string__bytes'] = tc.parse_type('[]u8')
-	tc.fn_ret_types['string__int'] = tc.parse_type('int')
-	tc.fn_ret_types['string__clone'] = tc.parse_type('string')
-	tc.fn_ret_types['string__contains'] = tc.parse_type('bool')
-	tc.fn_ret_types['string__index'] = tc.parse_type('?int')
-	tc.fn_ret_types['string__last_index'] = tc.parse_type('?int')
-	tc.fn_ret_types['string__split'] = tc.parse_type('[]string')
-	tc.fn_ret_types['string__replace'] = tc.parse_type('string')
-	tc.fn_ret_types['string__substr'] = tc.parse_type('string')
-	tc.fn_ret_types['string__trim_space'] = tc.parse_type('string')
-	tc.fn_ret_types['string__starts_with'] = tc.parse_type('bool')
-	tc.fn_ret_types['string__ends_with'] = tc.parse_type('bool')
-	tc.fn_ret_types['string__all_before'] = tc.parse_type('string')
-	tc.fn_ret_types['string__all_after'] = tc.parse_type('string')
-	tc.fn_ret_types['string__all_after_last'] = tc.parse_type('string')
-	tc.fn_ret_types['string__all_before_last'] = tc.parse_type('string')
-	tc.fn_ret_types['string__count'] = tc.parse_type('int')
-	tc.fn_ret_types['string__index_u8'] = tc.parse_type('int')
-	tc.fn_ret_types['string__trim_left'] = tc.parse_type('string')
-	tc.fn_ret_types['string__trim_right'] = tc.parse_type('string')
-	tc.fn_param_types['IError.msg'] = tarr1(tc.parse_type('&IError'))
-	tc.fn_param_types['IError.code'] = tarr1(tc.parse_type('&IError'))
-	tc.fn_param_types['string__index'] = tarr2(tc.parse_type('string'), tc.parse_type('string'))
-	tc.fn_param_types['string__last_index'] = tarr2(tc.parse_type('string'),
-		tc.parse_type('string'))
-	s := tc.parse_type('string')
-	str_ref := tc.parse_type('&string')
-	i := tc.parse_type('int')
-	b := tc.parse_type('bool')
-	u := tc.parse_type('u8')
-	v := tc.parse_type('void')
-	tc.register_string_method('all_before', tarr2(s, s), s)
-	tc.register_string_method('all_before_last', tarr2(s, s), s)
-	tc.register_string_method('all_after', tarr2(s, s), s)
-	tc.register_string_method('all_after_last', tarr2(s, s), s)
-	tc.register_string_method('before', tarr2(s, s), s)
-	tc.register_string_method('after', tarr2(s, s), s)
-	tc.register_string_method('substr', tarr3(s, i, i), s)
-	tc.register_string_method('trim_left', tarr2(s, s), s)
-	tc.register_string_method('trim_right', tarr2(s, s), s)
-	tc.register_string_method('trim_space', tarr1(s), s)
-	tc.register_string_method('count', tarr2(s, s), i)
-	tc.register_string_method('index', tarr2(s, s), tc.parse_type('?int'))
-	tc.register_string_method('last_index', tarr2(s, s), tc.parse_type('?int'))
-	tc.register_string_method('replace', tarr3(s, s, s), s)
-	tc.register_string_method('contains', tarr2(s, s), b)
-	tc.register_string_method('split', tarr2(s, s), tc.parse_type('[]string'))
-	tc.register_string_method('starts_with', tarr2(s, s), b)
-	tc.register_string_method('ends_with', tarr2(s, s), b)
-	tc.register_string_method('index_u8', tarr2(s, u), i)
-	tc.register_string_method('last_index_u8', tarr2(s, u), i)
-	tc.register_string_method('contains_u8', tarr2(s, u), b)
-	tc.register_string_method('int', tarr1(s), i)
-	tc.register_string_method('free', tarr1(str_ref), v)
-	tc.register_string_method('clone', tarr1(s), s)
-	tc.register_string_method('bytes', tarr1(s), tc.parse_type('[]u8'))
-	tc.register_string_method('plus', tarr2(s, s), s)
-	tc.register_string_method('eq', tarr2(s, s), b)
-	tc.register_string_method('lt', tarr2(s, s), b)
-	tc.register_map_callbacks()
-}
-
-fn (mut tc TypeChecker) register_string_method(name string, params []Type, ret Type) {
-	full := 'string.${name}'
-	if full !in tc.fn_param_types {
-		tc.fn_param_types[full] = params
+fn (mut tc TypeChecker) register_fn_signature(name string, ret_type Type, params []Type, is_variadic bool) {
+	tc.register_fn_name_alias(name, ret_type, params, is_variadic)
+	lowered_name := c_name(name)
+	if lowered_name != name {
+		tc.register_fn_name_alias(lowered_name, ret_type, params, is_variadic)
 	}
-	if full !in tc.fn_ret_types {
-		tc.fn_ret_types[full] = ret
+	if name.ends_with('.str') {
+		receiver := name.all_before_last('.')
+		legacy_name := '${receiver}_str'
+		if !legacy_name.contains('.') {
+			tc.register_fn_name_alias(legacy_name, ret_type, params, is_variadic)
+		}
 	}
 }
 
-fn (mut tc TypeChecker) register_map_callbacks() {
-	voidptr_type := tc.parse_type('voidptr')
-	u64_type := tc.parse_type('u64')
-	bool_type := tc.parse_type('bool')
-	void_type := tc.parse_type('void')
-	tc.register_int_map_callbacks('1', voidptr_type, u64_type, bool_type, void_type)
-	tc.register_int_map_callbacks('2', voidptr_type, u64_type, bool_type, void_type)
-	tc.register_int_map_callbacks('4', voidptr_type, u64_type, bool_type, void_type)
-	tc.register_int_map_callbacks('8', voidptr_type, u64_type, bool_type, void_type)
-	tc.fn_ret_types['v3_map_hash_string'] = u64_type
-	tc.fn_param_types['v3_map_hash_string'] = tarr1(voidptr_type)
-	tc.fn_ret_types['v3_map_eq_string'] = bool_type
-	tc.fn_param_types['v3_map_eq_string'] = tarr2(voidptr_type, voidptr_type)
-	tc.fn_ret_types['v3_map_clone_string'] = void_type
-	tc.fn_param_types['v3_map_clone_string'] = tarr2(voidptr_type, voidptr_type)
-	tc.fn_ret_types['v3_map_free_string'] = void_type
-	tc.fn_param_types['v3_map_free_string'] = tarr1(voidptr_type)
-	tc.fn_ret_types['v3_map_free_nop'] = void_type
-	tc.fn_param_types['v3_map_free_nop'] = tarr1(voidptr_type)
-}
-
-fn (mut tc TypeChecker) register_int_map_callbacks(suffix string, voidptr_type Type, u64_type Type, bool_type Type, void_type Type) {
-	tc.fn_ret_types['v3_map_hash_int_${suffix}'] = u64_type
-	tc.fn_param_types['v3_map_hash_int_${suffix}'] = tarr1(voidptr_type)
-	tc.fn_ret_types['v3_map_eq_int_${suffix}'] = bool_type
-	tc.fn_param_types['v3_map_eq_int_${suffix}'] = tarr2(voidptr_type, voidptr_type)
-	tc.fn_ret_types['v3_map_clone_int_${suffix}'] = void_type
-	tc.fn_param_types['v3_map_clone_int_${suffix}'] = tarr2(voidptr_type, voidptr_type)
+fn (mut tc TypeChecker) register_fn_name_alias(name string, ret_type Type, params []Type, is_variadic bool) {
+	tc.fn_ret_types[name] = ret_type
+	tc.fn_param_types[name] = params.clone()
+	tc.fn_variadic[name] = is_variadic
 }
 
 // annotate_types performs a scope-aware walk over every function body, tracking

@@ -1268,7 +1268,6 @@ fn (mut g FlatGen) builtin_compat_decls() {
 	g.writeln('\tbuf[len] = 0; return (string){buf, len, 0};')
 	g.writeln('}')
 	g.writeln('#define array_string_join Array_string__join')
-	g.writeln('Optional os__check_fwrite(size_t n) { return (Optional){.ok = n > 0, .value = (int)n}; }')
 	g.writeln('#include <spawn.h>')
 	g.writeln('extern char **environ;')
 	g.writeln('static int v_os_execute_capture_start(const char *cmd, int *child_pid, int *read_fd) {')

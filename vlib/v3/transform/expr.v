@@ -205,7 +205,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			new_rhs := t.transform_expr(rhs_id)
 			elem := rhs_type[2..]
 			fn_name := array_contains_fn_name(elem)
-			result = t.make_call(fn_name, arr2(new_rhs, new_lhs))
+			result = t.make_call_typed(fn_name, arr2(new_rhs, new_lhs), 'bool')
 		} else if is_fixed_array_type(rhs_type) {
 			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
 			new_lhs := t.transform_expr(lhs_id)
@@ -213,7 +213,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			elem := fixed_array_elem_type(rhs_type)
 			fn_name := fixed_array_contains_fn_name(elem)
 			len_expr := t.make_fixed_array_len_expr(rhs_type)
-			result = t.make_call(fn_name, arr3(new_rhs, len_expr, new_lhs))
+			result = t.make_call_typed(fn_name, arr3(new_rhs, len_expr, new_lhs), 'bool')
 		} else if t.clean_map_type(rhs_type).starts_with('map[') {
 			new_lhs := t.transform_expr(lhs_id)
 			new_rhs := t.transform_expr(rhs_id)
