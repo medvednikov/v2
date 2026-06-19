@@ -882,6 +882,29 @@ fn try_get_value(ok bool) ?int {
 	return none
 }
 
+struct CallInfo115 {
+	name  string
+	score int
+}
+
+fn maybe_call_info115(ok bool) ?CallInfo115 {
+	if ok {
+		return CallInfo115{
+			name:  'resolved'
+			score: 7
+		}
+	}
+	return none
+}
+
+fn make_scores115() map[string]int {
+	mut scores := map[string]int{}
+	scores['alpha'] = 2
+	scores['beta'] = 3
+	scores['gamma'] = 4
+	return scores
+}
+
 fn main() {
 	print_str('=== v3 Test Suite ===')
 
@@ -4809,5 +4832,69 @@ fn main() {
 
 	print_str('string expressions: ok')
 
-	print_str('=== ALL 114 TESTS PASSED ===')
+	print_str('--- 115. Self-Host Regression Features ---')
+
+	// 115.1 Map returned from a call keeps map type through for-in with keys.
+	scores115 := make_scores115()
+	mut key_len115 := 0
+	mut value_sum115 := 0
+	mut beta_value115 := 0
+	for name, score in scores115 {
+		key_len115 += name.len
+		value_sum115 += score
+		if name == 'beta' {
+			beta_value115 = score
+		}
+	}
+	print_int(key_len115) // alpha + beta + gamma = 14
+	print_int(value_sum115) // 9
+	print_int(beta_value115) // 3
+
+	// 115.2 Optional struct guard payload supports selector reads.
+	mut info_score115 := 0
+	if info115 := maybe_call_info115(true) {
+		print_str(info115.name) // resolved
+		info_score115 = info115.score
+	} else {
+		info_score115 = -1
+	}
+	print_int(info_score115) // 7
+
+	// 115.3 Optional guard selector can feed a map assignment.
+	mut resolved_calls115 := map[int]string{}
+	if info115b := maybe_call_info115(true) {
+		resolved_calls115[42] = info115b.name
+	}
+	print_str(resolved_calls115[42]) // resolved
+
+	// 115.4 Optional map lookup payload can be an array and then be iterated.
+	mut suffix_map115 := map[string][]string{}
+	suffix_map115['call'] << 'resolve'
+	suffix_map115['call'] << 'emit'
+	mut suffix_len115 := 0
+	if suffixes115 := suffix_map115['call'] {
+		for suffix115 in suffixes115 {
+			suffix_len115 += suffix115.len
+		}
+	}
+	print_int(suffix_len115) // 11
+
+	// 115.5 Dynamic array clear and reuse in a loop.
+	mut reusable115 := []string{}
+	mut reuse_len115 := 0
+	for i in 0 .. 3 {
+		reusable115.clear()
+		reusable115 << 'x'
+		if i > 0 {
+			reusable115 << 'yy'
+		}
+		for item115 in reusable115 {
+			reuse_len115 += item115.len
+		}
+	}
+	print_int(reuse_len115) // 7
+
+	print_str('self-host regression features: ok')
+
+	print_str('=== ALL 115 TESTS PASSED ===')
 }

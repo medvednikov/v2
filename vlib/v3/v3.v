@@ -126,29 +126,29 @@ fn main() {
 	transform.transform(mut a, &pre_tc)
 	b.step('transform')
 
-	// Type check — shared phase before backend selection
-	mut tc := types.TypeChecker.new(a)
-	tc.collect(a)
-	tc.annotate_types()
-	tc.reject_unlowered_map_mutation = true
+	// Reuse the pre-transform checker. Transform does not add declarations, so
+	// recollecting all type/index maps only duplicates memory when GC is off.
+	pre_tc.diagnose_unknown_calls = false
+	pre_tc.reject_unlowered_map_mutation = true
+	pre_tc.annotate_types()
 	for uf in user_files {
-		tc.diagnostic_files[uf] = true
+		pre_tc.diagnostic_files[uf] = true
 	}
 	b.step('check')
 
-	tc.check_semantics()
-	if tc.errors.len > 0 {
-		print_type_errors(tc.errors)
+	pre_tc.check_semantics()
+	if pre_tc.errors.len > 0 {
+		print_type_errors(pre_tc.errors)
 		exit(1)
 	}
 
 	// Mark used functions (dead-code elimination)
-	used_fns := markused.mark_used(a, tc)
+	used_fns := markused.mark_used(a, pre_tc)
 	b.step('markused')
 
 	if backend == 'arm64' {
 		// SSA + ARM64 native backend
-		mut m := ssa.build_with_used(a, used_fns, tc)
+		mut m := ssa.build_with_used(a, used_fns, pre_tc)
 		b.step('ssa build')
 
 		if is_prod {
@@ -165,7 +165,7 @@ fn main() {
 	} else {
 		// C backend (default)
 		mut g := cgen.FlatGen.new()
-		c_code := g.gen_with_used_options(a, used_fns, &tc, no_parallel)
+		c_code := g.gen_with_used_options(a, used_fns, &pre_tc, no_parallel)
 		if !write_text_file_raw(output_file, c_code) {
 			eprintln('error writing ${output_file}')
 			exit(1)

@@ -94,7 +94,7 @@ fn (mut t Transformer) make_decl_assign_typed(name string, rhs flat.NodeId, typ 
 	decl := t.make_decl_assign(name, rhs)
 	if typ.len > 0 {
 		t.a.nodes[int(decl)].typ = typ
-		t.var_types[name] = typ
+		t.set_var_type(name, typ)
 	}
 	return decl
 }
@@ -209,7 +209,7 @@ fn (mut t Transformer) lower_or_body_to_stmts(body_id flat.NodeId, target_name s
 	if body.children_count == 0 {
 		return result
 	}
-	t.var_types['err'] = 'IError'
+	t.set_var_type('err', 'IError')
 	result << t.make_decl_assign_typed('err', t.make_struct_init('IError'), 'IError')
 	for i in 0 .. body.children_count {
 		child_id := t.a.child(&body, i)

@@ -277,7 +277,7 @@ fn (mut t Transformer) stable_expr_for_reuse(id flat.NodeId) flat.NodeId {
 	decl := t.make_decl_assign(tmp_name, expr)
 	if tmp_typ.len > 0 {
 		t.a.nodes[int(decl)].typ = tmp_typ
-		t.var_types[tmp_name] = tmp_typ
+		t.set_var_type(tmp_name, tmp_typ)
 	}
 	t.pending_stmts << decl
 	return t.make_ident(tmp_name)

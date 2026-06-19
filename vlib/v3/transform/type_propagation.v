@@ -21,7 +21,7 @@ fn (mut t Transformer) propagate_decl_type(node flat.Node) {
 		typ = t.resolve_expr_type(rhs_id)
 	}
 	if typ.len > 0 {
-		t.var_types[lhs.value] = typ
+		t.set_var_type(lhs.value, typ)
 	}
 }
 

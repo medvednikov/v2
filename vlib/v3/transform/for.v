@@ -113,7 +113,7 @@ fn (mut t Transformer) rebuild_for_in_stmt(_id flat.NodeId, node flat.Node) []fl
 		if int(key_id) >= 0 {
 			key_name := t.a.nodes[int(key_id)].value
 			if key_name.len > 0 {
-				t.var_types[key_name] = 'int'
+				t.set_var_type(key_name, 'int')
 			}
 		}
 	} else if has_index {
@@ -124,18 +124,18 @@ fn (mut t Transformer) rebuild_for_in_stmt(_id flat.NodeId, node flat.Node) []fl
 			// map[K]V: child0 (key) -> key type, child1 (val) -> value type
 			bracket_end := iter_type.index(']') or { 0 }
 			if key_name.len > 0 && bracket_end > 4 {
-				t.var_types[key_name] = iter_type[4..bracket_end]
+				t.set_var_type(key_name, iter_type[4..bracket_end])
 			}
 		} else if iter_type.starts_with('[]') || iter_type == 'string' {
 			// []E: child0 (index) -> 'int'
 			if key_name.len > 0 {
-				t.var_types[key_name] = 'int'
+				t.set_var_type(key_name, 'int')
 			}
 		}
 		if val_name.len > 0 {
 			elem_type := t.infer_for_in_elem_type(iter_type, node)
 			if elem_type.len > 0 {
-				t.var_types[val_name] = elem_type
+				t.set_var_type(val_name, elem_type)
 			}
 		}
 	} else {
@@ -145,7 +145,7 @@ fn (mut t Transformer) rebuild_for_in_stmt(_id flat.NodeId, node flat.Node) []fl
 			if key_name.len > 0 {
 				elem_type := t.infer_for_in_elem_type(iter_type, node)
 				if elem_type.len > 0 {
-					t.var_types[key_name] = elem_type
+					t.set_var_type(key_name, elem_type)
 				}
 			}
 		}
@@ -187,7 +187,7 @@ fn (mut t Transformer) lower_range_for_in(id flat.NodeId, node flat.Node, key_id
 	if key.kind != .ident || key.value.len == 0 {
 		return arr1(id)
 	}
-	t.var_types[key.value] = 'int'
+	t.set_var_type(key.value, 'int')
 	low := t.transform_expr(low_id)
 	high := t.stable_expr_for_reuse(high_id)
 	mut prefix := []flat.NodeId{}
@@ -227,8 +227,8 @@ fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_
 		}
 		elem_name = val.value
 	}
-	t.var_types[idx_name] = 'int'
-	t.var_types[elem_name] = elem_type
+	t.set_var_type(idx_name, 'int')
+	t.set_var_type(elem_name, elem_type)
 	container := t.stable_expr_for_reuse(container_id)
 	mut prefix := []flat.NodeId{}
 	t.drain_pending(mut prefix)

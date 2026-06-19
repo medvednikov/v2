@@ -45,7 +45,7 @@ mut:
 	cur_module      string
 	cur_fn_name     string
 	cur_fn_ret_type string
-	var_types       map[string]string
+	var_types       []VarTypeBinding
 	temp_counter    int
 	pending_stmts   []flat.NodeId
 	smartcast_stack []SmartcastContext
@@ -65,6 +65,11 @@ pub:
 	default_expr flat.NodeId
 }
 
+struct VarTypeBinding {
+	name string
+	typ  string
+}
+
 // --- entry point ---
 
 pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
@@ -74,6 +79,38 @@ pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 	}
 	t.collect_types()
 	t.transform_all()
+}
+
+fn (mut t Transformer) reset_var_types() {
+	t.var_types.clear()
+}
+
+fn (mut t Transformer) set_var_type(name string, typ string) {
+	if name.len == 0 {
+		return
+	}
+	for i, binding in t.var_types {
+		if binding.name == name {
+			t.var_types[i] = VarTypeBinding{
+				name: name
+				typ:  typ
+			}
+			return
+		}
+	}
+	t.var_types << VarTypeBinding{
+		name: name
+		typ:  typ
+	}
+}
+
+fn (t &Transformer) var_type(name string) string {
+	for binding in t.var_types {
+		if binding.name == name {
+			return binding.typ
+		}
+	}
+	return ''
 }
 
 // --- type collection ---
@@ -231,7 +268,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int) {
 	fn_node := t.a.nodes[fn_idx]
 	t.cur_fn_name = fn_node.value
 	t.cur_fn_ret_type = t.normalize_type_alias(fn_node.typ)
-	t.var_types = map[string]string{}
+	t.reset_var_types()
 	// Collect param types
 	for i in 0 .. fn_node.children_count {
 		child_id := t.a.children[fn_node.children_start + i]
@@ -240,7 +277,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int) {
 		}
 		child := t.a.nodes[int(child_id)]
 		if child.kind == .param && child.value.len > 0 && child.typ.len > 0 {
-			t.var_types[child.value] = t.normalize_type_alias(child.typ)
+			t.set_var_type(child.value, t.normalize_type_alias(child.typ))
 		}
 	}
 	// Collect body statement ids (non-param children)
@@ -643,7 +680,7 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 					}
 					lhs := t.a.child_node(&node, lhs_idx)
 					if lhs.kind == .ident && lhs.value.len > 0 && lhs.value != '_' {
-						t.var_types[lhs.value] = field_type.name()
+						t.set_var_type(lhs.value, field_type.name())
 					}
 				}
 			}
@@ -658,7 +695,7 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 		if lhs.kind == .ident && lhs.value.len > 0 {
 			typ := t.infer_decl_type(node)
 			if typ.len > 0 {
-				t.var_types[lhs.value] = typ
+				t.set_var_type(lhs.value, typ)
 				inferred_typ = typ
 			}
 		}
@@ -1020,7 +1057,7 @@ fn (mut t Transformer) transform_string_interp(_id flat.NodeId, node flat.Node) 
 	decl := t.make_decl_assign(tmp_name, t.make_call_typed('strings.new_builder',
 		arr1(t.make_int_literal(min_cap)), 'strings.Builder'))
 	t.a.nodes[int(decl)].typ = 'strings.Builder'
-	t.var_types[tmp_name] = 'strings.Builder'
+	t.set_var_type(tmp_name, 'strings.Builder')
 	t.pending_stmts << decl
 	for part in parts {
 		call := t.make_method_call(t.make_ident(tmp_name), 'write_string', arr1(part))
@@ -1549,7 +1586,7 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 	node := t.a.nodes[int(id)]
 	match node.kind {
 		.ident {
-			return t.normalize_type_alias(t.var_types[node.value] or { '' })
+			return t.normalize_type_alias(t.var_type(node.value))
 		}
 		.call {
 			ret := t.get_call_return_type(id, node)
@@ -1907,7 +1944,7 @@ fn (mut t Transformer) lower_array_appends() {
 			continue
 		}
 		if node.kind == .fn_decl {
-			t.var_types = map[string]string{}
+			t.reset_var_types()
 			t.annotate_fn_body(node)
 			continue
 		}
@@ -1916,7 +1953,7 @@ fn (mut t Transformer) lower_array_appends() {
 			if lhs.kind == .ident && lhs.value.len > 0 {
 				typ := t.infer_decl_type(node)
 				if typ.len > 0 {
-					t.var_types[lhs.value] = typ
+					t.set_var_type(lhs.value, typ)
 				}
 			}
 		}
@@ -1955,14 +1992,14 @@ fn (mut t Transformer) annotate_fn_body(fn_node flat.Node) {
 		}
 		child := t.a.nodes[int(child_id)]
 		if child.kind == .param && child.value.len > 0 && child.typ.len > 0 {
-			t.var_types[child.value] = t.normalize_type_alias(child.typ)
+			t.set_var_type(child.value, t.normalize_type_alias(child.typ))
 		}
 		if child.kind == .decl_assign && child.children_count >= 2 {
 			lhs := t.a.child_node(&child, 0)
 			if lhs.kind == .ident && lhs.value.len > 0 {
 				typ := t.infer_decl_type(child)
 				if typ.len > 0 {
-					t.var_types[lhs.value] = typ
+					t.set_var_type(lhs.value, typ)
 				}
 			}
 		}
@@ -1993,7 +2030,7 @@ fn (mut t Transformer) annotate_block_stmts(node_id flat.NodeId) {
 			if lhs.kind == .ident && lhs.value.len > 0 {
 				typ := t.infer_decl_type(child)
 				if typ.len > 0 {
-					t.var_types[lhs.value] = typ
+					t.set_var_type(lhs.value, typ)
 				}
 			}
 		}

@@ -39,7 +39,7 @@ fn (mut t Transformer) try_expand_if_guard(_id flat.NodeId, node flat.Node) ?[]f
 
 	then_id := t.a.child(&node, 1)
 	then_node := t.a.nodes[int(then_id)]
-	t.var_types[lhs.value] = value_type
+	t.set_var_type(lhs.value, value_type)
 	mut then_children := []flat.NodeId{}
 	then_children << value_decl
 	if then_node.kind == .block {

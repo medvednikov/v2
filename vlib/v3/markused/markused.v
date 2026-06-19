@@ -151,6 +151,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	enqueue_detected_runtime_helpers(a, tc, mut used, mut queue)
 	enqueue_initializer_calls(a, collector, imports, fn_decls, mut used, mut queue)
 	mut processed_nodes := map[int]bool{}
+	mut calls := []string{cap: 128}
 	mut qi := 0
 	for qi < queue.len {
 		name := queue[qi]
@@ -172,7 +173,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			continue
 		}
 		processed_nodes[node_key] = true
-		mut calls := []string{cap: 128}
+		calls.clear()
 		node := a.node(fn_info.node_id)
 		receiver_name, receiver_struct := receiver_info(a, node)
 		collector.collect_calls(node, fn_info.module, imports, receiver_name, receiver_struct, mut
@@ -204,11 +205,12 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			}
 			if !found_direct {
 				short := callee.all_after_last('.')
-				suffix_candidates := suffix_map[short] or { []string{} }
-				for candidate in suffix_candidates {
-					if candidate in fn_decls || candidate in tc.fn_ret_types {
-						if enqueue(candidate, mut used, mut queue) {
-							suffix_hits++
+				if suffix_candidates := suffix_map[short] {
+					for candidate in suffix_candidates {
+						if candidate in fn_decls || candidate in tc.fn_ret_types {
+							if enqueue(candidate, mut used, mut queue) {
+								suffix_hits++
+							}
 						}
 					}
 				}
@@ -250,6 +252,7 @@ fn valid_symbol_name(name string) bool {
 
 fn enqueue_initializer_calls(a &flat.FlatAst, collector CallCollector, imports map[string]string, fn_decls map[string]FnDeclInfo, mut used map[string]bool, mut queue []string) {
 	mut cur_module := ''
+	mut calls := []string{cap: 32}
 	for node in a.nodes {
 		match node.kind {
 			.module_decl {
@@ -261,7 +264,7 @@ fn enqueue_initializer_calls(a &flat.FlatAst, collector CallCollector, imports m
 					if field.children_count == 0 {
 						continue
 					}
-					mut calls := []string{}
+					calls.clear()
 					collector.collect_calls(field, cur_module, imports, '', '', mut calls)
 					for callee in calls {
 						if callee_info := fn_decls[callee] {
