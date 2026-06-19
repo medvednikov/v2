@@ -618,6 +618,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					.sdiv, .udiv { ssa.OpCode.fdiv }
 					else { ssa.OpCode.frem }
 				}
+
 				g.gen_float_binop(fop, instr.operands[0], instr.operands[1], val_id)
 				return
 			}
@@ -1798,6 +1799,7 @@ fn (mut g Gen) gen_float_binop(fop ssa.OpCode, lhs_id int, rhs_id int, val_id in
 		}
 		else {}
 	}
+
 	g.store_float_result(val_id)
 }
 

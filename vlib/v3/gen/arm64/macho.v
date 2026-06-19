@@ -4,9 +4,6 @@
 
 module arm64
 
-// import encoding.binary
-import os
-
 // Mach-O Constants for ARM64
 const mh_magic_64 = u32(0xfeedfacf)
 const cpu_type_arm64 = 0x0100000c
@@ -254,7 +251,9 @@ pub fn (mut m MachOObject) write(path string) {
 
 	buf << m.str_table
 
-	os.write_file_array(path, buf) or { panic('failed to write Mach-O object') }
+	if !write_file_array_raw(path, buf) {
+		panic('failed to write Mach-O object')
+	}
 }
 
 fn write_u32_le(mut b []u8, v u32) {

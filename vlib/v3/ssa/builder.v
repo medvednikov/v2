@@ -1096,11 +1096,11 @@ fn (b &Builder) skip_source_fn(name string) bool {
 		'f32_to_str_l_with_dot', 'f64_to_str_l', 'f64_to_str_l_with_dot', 'current_rss_kb',
 		'macos_rss_kb', 'linux_rss_kb', 'arguments', 'tos2', 'tos3', 'tos_clone',
 		'normalize_path_in_builder', 'check_fwrite', 'check_fread', 'os.check_fwrite',
-		'os.check_fread', 'fxx_to_str_l_parse',
-		'fxx_to_str_l_parse_with_dot', 'u8.vstring', 'u8.vstring_with_len', 'char.vstring',
-		'char.vstring_with_len', 'byteptr.vstring', 'byteptr.vstring_with_len', 'charptr.vstring',
-		'charptr.vstring_with_len', 'u8.vstring_literal', 'u8.vstring_literal_with_len',
-		'char.vstring_literal', 'char.vstring_literal_with_len', 'byteptr.vstring_literal',
+		'os.check_fread', 'fxx_to_str_l_parse', 'fxx_to_str_l_parse_with_dot', 'u8.vstring',
+		'u8.vstring_with_len', 'char.vstring', 'char.vstring_with_len', 'byteptr.vstring',
+		'byteptr.vstring_with_len', 'charptr.vstring', 'charptr.vstring_with_len',
+		'u8.vstring_literal', 'u8.vstring_literal_with_len', 'char.vstring_literal',
+		'char.vstring_literal_with_len', 'byteptr.vstring_literal',
 		'byteptr.vstring_literal_with_len', 'charptr.vstring_literal',
 		'charptr.vstring_literal_with_len'] {
 		return true
@@ -3377,8 +3377,7 @@ fn (mut b Builder) generate_array_repeat_to_depth_body(func_id int) {
 	total_len := b.block_instr2(.mul, entry, b.i64_type, len, count)
 
 	new_ref := b.m.add_value(.func_ref, b.void_type, 'array_new', b.fn_ids['array_new'])
-	out := b.block_instr4(.call, entry, b.array_type, new_ref, elem_size, total_len,
-		total_len)
+	out := b.block_instr4(.call, entry, b.array_type, new_ref, elem_size, total_len, total_len)
 	b.block_instr2(.store, entry, b.void_type, out, alloca_out)
 
 	out_data_ptr := b.block_struct_field_ptr(entry, alloca_out, b.array_type, 0)
