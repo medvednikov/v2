@@ -34,6 +34,48 @@ fn run_good(v3_bin string, name string, src string) string {
 	return run.output.trim_space()
 }
 
+fn write_project_file(root string, rel string, src string) {
+	path := os.join_path(root, rel)
+	os.mkdir_all(os.dir(path)) or { panic(err) }
+	os.write_file(path, src) or { panic(err) }
+}
+
+fn run_bad_project(v3_bin string, name string, files map[string]string, input string, expected string) {
+	root := os.join_path(os.temp_dir(), 'v3_${name}_project')
+	if os.exists(root) {
+		os.rmdir_all(root) or { panic(err) }
+	}
+	os.mkdir_all(root) or { panic(err) }
+	for rel, src in files {
+		write_project_file(root, rel, src)
+	}
+	input_path := if input.len == 0 { root } else { os.join_path(root, input) }
+	bad_bin := os.join_path(os.temp_dir(), 'v3_${name}')
+	result := os.execute('${v3_bin} ${input_path} -b c -o ${bad_bin}')
+	assert result.exit_code != 0
+	assert result.output.contains(expected)
+	assert !result.output.contains('C compilation failed')
+}
+
+fn run_good_project(v3_bin string, name string, files map[string]string, input string) string {
+	root := os.join_path(os.temp_dir(), 'v3_${name}_project')
+	if os.exists(root) {
+		os.rmdir_all(root) or { panic(err) }
+	}
+	os.mkdir_all(root) or { panic(err) }
+	for rel, src in files {
+		write_project_file(root, rel, src)
+	}
+	input_path := if input.len == 0 { root } else { os.join_path(root, input) }
+	good_bin := os.join_path(os.temp_dir(), 'v3_${name}')
+	compile := os.execute('${v3_bin} ${input_path} -b c -o ${good_bin}')
+	assert compile.exit_code == 0
+	assert !compile.output.contains('C compilation failed')
+	run := os.execute(good_bin)
+	assert run.exit_code == 0
+	return run.output.trim_space()
+}
+
 fn test_type_checker_reports_core_semantic_errors() {
 	v3_bin := build_v3()
 	run_bad(v3_bin, 'bad_assignment', "fn main() {\n\tmut x := 1\n\tx = 'bad'\n}\n",
@@ -61,6 +103,44 @@ fn test_type_checker_reports_core_semantic_errors() {
 	run_bad(v3_bin, 'bad_fn_value_call',
 		"fn add(a int, b int) int {\n\treturn a + b\n}\nfn main() {\n\tf := add\n\t_ := f('bad', 4)\n}\n",
 		'cannot use `string` as argument 1 to `f`; expected `int`')
+	run_bad(v3_bin, 'bad_struct_default', "struct Foo {\n\tx int = 'bad'\n}\nfn main() {}\n",
+		'cannot initialize field `x` with `string`; expected `int`')
+	run_bad(v3_bin, 'bad_enum_value', "enum Color {\n\tred = 'bad'\n}\nfn main() {}\n",
+		'enum field `red` value must be integer, not `string`')
+	run_bad(v3_bin, 'bad_enum_shorthand',
+		'enum Color {\n\tred\n}\nfn paint(c Color) {}\nfn main() {\n\tpaint(.blue)\n}\n',
+		'unknown enum field `blue` for `Color`')
+	run_bad(v3_bin, 'bad_interface_field',
+		'interface Named {\n\tname string\n}\nstruct Person {}\nfn takes_named(n Named) {}\nfn main() {\n\ttakes_named(Person{})\n}\n',
+		'cannot use `Person` as argument 1 to `takes_named`; expected `Named`')
+	run_bad(v3_bin, 'bad_sum_missing_shared_field',
+		'struct A {\n\tid int\n}\nstruct B {\n\tname string\n}\ntype Node = A | B\nfn main() {\n\tn := Node(A{\n\t\tid: 1\n\t})\n\t_ := n.id\n}\n',
+		'unknown field `id` on `Node`')
+	run_bad(v3_bin, 'bad_sum_and_smartcast_rhs',
+		'struct Cat {\n\tage int\n}\nstruct Dog {\n\ttricks int\n}\ntype Animal = Cat | Dog\nfn main() {\n\ta := Animal(Cat{\n\t\tage: 2\n\t})\n\tif a is Cat && a.tricks == 2 {}\n}\n',
+		'unknown field `tricks` on `Cat`')
+	run_bad(v3_bin, 'bad_sum_is_variant',
+		'struct Cat {\n\tage int\n}\nstruct Dog {\n\ttricks int\n}\nstruct Bird {\n\twings int\n}\ntype Animal = Cat | Dog\nfn main() {\n\ta := Animal(Cat{\n\t\tage: 2\n\t})\n\tif a is Bird {}\n}\n',
+		'`Bird` is not a variant of sum type `Animal`')
+	run_bad(v3_bin, 'bad_sum_match_variant',
+		'struct Cat {\n\tage int\n}\nstruct Dog {\n\ttricks int\n}\nstruct Bird {\n\twings int\n}\ntype Animal = Cat | Dog\nfn main() {\n\ta := Animal(Cat{\n\t\tage: 2\n\t})\n\tmatch a {\n\t\tBird {}\n\t\telse {}\n\t}\n}\n',
+		'`Bird` is not a variant of sum type `Animal`')
+	run_bad(v3_bin, 'bad_unknown_decl_type', 'fn f(x Missing) {}\nfn main() {}\n',
+		'unknown type `Missing`')
+	run_bad(v3_bin, 'bad_generic_param',
+		'fn id[T](x T) T {\n\treturn x\n}\nfn main() {\n\t_ := id(1)\n}\n',
+		'unsupported generic type parameter `T`')
+	run_bad(v3_bin, 'bad_generic_type_application', 'fn takes_box(x Box[int]) {}\nfn main() {}\n',
+		'unsupported generic type application `Box[int]`')
+	run_bad_project(v3_bin, 'bad_bare_imported_call', {
+		'main.v':      'module main\n\nimport moda\n\nfn main() {\n\t_ := answer()\n}\n'
+		'moda/moda.v': 'module moda\n\nfn answer() int {\n\treturn 7\n}\n'
+	}, 'main.v', 'unknown function `answer`')
+	run_bad_project(v3_bin, 'bad_import_leak', {
+		'main.v':      'module main\n\nimport moda\n\nfn main() {}\n'
+		'other.v':     'module main\n\nfn use_it() int {\n\treturn moda.answer()\n}\n'
+		'moda/moda.v': 'module moda\n\nfn answer() int {\n\treturn 7\n}\n'
+	}, '', 'unknown function `moda.answer`')
 	alias_out := run_good(v3_bin, 'alias_method',
 		'type UserId = int\n\nfn (id UserId) str() string {\n\treturn int_str(int(id))\n}\n\nfn main() {\n\tid := UserId(1)\n\tprintln(id.str())\n}\n')
 	assert alias_out == '1'
@@ -76,4 +156,12 @@ fn test_type_checker_reports_core_semantic_errors() {
 	array_literal_push_many_out := run_good(v3_bin, 'array_literal_push_many',
 		'fn main() {\n\tmut xs := [1, 2]\n\tys := [3, 4]\n\txs << ys\n\txs << [5, 6]\n\tprintln(int_str(xs.len))\n}\n')
 	assert array_literal_push_many_out == '6'
+	const_forward_out := run_good(v3_bin, 'const_forward',
+		'const first_value = second_value\nconst second_value = 2\nfn main() {\n\tprintln(int_str(first_value))\n}\n')
+	assert const_forward_out == '2'
+	imported_call_out := run_good_project(v3_bin, 'qualified_import_call', {
+		'main.v':      'module main\n\nimport moda\n\nfn main() {\n\tprintln(int_str(moda.answer()))\n}\n'
+		'moda/moda.v': 'module moda\n\nfn answer() int {\n\treturn 7\n}\n'
+	}, 'main.v')
+	assert imported_call_out == '7'
 }

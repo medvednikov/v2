@@ -187,7 +187,7 @@ fn (mut g FlatGen) collect_gen_info() {
 				mut methods := []string{}
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
-					if f.kind == .interface_field {
+					if f.kind == .interface_field && f.op == .dot {
 						methods << f.value
 					}
 				}

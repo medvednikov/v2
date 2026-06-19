@@ -1252,6 +1252,7 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 			start := p.add_children(params)
 			ids << p.a.add_node(flat.Node{
 				kind:           .interface_field
+				op:             .dot
 				value:          field_name
 				typ:            ret_type
 				children_start: start
