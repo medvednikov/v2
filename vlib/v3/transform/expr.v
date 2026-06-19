@@ -373,7 +373,7 @@ pub fn (mut t Transformer) make_call_typed(fn_name string, args []flat.NodeId, t
 	return t.a.add_node(flat.Node{
 		kind:           .call
 		children_start: start
-		children_count: 1 + args.len
+		children_count: flat.child_count(1 + args.len)
 		typ:            typ
 	})
 }
@@ -401,7 +401,7 @@ pub fn (mut t Transformer) make_method_call(receiver flat.NodeId, method_name st
 	return t.a.add_node(flat.Node{
 		kind:           .call
 		children_start: start
-		children_count: 1 + args.len
+		children_count: flat.child_count(1 + args.len)
 	})
 }
 

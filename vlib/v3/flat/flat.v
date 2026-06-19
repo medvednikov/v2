@@ -133,15 +133,15 @@ pub enum Op as u8 {
 }
 
 pub struct Node {
-pub:
-	kind           NodeKind
-	op             Op
-	children_start i32
-	children_count u16
-	pos            token.Pos
 pub mut:
 	value string
 	typ   string
+pub:
+	pos            token.Pos
+	children_start i32
+	children_count i16
+	kind           NodeKind
+	op             Op
 }
 
 @[heap]
@@ -180,6 +180,14 @@ pub fn (mut a FlatAst) add_node(node Node) NodeId {
 	id := NodeId(a.nodes.len)
 	a.nodes << node
 	return id
+}
+
+// child_count converts a dynamic child count to Node's compact storage type.
+pub fn child_count(count int) i16 {
+	if count > 32767 {
+		panic('flat node has too many children')
+	}
+	return i16(count)
 }
 
 pub fn (mut a FlatAst) begin_children() int {

@@ -1589,6 +1589,15 @@ fn (mut tc TypeChecker) resolve_call_info(_id flat.NodeId, node flat.Node) ?Call
 				params_known: true
 			}
 		}
+		if clean is Map && fn_node.value == 'clone' {
+			return CallInfo{
+				name:         ''
+				params:       tarr1(base_type)
+				return_type:  base_type
+				has_receiver: true
+				params_known: true
+			}
+		}
 		if clean is Array {
 			match fn_node.value {
 				'first', 'last', 'pop' {
@@ -3258,6 +3267,11 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	}
 	if typ.starts_with('map[') {
 		bracket_end := find_matching_bracket(typ, 3)
+		if bracket_end >= typ.len {
+			return Type(Unknown{
+				reason: 'malformed map type'
+			})
+		}
 		key_str := typ[4..bracket_end]
 		val_str := typ[bracket_end + 1..]
 		return Type(Map{

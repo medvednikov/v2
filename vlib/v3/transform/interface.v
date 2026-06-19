@@ -20,7 +20,7 @@ fn (mut t Transformer) transform_interface_cast(id flat.NodeId, node flat.Node) 
 	if node.children_count == 0 {
 		return id
 	}
-	mut new_children := []flat.NodeId{cap: node.children_count}
+	mut new_children := []flat.NodeId{cap: int(node.children_count)}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		new_children << t.transform_expr(child_id)
@@ -48,7 +48,7 @@ fn (mut t Transformer) transform_interface_method_call(id flat.NodeId, node flat
 	if node.children_count == 0 {
 		return id
 	}
-	mut new_children := []flat.NodeId{cap: node.children_count}
+	mut new_children := []flat.NodeId{cap: int(node.children_count)}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		new_children << t.transform_expr(child_id)

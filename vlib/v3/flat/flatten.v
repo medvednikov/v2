@@ -31,7 +31,7 @@ fn flatten_file(mut a FlatAst, file ast.File) NodeId {
 	return a.add_node(Node{
 		kind:           .file
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -61,7 +61,7 @@ fn flatten_stmt(mut a FlatAst, stmt ast.Stmt) NodeId {
 			return a.add_node(Node{
 				kind:           .return_stmt
 				children_start: start
-				children_count: ids.len
+				children_count: child_count(ids.len)
 			})
 		}
 		ast.ForStmt {
@@ -129,7 +129,7 @@ fn flatten_fn_decl(mut a FlatAst, decl ast.FnDecl) NodeId {
 		value:          decl.name
 		typ:            return_type_name(decl.typ)
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 		pos:            decl.pos
 	})
 }
@@ -154,7 +154,7 @@ fn flatten_assign(mut a FlatAst, stmt ast.AssignStmt) NodeId {
 		kind:           kind
 		op:             token_to_op(stmt.op)
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -190,7 +190,7 @@ fn flatten_for(mut a FlatAst, stmt ast.ForStmt) NodeId {
 	return a.add_node(Node{
 		kind:           .for_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -206,7 +206,7 @@ fn flatten_block(mut a FlatAst, stmts []ast.Stmt) NodeId {
 	return a.add_node(Node{
 		kind:           .block
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -224,7 +224,7 @@ fn flatten_struct_decl(mut a FlatAst, decl ast.StructDecl) NodeId {
 		kind:           .struct_decl
 		value:          decl.name
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -241,7 +241,7 @@ fn flatten_global_decl(mut a FlatAst, decl ast.GlobalDecl) NodeId {
 	return a.add_node(Node{
 		kind:           .global_decl
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -266,14 +266,14 @@ fn flatten_match(mut a FlatAst, expr ast.MatchExpr) NodeId {
 			kind:           .match_branch
 			value:          if is_else { 'else' } else { '' }
 			children_start: bstart
-			children_count: branch_ids.len
+			children_count: child_count(branch_ids.len)
 		})
 	}
 	start := add_children(mut a, ids)
 	return a.add_node(Node{
 		kind:           .match_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 
@@ -307,7 +307,7 @@ fn flatten_expr(mut a FlatAst, expr ast.Expr) NodeId {
 				kind:           .string_literal
 				value:          '_interp'
 				children_start: start
-				children_count: ids.len
+				children_count: child_count(ids.len)
 			})
 		}
 		ast.Ident {
@@ -323,7 +323,7 @@ fn flatten_expr(mut a FlatAst, expr ast.Expr) NodeId {
 			return a.add_node(Node{
 				kind:           .call
 				children_start: start
-				children_count: ids.len
+				children_count: child_count(ids.len)
 			})
 		}
 		ast.CallOrCastExpr {
@@ -412,7 +412,7 @@ fn flatten_expr(mut a FlatAst, expr ast.Expr) NodeId {
 				kind:           .struct_init
 				value:          expr.typ.name()
 				children_start: start
-				children_count: ids.len
+				children_count: child_count(ids.len)
 			})
 		}
 		ast.MatchExpr {
@@ -455,7 +455,7 @@ fn flatten_if(mut a FlatAst, expr ast.IfExpr) NodeId {
 	return a.add_node(Node{
 		kind:           .if_expr
 		children_start: start
-		children_count: ids.len
+		children_count: child_count(ids.len)
 	})
 }
 

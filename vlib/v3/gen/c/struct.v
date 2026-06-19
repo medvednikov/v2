@@ -192,6 +192,9 @@ struct StructDeclInfo {
 
 fn (g &FlatGen) struct_init_c_type_name(type_name string) string {
 	info := g.find_struct_decl(type_name) or { return g.tc.c_type(g.tc.parse_type(type_name)) }
+	if info.full_name.starts_with('C.') {
+		return g.tc.c_type(g.tc.parse_type(info.full_name))
+	}
 	return c_name(info.full_name)
 }
 
@@ -287,7 +290,9 @@ fn (g &FlatGen) map_callback_names(key_type types.Type) (string, string, string,
 
 fn (g &FlatGen) skip_builtin_struct(name string) bool {
 	_ = g
-	_ = name
+	if name.starts_with('C.') {
+		return true
+	}
 	return false
 }
 

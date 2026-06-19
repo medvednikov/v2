@@ -109,7 +109,7 @@ pub fn (mut p Parser) parse_into(path string) {
 		kind:           .file
 		value:          path
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -651,7 +651,7 @@ fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type strin
 		value:          name
 		typ:            ret_type
 		children_start: start
-		children_count: all_ids.len
+		children_count: flat.child_count(all_ids.len)
 	})
 }
 
@@ -698,7 +698,7 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 			value:          name
 			typ:            ret_type
 			children_start: start
-			children_count: param_ids.len
+			children_count: flat.child_count(param_ids.len)
 		})
 	}
 
@@ -729,7 +729,7 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 		value:          name
 		typ:            ret_type
 		children_start: start
-		children_count: all_ids.len
+		children_count: flat.child_count(all_ids.len)
 	})
 }
 
@@ -916,7 +916,7 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 				value:          field_name
 				typ:            field_type
 				children_start: children_start
-				children_count: children_count
+				children_count: flat.child_count(children_count)
 			})
 			if p.tok == .semicolon {
 				p.next()
@@ -932,7 +932,7 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 		value:          name
 		typ:            if is_union { 'union' } else { '' }
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1022,7 +1022,7 @@ fn (mut p Parser) global_decl() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .global_decl
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1105,7 +1105,7 @@ fn (mut p Parser) const_decl() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .const_decl
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1162,7 +1162,7 @@ fn (mut p Parser) enum_decl() flat.NodeId {
 		value:          name
 		typ:            typ
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1203,7 +1203,7 @@ fn (mut p Parser) type_decl() flat.NodeId {
 			kind:           .type_decl
 			value:          name
 			children_start: start
-			children_count: variants.len
+			children_count: flat.child_count(variants.len)
 		})
 	}
 	if p.tok == .semicolon {
@@ -1281,7 +1281,7 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 				value:          field_name
 				typ:            ret_type
 				children_start: start
-				children_count: params.len
+				children_count: flat.child_count(params.len)
 			})
 		} else if p.tok == .semicolon || p.tok == .rcbr {
 			// embedded type or field without explicit type
@@ -1308,7 +1308,7 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 		kind:           .interface_decl
 		value:          name
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1758,7 +1758,7 @@ fn (mut p Parser) return_stmt() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .return_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1818,7 +1818,7 @@ fn (mut p Parser) if_stmt() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .if_expr
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -1841,7 +1841,7 @@ fn (mut p Parser) for_stmt() flat.NodeId {
 		return p.a.add_node(flat.Node{
 			kind:           .for_stmt
 			children_start: start
-			children_count: ids.len
+			children_count: flat.child_count(ids.len)
 		})
 	}
 
@@ -1908,7 +1908,7 @@ fn (mut p Parser) for_stmt() flat.NodeId {
 			return p.a.add_node(flat.Node{
 				kind:           .for_stmt
 				children_start: start
-				children_count: ids.len
+				children_count: flat.child_count(ids.len)
 			})
 		}
 	}
@@ -1929,7 +1929,7 @@ fn (mut p Parser) for_stmt() flat.NodeId {
 		return p.a.add_node(flat.Node{
 			kind:           .for_stmt
 			children_start: start
-			children_count: ids.len
+			children_count: flat.child_count(ids.len)
 		})
 	}
 
@@ -1984,7 +1984,7 @@ fn (mut p Parser) for_c_style(lhs_expr flat.NodeId) flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .for_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -2028,7 +2028,7 @@ fn (mut p Parser) for_in(first_expr flat.NodeId) flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .for_in_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 		// value field stores the count of header elements (key, val, container, [range_end])
 		// so gen knows where body starts
 		value: if int(range_end) >= 0 { '4' } else { '3' }
@@ -2056,7 +2056,7 @@ fn (mut p Parser) match_stmt() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .match_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -2139,7 +2139,7 @@ fn (mut p Parser) match_branch() flat.NodeId {
 		kind:           .match_branch
 		value:          if is_else { 'else' } else { '${n_conds}' }
 		children_start: bstart
-		children_count: branch_ids.len
+		children_count: flat.child_count(branch_ids.len)
 	})
 }
 
@@ -2149,7 +2149,7 @@ fn (mut p Parser) block_stmt() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .block
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -2208,7 +2208,7 @@ fn (mut p Parser) assign_or_expr_stmt() flat.NodeId {
 				}
 				op:             token_to_op(op)
 				children_start: istart
-				children_count: all_ids.len
+				children_count: flat.child_count(all_ids.len)
 			})
 		}
 	}
@@ -2331,7 +2331,7 @@ fn (mut p Parser) assert_stmt() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .assert_stmt
 		children_start: astart
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -2723,7 +2723,7 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 							kind:           .map_init
 							value:          map_type
 							children_start: istart
-							children_count: ids.len
+							children_count: flat.child_count(ids.len)
 						})
 					}
 				}
@@ -3021,7 +3021,7 @@ fn (mut p Parser) call_args(fn_expr flat.NodeId) flat.NodeId {
 			ids << p.a.add_node(flat.Node{
 				kind:           .lambda_expr
 				children_start: lstart
-				children_count: lids.len
+				children_count: flat.child_count(lids.len)
 			})
 		} else {
 			arg := p.expr(.lowest)
@@ -3056,7 +3056,7 @@ fn (mut p Parser) call_args(fn_expr flat.NodeId) flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .call
 		children_start: cstart
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -3082,7 +3082,7 @@ fn (mut p Parser) index_expr(lhs flat.NodeId) flat.NodeId {
 			kind:           .index
 			value:          'range'
 			children_start: istart
-			children_count: ids.len
+			children_count: flat.child_count(ids.len)
 		})
 	}
 	idx := p.expr(.logical_or)
@@ -3105,7 +3105,7 @@ fn (mut p Parser) index_expr(lhs flat.NodeId) flat.NodeId {
 			kind:           .index
 			value:          'range'
 			children_start: istart
-			children_count: ids.len
+			children_count: flat.child_count(ids.len)
 		})
 	}
 	p.check(.rsbr)
@@ -3153,7 +3153,7 @@ fn (mut p Parser) struct_init(name string) flat.NodeId {
 			kind:           .assoc
 			value:          name
 			children_start: start
-			children_count: field_ids.len
+			children_count: flat.child_count(field_ids.len)
 		})
 	}
 	for p.tok != .rcbr && p.tok != .eof {
@@ -3196,7 +3196,7 @@ fn (mut p Parser) struct_init(name string) flat.NodeId {
 		kind:           .struct_init
 		value:          name
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -3248,7 +3248,7 @@ fn (mut p Parser) string_interp(first_part string, quote u8) flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .string_interp
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -3303,7 +3303,7 @@ fn (mut p Parser) array_literal() flat.NodeId {
 				kind:           .array_init
 				value:          elem_type
 				children_start: start
-				children_count: ids.len
+				children_count: flat.child_count(ids.len)
 			})
 		}
 		return p.a.add_val(.array_init, elem_type)
@@ -3353,7 +3353,7 @@ fn (mut p Parser) array_literal() flat.NodeId {
 					kind:           .array_init
 					value:          fixed_type
 					children_start: start
-					children_count: init_ids.len
+					children_count: flat.child_count(init_ids.len)
 				})
 			}
 			return p.a.add_val(.array_init, fixed_type)
@@ -3363,7 +3363,7 @@ fn (mut p Parser) array_literal() flat.NodeId {
 		return p.a.add_node(flat.Node{
 			kind:           .array_literal
 			children_start: start
-			children_count: ids.len
+			children_count: flat.child_count(ids.len)
 		})
 	}
 	// multi-element array: [a, b, c]
@@ -3383,7 +3383,7 @@ fn (mut p Parser) array_literal() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .array_literal
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -3450,7 +3450,7 @@ fn (mut p Parser) fn_literal() flat.NodeId {
 		kind:           .fn_literal
 		typ:            ret_type
 		children_start: start
-		children_count: all_ids.len
+		children_count: flat.child_count(all_ids.len)
 	})
 }
 
@@ -3474,7 +3474,7 @@ fn (mut p Parser) lock_expr() flat.NodeId {
 		kind:           .lock_expr
 		value:          if is_rlock { 'rlock' } else { 'lock' }
 		children_start: lstart
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -3494,7 +3494,7 @@ fn (mut p Parser) select_expr() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .select_stmt
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 	})
 }
 
@@ -3527,7 +3527,7 @@ fn (mut p Parser) select_branch() flat.NodeId {
 		kind:           .select_branch
 		value:          if is_else { 'else' } else { '' }
 		children_start: start
-		children_count: all_ids.len
+		children_count: flat.child_count(all_ids.len)
 	})
 }
 

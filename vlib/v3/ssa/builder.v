@@ -8577,16 +8577,20 @@ fn (mut b Builder) load_struct_field_from_value(value ValueID, typ TypeID, field
 }
 
 fn (mut b Builder) index_elem_type(id flat.NodeId, node flat.Node) TypeID {
-	if b.tc != unsafe { nil } {
-		if typ := b.tc.expr_types[int(id)] {
-			name := typ.name()
-			if name != '' && !name.starts_with('[]') && name != 'unknown' {
-				return b.resolve_type(name)
-			}
+	if node.children_count > 0 {
+		base_type := b.checked_expr_type_name(b.a.child(&node, 0))
+		elem_type := indexed_elem_type_name(base_type)
+		if elem_type.len > 0 {
+			return b.resolve_type(elem_type)
 		}
 	}
 	if node.typ != '' && !node.typ.starts_with('[]') {
 		return b.resolve_type(node.typ)
+	}
+	checked := b.checked_expr_type_name(id)
+	if checked.len > 0 && checked != 'unknown' && !checked.starts_with('[]') && checked[0] != `?`
+		&& checked[0] != `!` {
+		return b.resolve_type(checked)
 	}
 	return b.i64_type
 }

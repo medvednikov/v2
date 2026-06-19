@@ -132,7 +132,7 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 		})
 	}
 	call_name := t.resolve_call_name(node)
-	mut new_children := []flat.NodeId{cap: node.children_count}
+	mut new_children := []flat.NodeId{cap: int(node.children_count)}
 	for i in 0 .. node.children_count {
 		child_id := t.a.children[node.children_start + i]
 		if i > 0 {

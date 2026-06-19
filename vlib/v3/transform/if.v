@@ -194,7 +194,7 @@ fn (mut t Transformer) if_value_branch_block(branch_id flat.NodeId, target_name 
 		return t.make_block([]flat.NodeId{})
 	}
 
-	mut stmt_ids := []flat.NodeId{cap: branch.children_count}
+	mut stmt_ids := []flat.NodeId{cap: int(branch.children_count)}
 	for i in 0 .. branch.children_count {
 		stmt_ids << t.a.child(&branch, i)
 	}
@@ -365,7 +365,7 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 		new_then_id = t.a.add_node(flat.Node{
 			kind:           .block
 			children_start: block_start
-			children_count: new_children.len
+			children_count: flat.child_count(new_children.len)
 		})
 	}
 
@@ -393,7 +393,7 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 			new_else_id = t.a.add_node(flat.Node{
 				kind:           .block
 				children_start: block_start
-				children_count: new_children.len
+				children_count: flat.child_count(new_children.len)
 			})
 		} else {
 			new_else_id = else_id
@@ -412,7 +412,7 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	new_if := t.a.add_node(flat.Node{
 		kind:           .if_expr
 		children_start: if_start
-		children_count: child_count
+		children_count: flat.child_count(child_count)
 		typ:            node.typ
 		pos:            node.pos
 	})

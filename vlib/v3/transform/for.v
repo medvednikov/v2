@@ -46,7 +46,7 @@ fn (mut t Transformer) transform_for_body(id flat.NodeId, node flat.Node) []flat
 		kind:           .for_stmt
 		op:             node.op
 		children_start: start
-		children_count: count
+		children_count: flat.child_count(count)
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -172,7 +172,7 @@ fn (mut t Transformer) rebuild_for_in_stmt(_id flat.NodeId, node flat.Node) []fl
 		kind:           .for_in_stmt
 		op:             node.op
 		children_start: start
-		children_count: ids.len
+		children_count: flat.child_count(ids.len)
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -261,7 +261,7 @@ fn (mut t Transformer) make_for_stmt(init flat.NodeId, cond flat.NodeId, post fl
 		kind:           .for_stmt
 		op:             src.op
 		children_start: start
-		children_count: 3 + body.len
+		children_count: flat.child_count(3 + body.len)
 		pos:            src.pos
 		typ:            src.typ
 	})

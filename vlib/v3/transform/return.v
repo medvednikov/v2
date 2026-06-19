@@ -230,7 +230,7 @@ fn (mut t Transformer) build_return_match_chain(match_expr_id flat.NodeId, orig_
 	return t.a.add_node(flat.Node{
 		kind:           .if_expr
 		children_start: if_start
-		children_count: if_ids.len
+		children_count: flat.child_count(if_ids.len)
 	})
 }
 

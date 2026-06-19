@@ -59,7 +59,7 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 		kind:           .struct_init
 		op:             node.op
 		children_start: start
-		children_count: field_ids.len
+		children_count: flat.child_count(field_ids.len)
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -103,7 +103,7 @@ fn (mut t Transformer) transform_struct_children(id flat.NodeId, node flat.Node)
 		kind:           .struct_init
 		op:             node.op
 		children_start: start
-		children_count: field_ids.len
+		children_count: flat.child_count(field_ids.len)
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -119,7 +119,7 @@ fn (mut t Transformer) add_missing_struct_defaults(id flat.NodeId, node flat.Nod
 	}
 	info := t.lookup_struct_info(node.value) or { return id }
 	mut provided := map[string]bool{}
-	mut field_ids := []flat.NodeId{cap: node.children_count + info.fields.len}
+	mut field_ids := []flat.NodeId{cap: int(node.children_count) + info.fields.len}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		child := t.a.nodes[int(child_id)]
@@ -168,7 +168,7 @@ fn (mut t Transformer) add_missing_struct_defaults(id flat.NodeId, node flat.Nod
 		kind:           .struct_init
 		op:             node.op
 		children_start: start
-		children_count: field_ids.len
+		children_count: flat.child_count(field_ids.len)
 		pos:            node.pos
 		value:          node.value
 		typ:            node.typ
@@ -261,7 +261,7 @@ fn (mut t Transformer) transform_array_init_expr(id flat.NodeId, node flat.Node)
 	if node.children_count == 0 {
 		return id
 	}
-	mut new_children := []flat.NodeId{cap: node.children_count}
+	mut new_children := []flat.NodeId{cap: int(node.children_count)}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		new_children << t.transform_expr(child_id)
@@ -290,7 +290,7 @@ fn (mut t Transformer) transform_map_init_expr(id flat.NodeId, node flat.Node) f
 	if node.children_count == 0 {
 		return id
 	}
-	mut new_children := []flat.NodeId{cap: node.children_count}
+	mut new_children := []flat.NodeId{cap: int(node.children_count)}
 	for i in 0 .. node.children_count {
 		child_id := t.a.child(&node, i)
 		new_children << t.transform_expr(child_id)

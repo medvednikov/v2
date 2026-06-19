@@ -985,6 +985,16 @@ struct ForField117 {
 	typ  MetaType117
 }
 
+struct OptionalContext117 {
+	expr    string
+	variant string
+	sum     string
+}
+
+struct OptionalContextHolder117 {
+	items []OptionalContext117
+}
+
 struct ConstHolder117 {
 	value int
 }
@@ -1218,13 +1228,47 @@ fn find_field_type117(fields []ForField117, wanted string) string {
 }
 
 fn map_clone_pair117() int {
-	mut original117 := map[string]int{}
-	original117['mode'] = 1
-	mut cloned117 := original117.clone()
-	cloned117['mode'] = 7
-	orig117 := original117['mode'] or { -1 }
-	copy117 := cloned117['mode'] or { -1 }
+	original117 := make_scores115()
+	mut cloned117 := make_scores115()
+	cloned117 = original117.clone()
+	cloned117['alpha'] = 7
+	orig117 := original117['alpha'] or { -1 }
+	copy117 := cloned117['alpha'] or { -1 }
 	return orig117 * 10 + copy117
+}
+
+fn optional_context117(holder OptionalContextHolder117, wanted string) ?OptionalContext117 {
+	mut i := holder.items.len - 1
+	for i >= 0 {
+		if holder.items[i].expr == wanted {
+			return holder.items[i]
+		}
+		i--
+	}
+	return none
+}
+
+fn optional_context_score117() int {
+	holder117 := OptionalContextHolder117{
+		items: [
+			OptionalContext117{
+				expr:    'node'
+				variant: 'Ident'
+				sum:     'Expr'
+			},
+			OptionalContext117{
+				expr:    'other'
+				variant: 'Other'
+				sum:     'Expr'
+			},
+		]
+	}
+	ctx117 := optional_context117(holder117, 'node') or { return 0 }
+	if ctx117.expr == 'node' && ctx117.variant == 'Ident' && ctx117.sum == 'Expr'
+		&& !ctx117.variant.contains('.') {
+		return 1
+	}
+	return 0
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5471,7 +5515,10 @@ fn main() {
 	}
 
 	// 117.24 Map clone owns its storage instead of aliasing the original map.
-	print_int(map_clone_pair117()) // 17
+	print_int(map_clone_pair117()) // 27
+
+	// 117.25 Optional struct payloads preserve string fields from array indexes.
+	print_int(optional_context_score117()) // 1
 
 	print_str('arm64 self-host regression coverage: ok')
 
