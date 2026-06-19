@@ -6,9 +6,9 @@ pub struct Gen {
 mut:
 	m                    &ssa.Module  = unsafe { nil }
 	macho                &MachOObject = unsafe { nil }
-	stack_map            map[int]int
-	alloca_offset        map[int]int
-	alloca_size          map[int]int
+	stack_offsets        []int
+	alloca_offsets       []int
+	alloca_sizes         []int
 	stack_size           int
 	block_offsets        []int
 	pending_jmps         []PendingJmp
@@ -25,15 +25,15 @@ struct PendingJmp {
 
 pub fn Gen.new(m &ssa.Module) &Gen {
 	return &Gen{
-		m:             m
-		macho:         MachOObject.new()
-		stack_map:     map[int]int{}
-		alloca_offset: map[int]int{}
-		alloca_size:   map[int]int{}
-		block_offsets: []int{}
-		pending_jmps:  []PendingJmp{}
-		fn_offsets:    map[string]int{}
-		string_cache:  map[string]int{}
+		m:              m
+		macho:          MachOObject.new()
+		stack_offsets:  []int{}
+		alloca_offsets: []int{}
+		alloca_sizes:   []int{}
+		block_offsets:  []int{}
+		pending_jmps:   []PendingJmp{}
+		fn_offsets:     map[string]int{}
+		string_cache:   map[string]int{}
 	}
 }
 
@@ -48,6 +48,56 @@ pub fn (mut g Gen) gen() {
 pub fn (mut g Gen) write_and_link(output string) {
 	mut l := Linker.new(g.macho)
 	l.link(output, '_main')
+}
+
+fn (mut g Gen) reset_value_slots() {
+	n := g.m.values.len
+	g.stack_offsets = []int{len: n}
+	g.alloca_offsets = []int{len: n}
+	g.alloca_sizes = []int{len: n}
+}
+
+fn (mut g Gen) set_stack_slot(val_id int, off int) {
+	if val_id > 0 && val_id < g.stack_offsets.len {
+		g.stack_offsets[val_id] = off
+	}
+}
+
+fn (g &Gen) stack_slot(val_id int) ?int {
+	if val_id > 0 && val_id < g.stack_offsets.len {
+		off := g.stack_offsets[val_id]
+		if off != 0 {
+			return off
+		}
+	}
+	return none
+}
+
+fn (mut g Gen) set_alloca_slot(val_id int, off int, size int) {
+	if val_id > 0 && val_id < g.alloca_offsets.len {
+		g.alloca_offsets[val_id] = off
+		g.alloca_sizes[val_id] = size
+	}
+}
+
+fn (g &Gen) alloca_slot(val_id int) ?int {
+	if val_id > 0 && val_id < g.alloca_offsets.len {
+		off := g.alloca_offsets[val_id]
+		if off != 0 {
+			return off
+		}
+	}
+	return none
+}
+
+fn (g &Gen) alloca_byte_size(val_id int) ?int {
+	if val_id > 0 && val_id < g.alloca_sizes.len {
+		size := g.alloca_sizes[val_id]
+		if size != 0 {
+			return size
+		}
+	}
+	return none
 }
 
 fn (mut g Gen) gen_pre_pass() {
@@ -97,8 +147,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 		return
 	}
 
-	g.stack_map.clear()
-	g.alloca_offset.clear()
+	g.reset_value_slots()
 	g.pending_jmps.clear()
 
 	n_blks := g.m.blocks.len
@@ -122,7 +171,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 		param_size := g.m.type_size(param_val.typ)
 		alloc_size := if param_size > 8 { (param_size + 7) & ~7 } else { 8 }
 		slot_offset += alloc_size
-		g.stack_map[pid] = -slot_offset
+		g.set_stack_slot(pid, -slot_offset)
 	}
 
 	for blk_id in func.blocks {
@@ -153,8 +202,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 				alloc_size := if elem_size > 0 { (elem_size * count + 7) & ~7 } else { 8 }
 				slot_offset = (slot_offset + 15) & ~0xF
 				slot_offset += alloc_size
-				g.alloca_offset[val_id] = -slot_offset
-				g.alloca_size[val_id] = alloc_size
+				g.set_alloca_slot(val_id, -slot_offset, alloc_size)
 				slot_offset += 8
 			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp
 				&& instr.op != .unreachable {
@@ -167,7 +215,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 					8
 				}
 				slot_offset += alloc_size
-				g.stack_map[val_id] = -slot_offset
+				g.set_stack_slot(val_id, -slot_offset)
 			}
 		}
 	}
@@ -194,14 +242,30 @@ fn (mut g Gen) gen_func(func_idx int) {
 		g.store_entry_arg_to_global(1, 'g_main_argv')
 	}
 
-	// Spill params from registers to stack
+	// Spill params from registers to stack. The AArch64 PCS allocates integer
+	// (x0-x7) and float (d0-d7) argument registers from independent counters.
 	mut reg_idx := 0
+	mut float_reg_idx := 0
 	mut stack_arg_off := 16
 	for _, pid in func.params {
 		param_val := g.m.values[pid]
 		param_size := g.m.type_size(param_val.typ)
+		if g.is_float_type(param_val.typ) {
+			off := g.stack_slot(pid) or { 0 }
+			if float_reg_idx < 8 {
+				// Float arg arrives in dN; move the bit pattern to x8 and spill.
+				g.emit32(asm_fmov_x_d(Reg(8), float_reg_idx))
+				g.emit_store_fp(8, off)
+			} else {
+				g.emit_load_fp(8, stack_arg_off)
+				g.emit_store_fp(8, off)
+				stack_arg_off += 8
+			}
+			float_reg_idx++
+			continue
+		}
 		if g.is_large_struct_type(param_val.typ) {
-			off := g.stack_map[pid]
+			off := g.stack_slot(pid) or { 0 }
 			if reg_idx < 8 {
 				g.emit_copy_ptr_to_fp(reg_idx, off, param_size)
 				reg_idx++
@@ -213,7 +277,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 			continue
 		}
 		n_words := if param_size > 8 { (param_size + 7) / 8 } else { 1 }
-		off := g.stack_map[pid]
+		off := g.stack_slot(pid) or { 0 }
 		if reg_idx + n_words <= 8 {
 			for wi in 0 .. n_words {
 				g.emit_store_fp(reg_idx, off + wi * 8)
@@ -313,7 +377,7 @@ fn (g &Gen) stack_slot_size(ptr_id int) ?int {
 				if slot_size > 0 {
 					return slot_size
 				}
-				return g.alloca_size[cur]
+				return g.alloca_byte_size(cur)
 			}
 			.get_element_ptr {
 				if instr.operands.len < 2 {
@@ -374,7 +438,7 @@ fn (g &Gen) stack_alloca_remaining(ptr_id int) ?int {
 		instr := g.m.instrs[val.index]
 		match instr.op {
 			.alloca {
-				size := g.alloca_size[cur] or { return none }
+				size := g.alloca_byte_size(cur) or { return none }
 				remaining := size - total_offset
 				if remaining > 0 {
 					return remaining
@@ -420,7 +484,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 	match instr.op {
 		.alloca {
-			off := g.alloca_offset[val_id]
+			off := g.alloca_slot(val_id) or { return }
 			g.emit_lea_fp(8, off)
 			g.store_val(8, val_id)
 		}
@@ -441,7 +505,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				src_size := g.m.type_size(src_val.typ)
 				if src_size > 8 && src_val.typ > 0 && src_val.typ < g.m.type_store.types.len
 					&& g.m.type_store.types[src_val.typ].kind == .struct_t {
-					if src_off := g.stack_map[src_id] {
+					if src_off := g.stack_slot(src_id) {
 						ptr_reg := g.load_val(ptr_id, 9)
 						copy_size := g.aggregate_store_size(ptr_id, src_val.typ)
 						n_words := (copy_size + 7) / 8
@@ -482,7 +546,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			} else if ptr_val.kind == .string_literal {
 				g.materialize_string(ptr_id, 8)
 				g.store_val(8, val_id)
-				if off := g.stack_map[val_id] {
+				if off := g.stack_slot(val_id) {
 					g.emit_store_fp(10, off + 8)
 				}
 			} else {
@@ -491,7 +555,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				if result_size > 8 && val.typ > 0 && val.typ < g.m.type_store.types.len {
 					typ := g.m.type_store.types[val.typ]
 					if typ.kind == .struct_t {
-						if off := g.stack_map[val_id] {
+						if off := g.stack_slot(val_id) {
 							if g.is_string_struct_type(val.typ) {
 								copy_size := g.aggregate_load_size(ptr_id, val.typ)
 								if copy_size > 0 {
@@ -541,6 +605,22 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.store_val(8, val_id)
 		}
 		.add, .sub, .mul, .sdiv, .srem, .udiv, .urem, .and_, .or_, .xor, .shl, .ashr, .lshr {
+			// Float-typed arithmetic reaches here only via the builder's unary
+			// minus lowering (`0 - x`), which emits an integer `.sub` over a
+			// float value. Redirect any float-typed arithmetic to the FP path so
+			// the bit pattern is negated/operated on as a real IEEE-754 value.
+			if g.is_float_type(val.typ)
+				&& instr.op in [.add, .sub, .mul, .sdiv, .udiv, .srem, .urem] {
+				fop := match instr.op {
+					.add { ssa.OpCode.fadd }
+					.sub { ssa.OpCode.fsub }
+					.mul { ssa.OpCode.fmul }
+					.sdiv, .udiv { ssa.OpCode.fdiv }
+					else { ssa.OpCode.frem }
+				}
+				g.gen_float_binop(fop, instr.operands[0], instr.operands[1], val_id)
+				return
+			}
 			lhs_reg := g.load_val(instr.operands[0], 8)
 			rhs_reg := g.load_val(instr.operands[1], 9)
 			match instr.op {
@@ -590,10 +670,43 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 			g.store_val(8, val_id)
 		}
+		.fadd, .fsub, .fmul, .fdiv, .frem {
+			g.gen_float_binop(instr.op, instr.operands[0], instr.operands[1], val_id)
+		}
+		.fptosi {
+			g.load_float_operand(instr.operands[0], 0)
+			g.emit32(asm_fcvtzs_x_d(Reg(8), 0))
+			g.store_val(8, val_id)
+		}
+		.fptoui {
+			g.load_float_operand(instr.operands[0], 0)
+			g.emit32(asm_fcvtzu_x_d(Reg(8), 0))
+			g.store_val(8, val_id)
+		}
+		.sitofp {
+			src_reg := g.load_val(instr.operands[0], 8)
+			g.emit32(asm_scvtf_d_x(0, Reg(src_reg)))
+			g.store_float_result(val_id)
+		}
+		.uitofp {
+			src_reg := g.load_val(instr.operands[0], 8)
+			g.emit32(asm_ucvtf_d_x(0, Reg(src_reg)))
+			g.store_float_result(val_id)
+		}
 		.eq, .ne, .lt, .gt, .le, .ge, .ult, .ugt, .ule, .uge {
-			lhs_reg := g.load_val(instr.operands[0], 8)
-			rhs_reg := g.load_val(instr.operands[1], 9)
-			g.emit32(asm_cmp_reg(Reg(lhs_reg), Reg(rhs_reg)))
+			lhs_typ := g.m.values[instr.operands[0]].typ
+			if g.is_float_type(lhs_typ) {
+				// Float comparison: FCMP sets NZCV; the same condition codes used
+				// for signed integers give the expected ordered results (matching
+				// the v2 backend).
+				g.load_float_operand(instr.operands[0], 0)
+				g.load_float_operand(instr.operands[1], 1)
+				g.emit32(asm_fcmp_d(Reg(0), Reg(1)))
+			} else {
+				lhs_reg := g.load_val(instr.operands[0], 8)
+				rhs_reg := g.load_val(instr.operands[1], 9)
+				g.emit32(asm_cmp_reg(Reg(lhs_reg), Reg(rhs_reg)))
+			}
 			match instr.op {
 				.eq { g.emit32(asm_cset_eq(Reg(8))) }
 				.ne { g.emit32(asm_cset_ne(Reg(8))) }
@@ -698,7 +811,18 @@ fn (mut g Gen) gen_instr(val_id int) {
 		}
 		.bitcast {
 			if instr.operands.len > 0 {
-				src_reg := g.load_val(instr.operands[0], 8)
+				src_id := instr.operands[0]
+				src_typ := g.m.values[src_id].typ
+				// The builder lowers f32<->f64 casts as a bitcast. Those need a
+				// real representation conversion, not a bit copy: widen the source
+				// into a `d` register and narrow back per the result type.
+				if g.is_float_type(src_typ) && g.is_float_type(val.typ)
+					&& g.is_f32_type(src_typ) != g.is_f32_type(val.typ) {
+					g.load_float_operand(src_id, 0)
+					g.store_float_result(val_id)
+					return
+				}
+				src_reg := g.load_val(src_id, 8)
 				if src_reg != 8 {
 					g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
 				}
@@ -718,7 +842,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.emit_load_fp(9, g.cur_func_sret_offset)
 				if instr.operands.len > 0 && instr.operands[0] > 0 {
 					ret_id := instr.operands[0]
-					if off := g.stack_map[ret_id] {
+					if off := g.stack_slot(ret_id) {
 						for wi in 0 .. n_words {
 							g.emit_load_fp(8, off + wi * 8)
 							g.emit32(asm_str_imm(Reg(8), Reg(9), u32(wi)))
@@ -742,6 +866,23 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.emit32(asm_ret())
 				return
 			}
+			// Float returns go in d0 (s0 for f32). Load the return value as a
+			// double — load_float_operand widens an f32 source automatically, so
+			// an implicit f32->f64 widening on `return` is handled here — then
+			// narrow to s0 when the function itself returns f32.
+			if g.is_float_type(g.cur_func_ret_type) && instr.operands.len > 0
+				&& instr.operands[0] > 0 {
+				g.load_float_operand(instr.operands[0], 0)
+				if g.is_f32_type(g.cur_func_ret_type) {
+					g.emit32(asm_fcvt_s_d(0, 0))
+				}
+				if g.stack_size > 0 {
+					g.emit_add_sp(g.stack_size)
+				}
+				g.emit32(asm_ldp_fp_lr_post())
+				g.emit32(asm_ret())
+				return
+			}
 			if instr.operands.len > 0 && instr.operands[0] > 0 {
 				ret_id := instr.operands[0]
 				ret_val := g.m.values[ret_id]
@@ -752,7 +893,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 					ret_size := g.m.type_size(ret_val.typ)
 					if ret_size > 8 && ret_val.typ > 0 && ret_val.typ < g.m.type_store.types.len
 						&& g.m.type_store.types[ret_val.typ].kind == .struct_t {
-						if off := g.stack_map[ret_id] {
+						if off := g.stack_slot(ret_id) {
 							if g.is_string_struct_type(ret_val.typ) {
 								g.emit_load_string_regs_from_fp(off, 0, 1, ret_val.typ)
 							} else {
@@ -835,6 +976,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 	}
 
 	mut arg_reg := 0
+	mut float_reg := 0
 	mut stack_off := 0
 	for ai in 1 .. instr.operands.len {
 		arg_id := instr.operands[ai]
@@ -850,6 +992,18 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 				g.emit_store_sp(8, stack_off)
 				g.emit_store_sp(10, stack_off + 8)
 				stack_off += 16
+			}
+		} else if g.is_float_type(arg_val.typ) {
+			// Float args go in d0-d7 (separate from x0-x7). Move the bit pattern
+			// into an x register then fmov into the float arg register.
+			if float_reg < 8 {
+				g.load_float_bits_to_reg(arg_id, 9)
+				g.emit32(asm_fmov_d_x(float_reg, Reg(9)))
+				float_reg++
+			} else {
+				g.load_float_bits_to_reg(arg_id, 8)
+				g.emit_store_sp(8, stack_off)
+				stack_off += 8
 			}
 		} else {
 			arg_type_id := arg_val.typ
@@ -874,7 +1028,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 					}
 					if g.is_string_struct_type(arg_type_id) {
 						if arg_reg + 2 <= 8 {
-							if off := g.stack_map[arg_id] {
+							if off := g.stack_slot(arg_id) {
 								g.emit_load_string_regs_from_fp(off, arg_reg, arg_reg + 1,
 									arg_type_id)
 							} else {
@@ -886,7 +1040,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 							}
 							arg_reg += 2
 						} else {
-							if off := g.stack_map[arg_id] {
+							if off := g.stack_slot(arg_id) {
 								g.emit_load_string_regs_from_fp(off, 8, 10, arg_type_id)
 								g.emit_store_sp(8, stack_off)
 								g.emit_store_sp(10, stack_off + 8)
@@ -902,7 +1056,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 					}
 					n_words := (arg_size + 7) / 8
 					if arg_reg + n_words <= 8 {
-						if off := g.stack_map[arg_id] {
+						if off := g.stack_slot(arg_id) {
 							for wi in 0 .. n_words {
 								g.emit_load_fp(arg_reg + wi, off + wi * 8)
 							}
@@ -914,7 +1068,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 						}
 						arg_reg += n_words
 					} else {
-						if off := g.stack_map[arg_id] {
+						if off := g.stack_slot(arg_id) {
 							for wi in 0 .. n_words {
 								g.emit_load_fp(8, off + wi * 8)
 								g.emit_store_sp(8, stack_off + wi * 8)
@@ -932,7 +1086,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 			if arg_val.kind == .instruction {
 				arg_instr := g.m.instrs[arg_val.index]
 				if arg_instr.op == .alloca {
-					if alloca_off := g.alloca_offset[arg_id] {
+					if alloca_off := g.alloca_slot(arg_id) {
 						if arg_reg < 8 {
 							g.emit_lea_fp(arg_reg, alloca_off)
 							arg_reg += 1
@@ -961,7 +1115,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 	}
 
 	if ret_indirect {
-		if off := g.stack_map[val_id] {
+		if off := g.stack_slot(val_id) {
 			g.emit_lea_fp(8, off)
 		}
 	}
@@ -994,7 +1148,7 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		if ret_size > 8 && instr.typ > 0 && instr.typ < g.m.type_store.types.len {
 			typ := g.m.type_store.types[instr.typ]
 			if typ.kind == .struct_t {
-				if off := g.stack_map[val_id] {
+				if off := g.stack_slot(val_id) {
 					if g.is_string_struct_type(instr.typ) {
 						g.emit_store_fp(0, off)
 						g.emit_store_fp(1, off + 8)
@@ -1010,12 +1164,46 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 				return
 			}
 		}
+		// Float results are returned in d0: move the bit pattern into x0.
+		if g.is_float_type(instr.typ) || g.call_returns_float(fn_ref) {
+			g.emit32(asm_fmov_x_d(Reg(0), 0))
+		}
 		g.store_val(0, val_id)
 	}
 }
 
+fn (g &Gen) call_returns_float(fn_ref ssa.Value) bool {
+	if fn_ref.kind == .func_ref && fn_ref.index >= 0 && fn_ref.index < g.m.funcs.len {
+		return g.is_float_type(g.m.funcs[fn_ref.index].typ)
+	}
+	return false
+}
+
+// load_float_bits_to_reg loads the raw IEEE-754 bit pattern of a float value
+// into integer register `reg` (handling float constants, which `load_val`
+// cannot parse).
+fn (mut g Gen) load_float_bits_to_reg(val_id int, reg int) {
+	if val_id > 0 && val_id < g.m.values.len {
+		val := g.m.values[val_id]
+		if val.kind == .constant {
+			if g.is_f32_type(val.typ) {
+				f_val := f32(val.name.f64())
+				bits := *unsafe { &u32(&f_val) }
+				g.emit_mov_imm(reg, i64(bits))
+			} else {
+				f_val := val.name.f64()
+				bits := *unsafe { &u64(&f_val) }
+				g.emit_mov_imm(reg, i64(bits))
+			}
+			return
+		}
+	}
+	g.load_val(val_id, reg)
+}
+
 fn (g &Gen) call_stack_arg_size(instr ssa.Instruction) int {
 	mut arg_reg := 0
+	mut float_reg := 0
 	mut stack_words := 0
 	for ai in 1 .. instr.operands.len {
 		arg_id := instr.operands[ai]
@@ -1023,6 +1211,14 @@ fn (g &Gen) call_stack_arg_size(instr ssa.Instruction) int {
 			continue
 		}
 		arg_val := g.m.values[arg_id]
+		if g.is_float_type(arg_val.typ) {
+			if float_reg < 8 {
+				float_reg++
+			} else {
+				stack_words += 1
+			}
+			continue
+		}
 		mut n_words := 1
 		if arg_val.kind == .string_literal {
 			n_words = 2
@@ -1058,18 +1254,18 @@ fn (mut g Gen) emit_value_address(val_id int, reg int) bool {
 		.instruction {
 			instr := g.m.instrs[val.index]
 			if instr.op == .alloca {
-				if off := g.alloca_offset[val_id] {
+				if off := g.alloca_slot(val_id) {
 					g.emit_lea_fp(reg, off)
 					return true
 				}
 			}
-			if off := g.stack_map[val_id] {
+			if off := g.stack_slot(val_id) {
 				g.emit_lea_fp(reg, off)
 				return true
 			}
 		}
 		.argument {
-			if off := g.stack_map[val_id] {
+			if off := g.stack_slot(val_id) {
 				g.emit_lea_fp(reg, off)
 				return true
 			}
@@ -1099,6 +1295,12 @@ fn (mut g Gen) load_val(val_id int, reg int) int {
 	val := g.m.values[val_id]
 	match val.kind {
 		.constant {
+			// A float constant's register value is its IEEE-754 bit pattern, not
+			// the integer parse of its textual name.
+			if g.is_float_type(val.typ) {
+				g.load_float_bits_to_reg(val_id, reg)
+				return reg
+			}
 			n := parse_arm64_int(val.name)
 			g.emit_mov_imm(reg, n)
 			return reg
@@ -1118,12 +1320,12 @@ fn (mut g Gen) load_val(val_id int, reg int) int {
 		.instruction {
 			instr := g.m.instrs[val.index]
 			if instr.op == .alloca {
-				if off := g.alloca_offset[val_id] {
+				if off := g.alloca_slot(val_id) {
 					g.emit_lea_fp(reg, off)
 					return reg
 				}
 			}
-			if off := g.stack_map[val_id] {
+			if off := g.stack_slot(val_id) {
 				g.emit_load_fp(reg, off)
 				return reg
 			}
@@ -1131,7 +1333,7 @@ fn (mut g Gen) load_val(val_id int, reg int) int {
 			return reg
 		}
 		.argument {
-			if off := g.stack_map[val_id] {
+			if off := g.stack_slot(val_id) {
 				g.emit_load_fp(reg, off)
 				return reg
 			}
@@ -1146,7 +1348,7 @@ fn (mut g Gen) load_val(val_id int, reg int) int {
 }
 
 fn (mut g Gen) store_val(reg int, val_id int) {
-	if off := g.stack_map[val_id] {
+	if off := g.stack_slot(val_id) {
 		g.emit_store_fp(reg, off)
 	}
 }
@@ -1263,7 +1465,7 @@ fn (mut g Gen) emit_phi_copy_value(src_id int, dst_id int) {
 	}
 	dst := g.m.values[dst_id]
 	if dst.typ > 0 && dst.typ < g.m.type_store.types.len && g.is_aggregate_type(dst.typ) {
-		dst_off := g.stack_map[dst_id] or { return }
+		dst_off := g.stack_slot(dst_id) or { return }
 		size := g.m.type_size(dst.typ)
 		n_words := (size + 7) / 8
 		src := g.m.values[src_id]
@@ -1275,7 +1477,7 @@ fn (mut g Gen) emit_phi_copy_value(src_id int, dst_id int) {
 			}
 			return
 		}
-		if src_off := g.stack_map[src_id] {
+		if src_off := g.stack_slot(src_id) {
 			for wi in 0 .. n_words {
 				g.emit_load_fp(8, src_off + wi * 8)
 				g.emit_store_fp(8, dst_off + wi * 8)
@@ -1499,6 +1701,104 @@ fn (g &Gen) is_signed_int_type(typ_id ssa.TypeID) bool {
 	}
 	typ := g.m.type_store.types[typ_id]
 	return typ.kind == .int_t && !typ.is_unsigned
+}
+
+fn (g &Gen) is_float_type(typ_id ssa.TypeID) bool {
+	if typ_id <= 0 || typ_id >= g.m.type_store.types.len {
+		return false
+	}
+	return g.m.type_store.types[typ_id].kind == .float_t
+}
+
+fn (g &Gen) is_f32_type(typ_id ssa.TypeID) bool {
+	if typ_id <= 0 || typ_id >= g.m.type_store.types.len {
+		return false
+	}
+	typ := g.m.type_store.types[typ_id]
+	return typ.kind == .float_t && typ.width == 32
+}
+
+// ==================== Floating point ====================
+//
+// Float values live as their raw IEEE-754 bit pattern in ordinary integer
+// stack slots / x-registers, exactly like the v2 backend. They are only moved
+// into the scalar SIMD `d` registers transiently for arithmetic, comparison and
+// conversion. An f32 is stored as its 32-bit pattern; it is widened to f64 in
+// the `d` register for computation and narrowed back before storing.
+
+// load_float_operand materializes value `val_id` into the scalar float register
+// `dreg` (as a double), using x8 as a scratch integer register.
+fn (mut g Gen) load_float_operand(val_id int, dreg int) {
+	if val_id <= 0 || val_id >= g.m.values.len {
+		g.emit_mov_imm(8, 0)
+		g.emit32(asm_fmov_d_x(dreg, Reg(8)))
+		return
+	}
+	val := g.m.values[val_id]
+	is_f32 := g.is_f32_type(val.typ)
+	if val.kind == .constant {
+		if is_f32 {
+			f_val := f32(val.name.f64())
+			bits := *unsafe { &u32(&f_val) }
+			g.emit_mov_imm(8, i64(bits))
+			g.emit32(asm_fmov_s_w(dreg, Reg(8)))
+			g.emit32(asm_fcvt_d_s(dreg, dreg))
+		} else {
+			f_val := val.name.f64()
+			bits := *unsafe { &u64(&f_val) }
+			g.emit_mov_imm(8, i64(bits))
+			g.emit32(asm_fmov_d_x(dreg, Reg(8)))
+		}
+	} else {
+		reg := g.load_val(val_id, 8)
+		if is_f32 {
+			g.emit32(asm_fmov_s_w(dreg, Reg(reg)))
+			g.emit32(asm_fcvt_d_s(dreg, dreg))
+		} else {
+			g.emit32(asm_fmov_d_x(dreg, Reg(reg)))
+		}
+	}
+}
+
+// store_float_result writes the double in d0 back to `val_id`'s slot as the
+// appropriate bit pattern (narrowing to f32 first when the result is an f32).
+fn (mut g Gen) store_float_result(val_id int) {
+	if g.is_f32_type(g.m.values[val_id].typ) {
+		g.emit32(asm_fcvt_s_d(0, 0))
+		g.emit32(asm_fmov_w_s(Reg(8), 0))
+	} else {
+		g.emit32(asm_fmov_x_d(Reg(8), 0))
+	}
+	g.store_val(8, val_id)
+}
+
+// gen_float_binop emits a binary float op with both operands loaded into d0/d1
+// and the result left in d0, then stored to `val_id`.
+fn (mut g Gen) gen_float_binop(fop ssa.OpCode, lhs_id int, rhs_id int, val_id int) {
+	g.load_float_operand(lhs_id, 0) // d0
+	g.load_float_operand(rhs_id, 1) // d1
+	match fop {
+		.fadd {
+			g.emit32(asm_fadd_d0_d0_d1())
+		}
+		.fsub {
+			g.emit32(asm_fsub_d0_d0_d1())
+		}
+		.fmul {
+			g.emit32(asm_fmul_d0_d0_d1())
+		}
+		.fdiv {
+			g.emit32(asm_fdiv_d0_d0_d1())
+		}
+		.frem {
+			// No single frem instruction: d0 = d0 - trunc(d0/d1) * d1
+			g.emit32(asm_fdiv_d2_d0_d1())
+			g.emit32(asm_frintz_d2())
+			g.emit32(asm_fmsub_d0_d2_d1_d0())
+		}
+		else {}
+	}
+	g.store_float_result(val_id)
 }
 
 fn (mut g Gen) emit_sub_sp(size int) {

@@ -42,6 +42,9 @@ pub fn optimize_with_options(mut m ssa.Module, opts OptimizeOptions) {
 	branch_fold(mut m)
 	rebuild_use_lists(mut m)
 	build_cfg(mut m)
+	// Branch folding can drop a phi block's predecessor edge; keep phis consistent.
+	prune_phi_operands(mut m)
+	rebuild_use_lists(mut m)
 
 	if opts.mem2reg {
 		// Normalize the CFG *before* SSA construction so that every phi
@@ -67,28 +70,34 @@ pub fn optimize_with_options(mut m ssa.Module, opts OptimizeOptions) {
 		rebuild_use_lists(mut m)
 		build_cfg(mut m)
 		verify_pipeline_checkpoint(m, opts, 'simplify_phi')
-
-		// Phi elimination is only needed for backends that cannot resolve phis
-		// themselves (the arm64 backend lowers phis via edge copies natively).
-		if opts.eliminate_phis {
-			eliminate_phi_nodes(mut m)
-			rebuild_use_lists(mut m)
-			build_cfg(mut m)
-			verify_pipeline_checkpoint(m, opts, 'eliminate_phi')
-		}
-
-		dead_code_elimination(mut m)
-		rebuild_use_lists(mut m)
-		build_cfg(mut m)
-	} else {
-		dead_code_elimination(mut m)
-		rebuild_use_lists(mut m)
-		build_cfg(mut m)
-		remove_unreachable_blocks(mut m)
-		merge_blocks(mut m)
-		rebuild_use_lists(mut m)
-		build_cfg(mut m)
 	}
+
+	// Phi elimination lowers phis to assign copies for backends that cannot
+	// resolve phis natively. Runs whenever requested (input phis from the builder
+	// or a worker merge may exist even without mem2reg).
+	if opts.eliminate_phis {
+		eliminate_phi_nodes(mut m)
+		rebuild_use_lists(mut m)
+		build_cfg(mut m)
+		verify_pipeline_checkpoint(m, opts, 'eliminate_phi')
+	}
+
+	dead_code_elimination(mut m)
+	rebuild_use_lists(mut m)
+	build_cfg(mut m)
+
+	remove_unreachable_blocks(mut m)
+	if !opts.mem2reg {
+		// Without SSA construction, block-merging is phi-aware and safe to run.
+		merge_blocks(mut m)
+	}
+	rebuild_use_lists(mut m)
+	build_cfg(mut m)
+
+	// Final phi-consistency pass: any phi still present must match the final CFG.
+	prune_phi_operands(mut m)
+	rebuild_use_lists(mut m)
+	build_cfg(mut m)
 
 	verify_ssa(m, 'optimization')
 	verify_pipeline_checkpoint(m, opts, 'final')

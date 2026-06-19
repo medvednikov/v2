@@ -1681,6 +1681,24 @@ fn (mut tc TypeChecker) resolve_call_info(_id flat.NodeId, node flat.Node) ?Call
 						params_known: true
 					}
 				}
+				'repeat' {
+					return CallInfo{
+						name:         'array.repeat_to_depth'
+						params:       tarr2(base_type, Type(int_))
+						return_type:  base_type
+						has_receiver: true
+						params_known: true
+					}
+				}
+				'repeat_to_depth' {
+					return CallInfo{
+						name:         'array.repeat_to_depth'
+						params:       tarr3(base_type, Type(int_), Type(int_))
+						return_type:  base_type
+						has_receiver: true
+						params_known: true
+					}
+				}
 				'delete' {
 					return CallInfo{
 						name:         ''
@@ -1782,7 +1800,17 @@ fn (mut tc TypeChecker) check_call_arg_types(id flat.NodeId, node flat.Node, inf
 		}
 		return
 	}
-	actual_count := node.children_count - 1 + if info.has_receiver { 1 } else { 0 }
+	// `@[params]` struct args: trailing `key: value` args collapse into one struct argument.
+	// field_init args only appear for this syntax, so they are a reliable signal.
+	mut field_init_args := 0
+	for i in 1 .. node.children_count {
+		if tc.a.child_node(&node, i).kind == .field_init {
+			field_init_args++
+		}
+	}
+	collapsed := if field_init_args > 0 { 1 } else { 0 }
+	recv_extra := if info.has_receiver { 1 } else { 0 }
+	actual_count := node.children_count - 1 - field_init_args + collapsed + recv_extra
 	min_count := if info.is_variadic && info.params.len > 0 {
 		info.params.len - 1
 	} else {
@@ -1812,6 +1840,10 @@ fn (mut tc TypeChecker) check_call_arg_types(id flat.NodeId, node flat.Node, inf
 	for i in 1 .. node.children_count {
 		arg_id := tc.call_arg_value(tc.a.child(&node, i))
 		tc.check_node(arg_id)
+		// field_init args are fields of the collapsed `@[params]` struct, not positional params
+		if tc.a.child_node(&node, i).kind == .field_init {
+			continue
+		}
 		param_idx := if info.has_receiver { i } else { i - 1 }
 		if param_idx >= info.params.len {
 			if info.is_variadic && info.params.len > 0 {
@@ -3799,6 +3831,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					}
 					if fn_node.value == 'contains' {
 						return Type(bool_)
+					}
+					if fn_node.value == 'repeat' || fn_node.value == 'repeat_to_depth' {
+						return base_type
 					}
 					if fn_node.value == 'index' {
 						return Type(int_)

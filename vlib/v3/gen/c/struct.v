@@ -159,6 +159,62 @@ fn (mut g FlatGen) gen_default_value_for_type(typ types.Type) {
 	g.write('(${ct}){0}')
 }
 
+// gen_params_struct_arg emits a struct literal for a `@[params]` argument passed as
+// trailing `key: value` call args (e.g. `atof64(s, allow_extra_chars: true)`).
+// `node` is the call node; field_init children are read from `field_start` onward.
+fn (mut g FlatGen) gen_params_struct_arg(typ types.Type, node flat.Node, field_start int) {
+	raw_typ := typ
+	if typ is types.Struct {
+		ct := g.tc.c_type(raw_typ)
+		g.write('(${ct}){')
+		mut set_fields := map[string]bool{}
+		mut has_field := false
+		for i in field_start .. node.children_count {
+			field := g.a.child_node(&node, i)
+			if field.kind != .field_init || field.children_count == 0 {
+				continue
+			}
+			if has_field {
+				g.write(', ')
+			}
+			g.write('.${c_name(field.value)} = ')
+			g.gen_expr(g.a.child(field, 0))
+			set_fields[field.value] = true
+			has_field = true
+		}
+		mut sname := g.tc.qualify_name(typ.name)
+		if typ.name in g.tc.structs {
+			sname = typ.name
+		}
+		has_field = g.gen_struct_default_fields(typ.name, mut set_fields, has_field)
+		if sname in g.tc.structs {
+			for f in g.tc.structs[sname] {
+				if f.name in set_fields {
+					continue
+				}
+				if f.typ is types.Map {
+					if has_field {
+						g.write(', ')
+					}
+					g.write('.${c_name(f.name)} = ')
+					g.write_new_map(f.typ.key_type, f.typ.value_type)
+					has_field = true
+				} else if f.typ is types.Array {
+					c_elem := g.tc.c_type(f.typ.elem_type)
+					if has_field {
+						g.write(', ')
+					}
+					g.write('.${c_name(f.name)} = array_new(sizeof(${c_elem}), 0, 0)')
+					has_field = true
+				}
+			}
+		}
+		g.write('}')
+		return
+	}
+	g.gen_default_value_for_type(typ)
+}
+
 fn (g &FlatGen) is_scalar_zero_init_type(type_name string, c_type string) bool {
 	if type_name in g.tc.structs || g.tc.qualify_name(type_name) in g.tc.structs {
 		return false

@@ -747,6 +747,16 @@ fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 				arg_idx := if is_method { i } else { i - 1 }
 				arg_id := g.a.child(&node, i)
 				arg_node := g.a.nodes[int(arg_id)]
+				if arg_node.kind == .field_init {
+					// `@[params]` struct argument: trailing `key: value` args form a struct literal
+					ptyp := if arg_idx < param_types.len {
+						param_types[arg_idx]
+					} else {
+						types.Type(types.void_)
+					}
+					g.gen_params_struct_arg(ptyp, node, i)
+					break
+				}
 				if !is_method && actual_fn == 'array_push_many' && arg_idx == 1
 					&& arg_node.kind == .array_literal {
 					elem_type := if arg_node.children_count > 0 {
@@ -1037,6 +1047,16 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 		arg_idx := i - start
 		arg_id := g.a.child(&node, i)
 		arg_node := g.a.nodes[int(arg_id)]
+		if arg_node.kind == .field_init {
+			// `@[params]` struct argument: trailing `key: value` args form a struct literal
+			ptyp := if arg_idx < param_types.len {
+				param_types[arg_idx]
+			} else {
+				types.Type(types.void_)
+			}
+			g.gen_params_struct_arg(ptyp, node, i)
+			break
+		}
 		if fn_name == 'array_push_many' && arg_idx == 1 && arg_node.kind == .array_literal {
 			elem_type := if arg_node.children_count > 0 {
 				g.tc.resolve_type(g.a.child(&arg_node, 0))

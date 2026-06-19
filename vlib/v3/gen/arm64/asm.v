@@ -569,9 +569,9 @@ fn asm_frintz_d2() u32 {
 	return 0x1E65C042
 }
 
-// fnmsub d0, d2, d1, d0 (d0 = d0 - d2*d1)
-fn asm_fnmsub_d0_d2_d1_d0() u32 {
-	return 0x1F618000
+// fmsub d0, d2, d1, d0 (d0 = d0 - d2*d1) — used for fmod: a - trunc(a/b)*b
+fn asm_fmsub_d0_d2_d1_d0() u32 {
+	return 0x1F418040
 }
 
 // === Float Conversions ===

@@ -179,6 +179,13 @@ fn print_str(s string) {
 	C.puts(s.str)
 }
 
+fn repeat(c u8, n int) int {
+	if c == `x` && n == 3 {
+		return 8
+	}
+	return 0
+}
+
 fn next_in_value() int {
 	g_count = g_count + 1
 	return g_count
@@ -1366,6 +1373,21 @@ fn array_pop_score117() int {
 	return last117 * 10 + values117.len
 }
 
+fn array_repeat_score117() int {
+	base117 := []int{len: 2, init: 5}
+	values117 := base117.repeat(3)
+	if values117.len == 6 {
+		return 6
+	}
+	return 0
+}
+
+fn discard_assignment_side_effect_score117() int {
+	g_count = 0
+	_ = next_in_value()
+	return g_count
+}
+
 fn (t MetaType117) recursive_sum_method_score117() int {
 	if t is MetaPointer117 {
 		if meta_name117(t.base) == 'core' {
@@ -1382,6 +1404,15 @@ fn large_sumtype_method_receiver_score117() int {
 		})
 	})
 	return typ117.recursive_sum_method_score117()
+}
+
+fn qualified_import_same_short_score117() int {
+	mut score117 := repeat(`x`, 3)
+	repeated117 := strings.repeat(`x`, 3)
+	if repeated117.len == 3 && repeated117 == 'xxx' {
+		score117 += 10
+	}
+	return score117
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5650,6 +5681,15 @@ fn main() {
 
 	// 117.31 Large recursive sum-type method receivers keep later variant payloads.
 	print_int(large_sumtype_method_receiver_score117()) // 41
+
+	// 117.32 Qualified imported calls do not fall back to same-short local functions.
+	print_int(qualified_import_same_short_score117()) // 18
+
+	// 117.33 Dynamic-array repeat preserves the repeated array length.
+	print_int(array_repeat_score117()) // 6
+
+	// 117.34 Discard assignment still evaluates RHS side effects.
+	print_int(discard_assignment_side_effect_score117()) // 1
 
 	print_str('arm64 self-host regression coverage: ok')
 

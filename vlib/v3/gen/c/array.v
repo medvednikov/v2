@@ -155,6 +155,22 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.gen_expr(g.a.child(&node, 2))
 			g.write(')')
 		}
+		'repeat' {
+			g.write('array__repeat_to_depth(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write(', 0)')
+		}
+		'repeat_to_depth' {
+			g.write('array__repeat_to_depth(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 1))
+			g.write(', ')
+			g.gen_expr(g.a.child(&node, 2))
+			g.write(')')
+		}
 		'trim' {
 			g.gen_expr(base_id)
 			g.write('${dot}len = ')
