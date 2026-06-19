@@ -969,6 +969,23 @@ struct TypeStore117 {
 	types []FieldBag117
 }
 
+struct Symbol117 {
+	sect int
+mut:
+	value int
+}
+
+struct SymbolStore117 {
+mut:
+	symbols []Symbol117
+}
+
+struct ConstHolder117 {
+	value int
+}
+
+const zero_const_holder117 = ConstHolder117{}
+
 struct CastNamed117 {
 	name string
 }
@@ -1162,6 +1179,20 @@ fn indexed_struct_field117(store TypeStore117, idx int) int {
 		return bag.values[0]
 	}
 	return -1
+}
+
+fn const_holder_value117() int {
+	holder := &zero_const_holder117
+	return holder.value
+}
+
+fn adjust_symbol_values117(mut store SymbolStore117, base int) int {
+	for i in 0 .. store.symbols.len {
+		if store.symbols[i].sect == 2 {
+			store.symbols[i].value += base
+		}
+	}
+	return store.symbols[0].value + store.symbols[1].value
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5355,6 +5386,28 @@ fn main() {
 	// 117.17 Option-returning match branches return none explicitly.
 	print_int(optional_match_arith117('div', 8, 2) or { -1 }) // 4
 	print_int(optional_match_arith117('div', 8, 0) or { -5 }) // -5
+
+	// 117.18 Address-of zero-valued struct constants returns a stable pointer.
+	print_int(const_holder_value117()) // 0
+
+	// 117.19 Range membership lowers without leaving raw range expressions in SSA.
+	if 5 in 3..7 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 117.20 Compound assignment mutates fields through dynamic-array indexes.
+	mut sym_store117 := SymbolStore117{
+		symbols: [Symbol117{
+			sect:  2
+			value: 5
+		}, Symbol117{
+			sect:  3
+			value: 11
+		}]
+	}
+	print_int(adjust_symbol_values117(mut sym_store117, 100)) // 116
 
 	print_str('arm64 self-host regression coverage: ok')
 

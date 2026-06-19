@@ -172,14 +172,6 @@ fn (mut g Gen) gen_func(func_idx int) {
 		}
 	}
 
-	// Allocate stack slots for string literals used by this function
-	for val in g.m.values {
-		if val.kind == .string_literal && val.id !in g.stack_map {
-			slot_offset += 16
-			g.stack_map[val.id] = -slot_offset
-		}
-	}
-
 	g.stack_size = (slot_offset + 15) & ~0xF
 
 	fn_start := g.macho.text_data.len

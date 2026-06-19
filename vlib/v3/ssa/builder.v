@@ -5366,6 +5366,9 @@ fn (mut b Builder) build_expr(id flat.NodeId) ValueID {
 		.in_expr {
 			return b.build_in_expr(node)
 		}
+		.range {
+			return b.build_range_expr(node)
+		}
 		.block {
 			return b.build_block_expr(node)
 		}
@@ -5376,12 +5379,28 @@ fn (mut b Builder) build_expr(id flat.NodeId) ValueID {
 	}
 }
 
+fn (mut b Builder) build_range_expr(node flat.Node) ValueID {
+	if node.children_count > 0 {
+		return b.build_expr(b.a.child(&node, 0))
+	}
+	return b.m.get_or_add_const(b.i64_type, '0')
+}
+
 fn (mut b Builder) build_in_expr(node flat.Node) ValueID {
 	if node.children_count < 2 {
 		return b.m.get_or_add_const(b.i1_type, '0')
 	}
 	lhs_id := b.a.child(&node, 0)
 	rhs_id := b.a.child(&node, 1)
+	rhs := b.a.nodes[int(rhs_id)]
+	if rhs.kind == .range && rhs.children_count >= 2 {
+		lhs := b.build_expr(lhs_id)
+		low := b.build_expr(b.a.child(&rhs, 0))
+		high := b.build_expr(b.a.child(&rhs, 1))
+		ge_low := b.emit2(.ge, b.i1_type, lhs, low)
+		lt_high := b.emit2(.lt, b.i1_type, lhs, high)
+		return b.emit2(.and_, b.i1_type, ge_low, lt_high)
+	}
 	map_type_name := b.expr_type_name_for_map(rhs_id)
 	key_type_name, _ := map_type_parts(map_type_name)
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
@@ -6604,6 +6623,11 @@ fn (mut b Builder) build_prefix(node flat.Node, _id flat.NodeId) ValueID {
 		if addr := b.vars[child.value] {
 			return addr
 		}
+		if expr_id := b.lookup_const_expr(child.value) {
+			if addr := b.const_global_addr(child.value, expr_id) {
+				return addr
+			}
+		}
 	}
 	if node.op == .amp && child.kind == .selector {
 		return b.build_selector_addr(child)
@@ -6635,6 +6659,32 @@ fn (mut b Builder) build_prefix(node flat.Node, _id flat.NodeId) ValueID {
 			return val
 		}
 	}
+}
+
+fn (mut b Builder) const_global_addr(name string, expr_id flat.NodeId) ?ValueID {
+	if int(expr_id) < 0 || int(expr_id) >= b.a.nodes.len {
+		return none
+	}
+	expr := b.a.nodes[int(expr_id)]
+	if expr.kind != .struct_init || expr.children_count != 0 {
+		return none
+	}
+	typ_id, _ := b.struct_literal_type(expr.value)
+	if typ_id <= 0 {
+		return none
+	}
+	qualified_name := if name.contains('.') || b.cur_module.len == 0 || b.cur_module == 'main' {
+		name
+	} else {
+		b.cur_module + '.' + name
+	}
+	global_name := '__const_' + ssa_c_name(qualified_name)
+	for v in b.m.values {
+		if v.kind == .global && v.name == global_name {
+			return v.id
+		}
+	}
+	return b.m.add_global(global_name, typ_id)
 }
 
 fn (mut b Builder) build_postfix(node flat.Node) ValueID {
@@ -6709,6 +6759,10 @@ fn (mut b Builder) build_selector_addr(node flat.Node) ValueID {
 	}
 	if base.kind == .selector {
 		base_addr := b.build_selector_addr(base)
+		return b.get_field_ptr(base_addr, node.value)
+	}
+	if base.kind == .index {
+		base_addr := b.build_index_addr(base_id, base)
 		return b.get_field_ptr(base_addr, node.value)
 	}
 	base_val := b.build_expr(base_id)
