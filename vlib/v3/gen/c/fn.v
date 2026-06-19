@@ -135,10 +135,10 @@ fn (mut g FlatGen) gen_fn_in_module(node flat.Node, module_name string) {
 	g.tc.push_scope()
 	g.defers = []flat.NodeId{}
 	g.set_cur_fn_ret(types.Type(types.void_))
-	params := g.fn_params_list(node)
-	for param_id in params {
+	for i in 0 .. node.children_count {
+		param_id := g.a.child(&node, i)
 		p := g.a.node(param_id)
-		if p.value.len > 0 {
+		if p.kind == .param && p.value.len > 0 {
 			param_type := g.tc.parse_type(p.typ)
 			g.tc.cur_scope.insert(p.value, param_type)
 		}
@@ -160,14 +160,17 @@ fn (mut g FlatGen) gen_fn_in_module(node flat.Node, module_name string) {
 		g.write(' ')
 		g.write(qualified_fn_name_in_module(module_name, node.value))
 		g.write('(')
-		g.write_fn_params(params)
+		g.write_fn_node_params(node)
 		g.writeln(') {')
 	}
 	g.indent++
 
-	body := g.fn_body_ids(node)
-	for id in body {
-		g.gen_node(id)
+	for i in 0 .. node.children_count {
+		id := g.a.child(&node, i)
+		child := g.a.node(id)
+		if child.kind != .param {
+			g.gen_node(id)
+		}
 	}
 	g.gen_defers()
 	if node.value == 'main' {
@@ -207,28 +210,6 @@ fn (mut g FlatGen) gen_defers() {
 			g.gen_node(g.a.child(&defer_body, j))
 		}
 	}
-}
-
-fn (g &FlatGen) fn_params_list(node flat.Node) []flat.NodeId {
-	mut params := []flat.NodeId{}
-	for i in 0 .. node.children_count {
-		child := g.a.child_node(&node, i)
-		if child.kind == .param {
-			params << g.a.child(&node, i)
-		}
-	}
-	return params
-}
-
-fn (g &FlatGen) fn_body_ids(node flat.Node) []flat.NodeId {
-	mut ids := []flat.NodeId{}
-	for i in 0 .. node.children_count {
-		child := g.a.child_node(&node, i)
-		if child.kind != .param {
-			ids << g.a.child(&node, i)
-		}
-	}
-	return ids
 }
 
 fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
@@ -1324,42 +1305,37 @@ fn (mut g FlatGen) forward_decls() {
 			if g.has_generic_params(node) {
 				continue
 			}
-			params := g.fn_params_list(node)
 			g.tc.cur_module = cur_module
 			ret_type := g.tc.parse_type(node.typ)
 			g.write(g.optional_type_name(ret_type))
 			g.write(' ')
 			g.write(qfn)
 			g.write('(')
-			g.write_fn_params(params)
+			g.write_fn_node_params(node)
 			g.writeln(');')
 		}
 	}
 	g.writeln('')
 }
 
-fn (g &FlatGen) has_c_struct_type(node flat.Node, params []flat.NodeId) bool {
-	ret := g.tc.parse_type(node.typ)
-	if ret is types.Struct && ret.name.starts_with('C.') {
-		return true
-	}
-	for param_id in params {
-		p := g.a.node(param_id)
-		pt := g.tc.parse_type(p.typ)
-		if pt is types.Struct && pt.name.starts_with('C.') {
-			return true
+fn (mut g FlatGen) write_fn_node_params(node flat.Node) {
+	mut params_len := 0
+	for i in 0 .. node.children_count {
+		if g.a.child_node(&node, i).kind == .param {
+			params_len++
 		}
 	}
-	return false
-}
-
-fn (mut g FlatGen) write_fn_params(params []flat.NodeId) {
-	if params.len == 0 {
+	if params_len == 0 {
 		g.write('void')
 		return
 	}
-	for i, param_id in params {
+	mut written := 0
+	for i in 0 .. node.children_count {
+		param_id := g.a.child(&node, i)
 		p := g.a.node(param_id)
+		if p.kind != .param {
+			continue
+		}
 		pt := g.tc.parse_type(p.typ)
 		ct := if pt is types.OptionType || pt is types.ResultType {
 			g.optional_type_name(pt)
@@ -1375,7 +1351,8 @@ fn (mut g FlatGen) write_fn_params(params []flat.NodeId) {
 			g.write(' ')
 			g.write(c_name(p.value))
 		}
-		if i < params.len - 1 {
+		written++
+		if written < params_len {
 			g.write(', ')
 		}
 	}

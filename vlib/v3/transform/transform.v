@@ -280,8 +280,9 @@ fn (mut t Transformer) transform_fn_body(fn_idx int) {
 			t.set_var_type(child.value, t.normalize_type_alias(child.typ))
 		}
 	}
-	// Collect body statement ids (non-param children)
-	mut body_ids := []flat.NodeId{cap: fn_node.children_count}
+	// Transform non-param children directly, avoiding a temporary body-id list
+	// for every function.
+	mut new_body := []flat.NodeId{cap: fn_node.children_count}
 	for i in 0 .. fn_node.children_count {
 		child_id := t.a.children[fn_node.children_start + i]
 		if int(child_id) < 0 {
@@ -289,10 +290,14 @@ fn (mut t Transformer) transform_fn_body(fn_idx int) {
 		}
 		child := t.a.nodes[int(child_id)]
 		if child.kind != .param {
-			body_ids << child_id
+			expanded := t.transform_stmt(child_id)
+			t.drain_pending(mut new_body)
+			for eid in expanded {
+				new_body << eid
+			}
 		}
 	}
-	new_body := t.transform_stmts(body_ids)
+	t.drain_pending(mut new_body)
 	// Rebuild function children: params then new body
 	start := t.a.children.len
 	for i in 0 .. fn_node.children_count {

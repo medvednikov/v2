@@ -905,6 +905,19 @@ fn make_scores115() map[string]int {
 	return scores
 }
 
+struct Defaults116 {
+	name  string = 'v' + '3'
+	count int    = 42
+}
+
+fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
+	return a + b + c + d + e + f + g + h + i
+}
+
+fn use_int116(x int) int {
+	return x
+}
+
 fn main() {
 	print_str('=== v3 Test Suite ===')
 
@@ -4896,5 +4909,44 @@ fn main() {
 
 	print_str('self-host regression features: ok')
 
-	print_str('=== ALL 115 TESTS PASSED ===')
+	print_str('--- 116. Additional Self-Host Feature Coverage ---')
+
+	// 116.1 Struct field defaults, including a lowered string expression.
+	default116a := Defaults116{
+		count: 7
+	}
+	print_str(default116a.name) // v3
+	print_int(default116a.count) // 7
+	default116b := Defaults116{}
+	print_str(default116b.name) // v3
+	print_int(default116b.count) // 42
+
+	// 116.2 Map index or-block fallback and present value.
+	map_or_present116 := scores115['alpha'] or { 0 }
+	map_or_missing116 := scores115['missing'] or { 11 }
+	print_int(map_or_present116) // 2
+	print_int(map_or_missing116) // 11
+
+	// 116.3 typeof expression lowering.
+	type_name116 := typeof(123)
+	print_str(type_name116) // int
+	assert type_name116 == 'int'
+
+	// 116.4 @VMODROOT compile-time path exists.
+	vmod_root116 := @VMODROOT
+	if vmod_root116.len > 0 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 116.5 If-expression lowered before a call argument.
+	print_int(use_int116(if false { 1 } else { 2 })) // 2
+
+	// 116.6 More than eight call arguments.
+	print_int(sum_nine116(1, 2, 3, 4, 5, 6, 7, 8, 9)) // 45
+
+	print_str('additional self-host feature coverage: ok')
+
+	print_str('=== ALL 116 TESTS PASSED ===')
 }
