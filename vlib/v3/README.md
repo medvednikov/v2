@@ -178,16 +178,30 @@ with the C backend.
 
 Peak RSS: 9-17 MB.
 
-Compiling `v3.v` itself with `v3` binaries built by V:
+Compiling `v3.v` itself with a `v3` seed binary built by V:
 
-Commands: `v -o v3 v3.v` and `v -prod -o v3 v3.v`.
+Commands:
 
-Both rows compile the target without `-prod`; the final `cc` step uses bundled TCC.
+- `./vnew -o /tmp/v3_perf_seed vlib/v3`
+- `/tmp/v3_perf_seed vlib/v3/v3.v -o /tmp/v3_self_c_perf_warm`
+- `/tmp/v3_perf_seed vlib/v3/v3.v -b arm64 -o /tmp/v3_self_arm_perf_warm`
 
-| v3 build | parse | transform | check | markused | gen C | cc | total | Peak RSS |
-|----------|------:|----------:|------:|---------:|------:|---:|------:|---------:|
-| normal   | 41 ms | 296 ms    | 182 ms | 170 ms  | 349 ms | 41 ms | 1,101 ms | 139 MB |
-| `-prod`  | 15 ms | 64 ms     | 40 ms  | 37 ms   | 87 ms  | 40 ms | 306 ms   | 111 MB |
+Both backend rows compile the target without `-prod`. The C backend uses
+bundled TCC for the final `cc` step; the ARM64 backend emits and links a
+Mach-O binary directly.
+
+| Phase       | C backend | ARM64 backend |
+|-------------|----------:|--------------:|
+| parse       | 69 ms     | 71 ms         |
+| transform   | 489 ms    | 486 ms        |
+| check       | 176 ms    | 171 ms        |
+| markused    | 356 ms    | 354 ms        |
+| gen C/write | 345 ms    | -             |
+| ssa build   | -         | 3,931 ms      |
+| arm64 gen   | -         | 1,414 ms      |
+| cc/link     | 56 ms     | 226 ms        |
+| **total**   | **1,509 ms** | **6,677 ms** |
+| Peak RSS    | 171 MB    | 399 MB        |
 
 ## Comparison with V1
 
