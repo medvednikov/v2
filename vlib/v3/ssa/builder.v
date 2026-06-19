@@ -1021,6 +1021,9 @@ fn (b &Builder) skip_source_fn(name string) bool {
 }
 
 fn (b &Builder) skip_source_fn_in_module(name string, module_name string) bool {
+	if module_name == 'builtin' && name in b.c_fn_ids {
+		return true
+	}
 	if module_name == 'c' && name.starts_with('Gen.') {
 		return true
 	}
@@ -6653,6 +6656,9 @@ fn (mut b Builder) build_selector_addr(node flat.Node) ValueID {
 	}
 	if base.kind == .ident {
 		if addr := b.vars[base.value] {
+			if field_ptr := b.smartcast_sum_selector_addr(addr, base_id, node.value) {
+				return field_ptr
+			}
 			return b.get_field_ptr(addr, node.value)
 		}
 	}
@@ -7998,6 +8004,11 @@ fn (mut b Builder) load_smartcast_sum_value(sum_addr ValueID, expr_id flat.NodeI
 }
 
 fn (mut b Builder) load_smartcast_sum_selector(sum_addr ValueID, base_id flat.NodeId, field_name string) ?ValueID {
+	field_ptr := b.smartcast_sum_selector_addr(sum_addr, base_id, field_name) or { return none }
+	return b.emit1(.load, b.deref_type(field_ptr), field_ptr)
+}
+
+fn (mut b Builder) smartcast_sum_selector_addr(sum_addr ValueID, base_id flat.NodeId, field_name string) ?ValueID {
 	sum_type := b.deref_type(sum_addr)
 	if !b.is_sum_type_id(sum_type) {
 		return none
@@ -8038,8 +8049,7 @@ fn (mut b Builder) load_smartcast_sum_selector(sum_addr ValueID, base_id flat.No
 			variant_addr = b.emit1(.load, payload_type, payload_ptr)
 		}
 	}
-	field_ptr := b.get_field_ptr(variant_addr, field_name)
-	return b.emit1(.load, b.deref_type(field_ptr), field_ptr)
+	return b.get_field_ptr(variant_addr, field_name)
 }
 
 fn (b &Builder) sum_name_for_type_id(typ_id TypeID) ?string {

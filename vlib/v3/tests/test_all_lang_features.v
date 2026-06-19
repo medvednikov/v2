@@ -910,7 +910,7 @@ struct Defaults116 {
 	count int    = 42
 }
 
-type MetaType117 = MetaNamed117 | MetaIface117 | MetaArray117 | MetaMap117
+type MetaType117 = MetaNamed117 | MetaIface117 | MetaArray117 | MetaMap117 | MetaFn117
 
 type CastLeak117 = CastNamed117 | CastOther117
 
@@ -929,6 +929,11 @@ struct MetaArray117 {
 struct MetaMap117 {
 	key MetaType117
 	val MetaType117
+}
+
+struct MetaFn117 {
+	params []MetaType117
+	ret    MetaType117
 }
 
 struct Registry117 {
@@ -953,6 +958,18 @@ struct CastOther117 {
 enum Marker117 {
 	off
 	on
+}
+
+type ScalarAlias117 = int
+
+const fixed_len117 = 3
+
+struct FixedHolder117 {
+	values [fixed_len117]int
+}
+
+struct FnHolder117 {
+	op fn (int, int) int
 }
 
 fn smartcast_name117(t CastLeak117) string {
@@ -995,6 +1012,17 @@ fn meta_array_elem117(t MetaType117) MetaType117 {
 	})
 }
 
+fn meta_fn_signature117(t MetaType117) string {
+	if t is MetaFn117 {
+		mut parts := []string{}
+		for param117 in t.params {
+			parts << meta_name117(param117)
+		}
+		return 'fn(${parts.join(', ')}) ${meta_name117(t.ret)}'
+	}
+	return 'not-fn'
+}
+
 fn meta_iface_name117(t MetaType117) string {
 	if t is MetaIface117 {
 		return t.name
@@ -1029,6 +1057,22 @@ fn trim_last117(mut values []int) {
 
 fn trim_stack117(mut stack Stack117) {
 	stack.values.delete_last()
+}
+
+fn scalar_alias_if117(ok bool) ScalarAlias117 {
+	return if ok { ScalarAlias117(11) } else { ScalarAlias117(12) }
+}
+
+fn fixed_holder_sum117(holder FixedHolder117) int {
+	return holder.values[0] + holder.values[1] + holder.values[2]
+}
+
+fn add117(a int, b int) int {
+	return a + b
+}
+
+fn fn_holder_call117(holder FnHolder117) int {
+	return holder.op(4, 5)
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5102,6 +5146,14 @@ fn main() {
 			name: 'Type'
 		})
 	})))) // Type
+	print_str(meta_fn_signature117(MetaType117(MetaFn117{
+		params: [MetaType117(MetaNamed117{
+			name: 'ArrayDataHeader'
+		})]
+		ret:    MetaType117(MetaNamed117{
+			name: 'base_data'
+		})
+	}))) // fn(ArrayDataHeader) base_data
 
 	// 117.2 Smartcasted sumtype selector uses the active variant when fields share names.
 	print_str(meta_iface_name117(MetaType117(MetaIface117{
@@ -5162,6 +5214,22 @@ fn main() {
 	} else {
 		print_int(0)
 	}
+
+	// 117.9 Alias scalar if-expression lowers to a tcc-compatible zero initializer.
+	print_int(int(scalar_alias_if117(false))) // 12
+
+	// 117.10 Fixed-array lengths can come from const expressions in type declarations.
+	fixed_values117 := [7, 8, 9]!
+	fixed_holder117 := FixedHolder117{
+		values: fixed_values117
+	}
+	print_int(fixed_holder_sum117(fixed_holder117)) // 24
+
+	// 117.11 Function pointer fields use generated typedefs before struct declarations.
+	fn_holder117 := FnHolder117{
+		op: add117
+	}
+	print_int(fn_holder_call117(fn_holder117)) // 9
 
 	print_str('arm64 self-host regression coverage: ok')
 

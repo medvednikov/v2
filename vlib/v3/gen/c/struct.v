@@ -5,6 +5,10 @@ import v3.types
 
 fn (mut g FlatGen) gen_struct_init(node flat.Node) {
 	name := g.struct_init_c_type_name(node.value)
+	if node.children_count == 0 && g.is_scalar_zero_init_type(node.value, name) {
+		g.write(g.scalar_zero_init(name))
+		return
+	}
 	g.write('(${name}){')
 	mut set_fields := map[string]bool{}
 	mut has_field := false
@@ -148,7 +152,36 @@ fn (mut g FlatGen) gen_default_value_for_type(typ types.Type) {
 		return
 	}
 	ct := g.tc.c_type(typ)
+	if g.is_scalar_c_type(ct) {
+		g.write(g.scalar_zero_init(ct))
+		return
+	}
 	g.write('(${ct}){0}')
+}
+
+fn (g &FlatGen) is_scalar_zero_init_type(type_name string, c_type string) bool {
+	if type_name in g.tc.structs || g.tc.qualify_name(type_name) in g.tc.structs {
+		return false
+	}
+	if _ := g.find_struct_decl(type_name) {
+		return false
+	}
+	return g.is_scalar_c_type(c_type)
+}
+
+fn (g &FlatGen) is_scalar_c_type(c_type string) bool {
+	if c_type.ends_with('*') {
+		return true
+	}
+	return c_type in ['bool', 'char', 'byte', 'u8', 'i8', 'u16', 'i16', 'u32', 'i32', 'u64', 'i64',
+		'int', 'isize', 'usize', 'size_t', 'ptrdiff_t', 'float', 'double', 'voidptr']
+}
+
+fn (g &FlatGen) scalar_zero_init(c_type string) string {
+	if c_type in ['float', 'double'] {
+		return '0.0'
+	}
+	return '0'
 }
 
 struct StructDeclInfo {
