@@ -323,7 +323,7 @@ pub mut:
 
 pub struct TargetData {
 pub:
-	ptr_size      int = 8
+	ptr_size      int  = 8
 	endian_little bool = true
 }
 
@@ -553,60 +553,63 @@ pub fn (m &Module) get_block_from_val(val_id int) int {
 	return m.values[val_id].index
 }
 
+// type_size returns the byte size for an SSA type on the current target.
 pub fn (m &Module) type_size(typ_id TypeID) int {
-	mut active := []TypeID{}
-	return m.type_size_inner(typ_id, 0, mut active)
+	mut visiting := []bool{len: m.type_store.types.len}
+	mut cache := []int{len: m.type_store.types.len}
+	return m.type_size_inner(typ_id, 0, mut visiting, mut cache)
 }
 
-fn type_is_active(typ_id TypeID, active []TypeID) bool {
-	for seen in active {
-		if seen == typ_id {
-			return true
-		}
-	}
-	return false
-}
-
-fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) int {
+fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut visiting []bool, mut cache []int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 0
 	}
 	if depth > 32 {
 		return recursive_type_slot_size
 	}
+	if cache[typ_id] > 0 {
+		return cache[typ_id]
+	}
 	typ := m.type_store.types[typ_id]
 	if typ.width > 0 {
-		return (typ.width + 7) / 8
+		size := (typ.width + 7) / 8
+		cache[typ_id] = size
+		return size
 	}
 	if typ.kind == .array_t {
-		if type_is_active(typ_id, active) {
+		if visiting[typ_id] {
 			return recursive_type_slot_size
 		}
-		active << typ_id
-		elem := m.type_size_inner(typ.elem_type, depth + 1, mut active)
-		active.delete_last()
-		total := elem * typ.len
-		if total > 0 {
-			return total
+		visiting[typ_id] = true
+		elem := m.type_size_inner(typ.elem_type, depth + 1, mut visiting, mut cache)
+		visiting[typ_id] = false
+		mut total := elem * typ.len
+		if total <= 0 {
+			total = 0
 		}
-		return 0
+		cache[typ_id] = total
+		return total
 	}
 	if typ.elem_type > 0 && typ.fields.len == 0 {
+		cache[typ_id] = 8
 		return 8
 	}
 	if typ.fields.len == 0 {
 		if typ.params.len > 0 || typ.ret_type > 0 {
+			cache[typ_id] = 8
 			return 8
 		}
 		return 0
 	}
 	if typ.fields.len > 256 {
+		cache[typ_id] = 8
 		return 8
 	}
-	if type_is_active(typ_id, active) {
+	if visiting[typ_id] {
 		return recursive_type_slot_size
 	}
-	active << typ_id
+	visiting[typ_id] = true
+	mut total := 0
 	if typ.is_union {
 		// Unions: all fields overlap at offset 0; size is the largest field,
 		// rounded up to the largest field alignment.
@@ -614,61 +617,62 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) in
 		mut max_align := 1
 		for i in 0 .. typ.fields.len {
 			field_typ := typ.fields[i]
-			s := m.type_size_inner(field_typ, depth + 1, mut active)
+			s := m.type_size_inner(field_typ, depth + 1, mut visiting, mut cache)
 			if s > max_size {
 				max_size = s
 			}
-			a := m.type_align_inner(field_typ, depth + 1, mut active)
+			a := m.type_align_for_layout(field_typ)
 			if a > max_align {
 				max_align = a
 			}
 		}
-		active.delete_last()
-		total := if max_align > 1 && max_size % max_align != 0 {
+		total = if max_align > 1 && max_size % max_align != 0 {
 			(max_size + max_align - 1) & ~(max_align - 1)
 		} else {
 			max_size
 		}
-		if total > 0 {
-			return total
-		}
-		return 8
-	}
-	mut offset := 0
-	mut max_align := 1
-	for i in 0 .. typ.fields.len {
-		field_typ := typ.fields[i]
-		align := m.type_align_inner(field_typ, depth + 1, mut active)
-		if align > max_align {
-			max_align = align
-		}
-		if align > 1 && offset % align != 0 {
-			offset = (offset + align - 1) & ~(align - 1)
-		}
-		offset += m.type_size_inner(field_typ, depth + 1, mut active)
-	}
-	active.delete_last()
-	total := if max_align > 1 && offset % max_align != 0 {
-		(offset + max_align - 1) & ~(max_align - 1)
 	} else {
-		offset
+		mut offset := 0
+		mut max_align := 1
+		for i in 0 .. typ.fields.len {
+			field_typ := typ.fields[i]
+			align := m.type_align_for_layout(field_typ)
+			if align > max_align {
+				max_align = align
+			}
+			if align > 1 && offset % align != 0 {
+				offset = (offset + align - 1) & ~(align - 1)
+			}
+			offset += m.type_size_inner(field_typ, depth + 1, mut visiting, mut cache)
+		}
+		total = if max_align > 1 && offset % max_align != 0 {
+			(offset + max_align - 1) & ~(max_align - 1)
+		} else {
+			offset
+		}
 	}
-	if total > 0 {
-		return total
+	visiting[typ_id] = false
+	if total <= 0 {
+		total = 8
 	}
-	return 8
+	cache[typ_id] = total
+	return total
 }
 
+// type_align returns the ABI alignment for an SSA type on the current target.
 pub fn (m &Module) type_align(typ_id TypeID) int {
-	mut active := []TypeID{}
-	return m.type_align_inner(typ_id, 0, mut active)
+	return m.type_align_for_layout(typ_id)
 }
 
-fn (m &Module) type_align_inner(typ_id TypeID, depth int, mut active []TypeID) int {
+fn (m &Module) type_align_for_layout(typ_id TypeID) int {
+	return m.type_align_for_layout_inner(typ_id, 0)
+}
+
+fn (m &Module) type_align_for_layout_inner(typ_id TypeID, depth int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 1
 	}
-	if depth > 32 {
+	if depth > 16 {
 		return 8
 	}
 	typ := m.type_store.types[typ_id]
@@ -683,39 +687,16 @@ fn (m &Module) type_align_inner(typ_id TypeID, depth int, mut active []TypeID) i
 		return 1
 	}
 	if typ.kind == .array_t {
-		return m.type_align_inner(typ.elem_type, depth + 1, mut active)
+		return m.type_align_for_layout_inner(typ.elem_type, depth + 1)
 	}
 	if typ.elem_type > 0 && typ.fields.len == 0 {
 		return 8
 	}
 	if typ.fields.len > 0 {
-		if typ.fields.len > 256 {
-			return 8
-		}
-		if type_is_active(typ_id, active) {
-			return 8
-		}
-		active << typ_id
-		mut max_align := 1
-		for i in 0 .. typ.fields.len {
-			field_typ := typ.fields[i]
-			a := m.type_align_inner(field_typ, depth + 1, mut active)
-			if a > max_align {
-				max_align = a
-			}
-		}
-		active.delete_last()
-		return max_align
+		return 8
 	}
 	if typ.params.len > 0 || typ.ret_type > 0 {
 		return 8
-	}
-	size := m.type_size_inner(typ_id, depth + 1, mut active)
-	if size >= 8 {
-		return 8
-	}
-	if size >= 4 {
-		return 4
 	}
 	return 1
 }
@@ -776,6 +757,7 @@ pub fn (i &Instruction) value_operands() []ValueID {
 	return i.operands
 }
 
+// struct_field_offset returns the byte offset of a field in a struct type.
 pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 0
@@ -787,21 +769,22 @@ pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
 	if typ.is_union {
 		return 0
 	}
-	mut active := []TypeID{}
-	active << typ_id
+	mut visiting := []bool{len: m.type_store.types.len}
+	mut cache := []int{len: m.type_store.types.len}
+	visiting[typ_id] = true
 	mut offset := 0
 	for i in 0 .. field_idx {
 		if i >= typ.fields.len {
 			break
 		}
-		align := m.type_align_inner(typ.fields[i], 1, mut active)
+		align := m.type_align_for_layout(typ.fields[i])
 		if align > 1 && offset % align != 0 {
 			offset = (offset + align - 1) & ~(align - 1)
 		}
-		offset += m.type_size_inner(typ.fields[i], 1, mut active)
+		offset += m.type_size_inner(typ.fields[i], 1, mut visiting, mut cache)
 	}
 	if field_idx < typ.fields.len {
-		align := m.type_align_inner(typ.fields[field_idx], 1, mut active)
+		align := m.type_align_for_layout(typ.fields[field_idx])
 		if align > 1 && offset % align != 0 {
 			offset = (offset + align - 1) & ~(align - 1)
 		}
@@ -809,6 +792,7 @@ pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
 	return offset
 }
 
+// struct_field_size returns the byte size of a field in a struct type.
 pub fn (m &Module) struct_field_size(typ_id TypeID, field_idx int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 0
@@ -817,7 +801,8 @@ pub fn (m &Module) struct_field_size(typ_id TypeID, field_idx int) int {
 	if typ.kind != .struct_t || field_idx < 0 || field_idx >= typ.fields.len {
 		return 0
 	}
-	mut active := []TypeID{}
-	active << typ_id
-	return m.type_size_inner(typ.fields[field_idx], 1, mut active)
+	mut visiting := []bool{len: m.type_store.types.len}
+	mut cache := []int{len: m.type_store.types.len}
+	visiting[typ_id] = true
+	return m.type_size_inner(typ.fields[field_idx], 1, mut visiting, mut cache)
 }

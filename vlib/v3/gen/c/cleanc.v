@@ -717,6 +717,11 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			} else if clean_rhs is types.Array {
 				fn_name := array_membership_fn_name(clean_rhs.elem_type, false)
 				g.write('${fn_name}(')
+				// A `mut []T` param (or any `&[]T`) is a pointer in C; the membership
+				// helper takes the array by value, so dereference it first.
+				if rhs_type is types.Pointer {
+					g.write('*')
+				}
 				g.gen_expr(rhs_id)
 				g.write(', ')
 				g.gen_expr(lhs_id)

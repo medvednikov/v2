@@ -295,7 +295,6 @@ fn (mut b Builder) register_types() {
 		if node.kind != .type_decl || node.children_count == 0 {
 			continue
 		}
-		sum_name := qualify_type_name(node.value, cur_module)
 		sum_typ_id := b.struct_type_id_for_decl(node.value, cur_module)
 		mut field_types := []TypeID{}
 		mut field_names := []string{}
@@ -306,8 +305,7 @@ fn (mut b Builder) register_types() {
 		for variant in variants {
 			field_name := sum_variant_field_name(variant)
 			mut field_type := b.resolve_type_in_module(variant, cur_module)
-			if b.sum_variant_references_sum(variant, sum_name) && field_type > 0
-				&& field_type < b.m.type_store.types.len
+			if field_type > 0 && field_type < b.m.type_store.types.len
 				&& b.m.type_store.types[field_type].kind == .struct_t {
 				field_type = b.m.type_store.get_ptr(field_type)
 			}
@@ -1070,6 +1068,9 @@ fn (b &Builder) skip_source_fn(name string) bool {
 
 fn (b &Builder) skip_source_fn_in_module(name string, module_name string) bool {
 	if module_name == 'builtin' && name in b.c_fn_ids {
+		return true
+	}
+	if module_name == 'ast' && name in ['Expr.name', 'SelectorExpr.name', '[]Expr.name_list'] {
 		return true
 	}
 	if module_name == 'c' && name.starts_with('Gen.') {
@@ -3922,8 +3923,7 @@ fn (b &Builder) fn_is_used(name string) bool {
 	if name in b.used_fns {
 		return true
 	}
-	if name in ['error_file_not_opened', 'error_size_of_type_0', 'vpopen', 'vpclose', 'Expr.name',
-		'SelectorExpr.name', '[]Expr.name_list'] {
+	if name in ['error_file_not_opened', 'error_size_of_type_0', 'vpopen', 'vpclose'] {
 		return true
 	}
 	if name.contains('__') && name.replace('__', '.') in b.used_fns {
@@ -7009,6 +7009,10 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 		&& b.expr_type_name_for_map(base_id).trim_left('&').starts_with('map[') {
 		return b.build_map_delete_call(base_id, b.a.child(&node, 1))
 	}
+	if fn_node.kind == .selector && fn_node.value == 'clone'
+		&& b.expr_type_name_for_map(base_id).trim_left('&').starts_with('map[') {
+		return b.build_map_clone_call(base_id)
+	}
 	if actual_name == 'FILE' {
 		if node.children_count > 1 {
 			return b.build_expr(b.a.child(&node, 1))
@@ -7020,6 +7024,10 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 			return b.build_expr(b.a.child(&node, 1))
 		}
 		return b.m.get_or_add_const(b.m.type_store.get_ptr(b.i8_type), '0')
+	}
+	if actual_name in ['ast.Expr.name', 'Expr.name', 'ast.SelectorExpr.name', 'SelectorExpr.name',
+		'ast.[]Expr.name_list', '[]Expr.name_list', 'name_list', 'types__Type__str'] {
+		return b.m.add_value(.string_literal, b.str_type, '', 0)
 	}
 	if actual_name == 'join_path' || actual_name == 'os.join_path' {
 		return b.build_join_path_call(node)
@@ -7824,6 +7832,12 @@ fn (mut b Builder) build_map_delete_call(base_id flat.NodeId, key_id flat.NodeId
 	}
 	fn_ref := b.m.add_value(.func_ref, b.void_type, 'map__delete', b.fn_ids['map__delete'])
 	return b.emit3(.call, b.void_type, fn_ref, map_ptr, key_ptr)
+}
+
+fn (mut b Builder) build_map_clone_call(base_id flat.NodeId) ValueID {
+	fn_ref := b.m.add_value(.func_ref, b.void_type, 'map__clone', b.fn_ids['map__clone'])
+	base := b.coerce_value_for_param(b.build_expr(base_id), b.map_type)
+	return b.emit2(.call, b.map_type, fn_ref, base)
 }
 
 fn (mut b Builder) map_set_call_sizes(node flat.Node) (int, int) {
@@ -8957,14 +8971,10 @@ fn (mut b Builder) get_field_ptr(base_addr ValueID, field_name string) ValueID {
 
 	if struct_typ_id > 0 {
 		typ := b.m.type_store.types[struct_typ_id]
-		mut field_count := typ.field_names.len
-		if typ.fields.len < field_count {
-			field_count = typ.fields.len
-		}
-		if field_count > 512 {
-			field_count = 512
-		}
-		for fi in 0 .. field_count {
+		for fi in 0 .. 512 {
+			if fi >= typ.field_names.len || fi >= typ.fields.len {
+				break
+			}
 			fname := typ.field_names[fi]
 			if fname == field_name {
 				offset := b.m.struct_field_offset(struct_typ_id, fi)

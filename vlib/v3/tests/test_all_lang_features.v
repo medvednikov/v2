@@ -1366,6 +1366,24 @@ fn array_pop_score117() int {
 	return last117 * 10 + values117.len
 }
 
+fn (t MetaType117) recursive_sum_method_score117() int {
+	if t is MetaPointer117 {
+		if meta_name117(t.base) == 'core' {
+			return 41
+		}
+	}
+	return 0
+}
+
+fn large_sumtype_method_receiver_score117() int {
+	typ117 := MetaType117(MetaPointer117{
+		base: MetaType117(MetaNamed117{
+			name: 'core'
+		})
+	})
+	return typ117.recursive_sum_method_score117()
+}
+
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
 	return a + b + c + d + e + f + g + h + i
 }
@@ -5629,6 +5647,9 @@ fn main() {
 
 	// 117.30 Dynamic-array pop returns the removed value and shrinks the array.
 	print_int(array_pop_score117()) // 92
+
+	// 117.31 Large recursive sum-type method receivers keep later variant payloads.
+	print_int(large_sumtype_method_receiver_score117()) // 41
 
 	print_str('arm64 self-host regression coverage: ok')
 

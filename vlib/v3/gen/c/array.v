@@ -131,6 +131,16 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.gen_expr(base_id)
 			g.write('${dot}len--')
 		}
+		'pop' {
+			g.write('({ ${c_elem} _pop${g.tmp_count} = *(${c_elem}*)array_get(')
+			g.gen_expr(base_id)
+			g.write(', ')
+			g.gen_expr(base_id)
+			g.write('${dot}len - 1); ')
+			g.gen_expr(base_id)
+			g.write('${dot}len--; _pop${g.tmp_count}; })')
+			g.tmp_count++
+		}
 		'clear' {
 			g.gen_expr(base_id)
 			g.write('${dot}len = 0')

@@ -200,6 +200,18 @@ fn (mut g Gen) gen_func(func_idx int) {
 	for _, pid in func.params {
 		param_val := g.m.values[pid]
 		param_size := g.m.type_size(param_val.typ)
+		if g.is_large_struct_type(param_val.typ) {
+			off := g.stack_map[pid]
+			if reg_idx < 8 {
+				g.emit_copy_ptr_to_fp(reg_idx, off, param_size)
+				reg_idx++
+			} else {
+				g.emit_load_fp(8, stack_arg_off)
+				g.emit_copy_ptr_to_fp(8, off, param_size)
+				stack_arg_off += 8
+			}
+			continue
+		}
 		n_words := if param_size > 8 { (param_size + 7) / 8 } else { 1 }
 		off := g.stack_map[pid]
 		if reg_idx + n_words <= 8 {
@@ -845,6 +857,21 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 			if arg_size > 8 && arg_type_id > 0 && arg_type_id < g.m.type_store.types.len {
 				typ := g.m.type_store.types[arg_type_id]
 				if typ.kind == .struct_t {
+					if g.is_large_struct_type(arg_type_id) {
+						if arg_reg < 8 {
+							if !g.emit_value_address(arg_id, arg_reg) {
+								g.emit_mov_imm(arg_reg, 0)
+							}
+							arg_reg += 1
+						} else {
+							if !g.emit_value_address(arg_id, 8) {
+								g.emit_mov_imm(8, 0)
+							}
+							g.emit_store_sp(8, stack_off)
+							stack_off += 8
+						}
+						continue
+					}
 					if g.is_string_struct_type(arg_type_id) {
 						if arg_reg + 2 <= 8 {
 							if off := g.stack_map[arg_id] {
@@ -1003,7 +1030,7 @@ fn (g &Gen) call_stack_arg_size(instr ssa.Instruction) int {
 			arg_size := g.m.type_size(arg_val.typ)
 			if arg_size > 8 && arg_val.typ > 0 && arg_val.typ < g.m.type_store.types.len
 				&& g.m.type_store.types[arg_val.typ].kind == .struct_t {
-				n_words = (arg_size + 7) / 8
+				n_words = if g.is_large_struct_type(arg_val.typ) { 1 } else { (arg_size + 7) / 8 }
 			}
 		}
 		if arg_reg + n_words <= 8 {
@@ -1016,6 +1043,50 @@ fn (g &Gen) call_stack_arg_size(instr ssa.Instruction) int {
 		return 0
 	}
 	return (stack_words * 8 + 15) & ~0xF
+}
+
+fn (mut g Gen) emit_value_address(val_id int, reg int) bool {
+	if val_id <= 0 || val_id >= g.m.values.len {
+		return false
+	}
+	val := g.m.values[val_id]
+	match val.kind {
+		.global {
+			g.emit_global_addr(reg, val.name)
+			return true
+		}
+		.instruction {
+			instr := g.m.instrs[val.index]
+			if instr.op == .alloca {
+				if off := g.alloca_offset[val_id] {
+					g.emit_lea_fp(reg, off)
+					return true
+				}
+			}
+			if off := g.stack_map[val_id] {
+				g.emit_lea_fp(reg, off)
+				return true
+			}
+		}
+		.argument {
+			if off := g.stack_map[val_id] {
+				g.emit_lea_fp(reg, off)
+				return true
+			}
+		}
+		else {}
+	}
+
+	return false
+}
+
+fn (mut g Gen) emit_copy_ptr_to_fp(src_ptr_reg int, dst_off int, size int) {
+	n_words := (size + 7) / 8
+	tmp_reg := if src_ptr_reg == 8 { 10 } else { 8 }
+	for wi in 0 .. n_words {
+		g.emit32(asm_ldr_imm(Reg(tmp_reg), Reg(src_ptr_reg), u32(wi)))
+		g.emit_store_fp(tmp_reg, dst_off + wi * 8)
+	}
 }
 
 // ==================== Value loading/storing ====================
@@ -1399,9 +1470,15 @@ fn (mut g Gen) emit_load_typed(dst_reg int, ptr_reg int, typ ssa.TypeID) {
 	match size {
 		1 {
 			g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg)))
+			if g.is_signed_int_type(typ) {
+				g.emit32(asm_sxtb(Reg(dst_reg), Reg(dst_reg)))
+			}
 		}
 		2 {
 			g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg)))
+			if g.is_signed_int_type(typ) {
+				g.emit32(asm_sxth(Reg(dst_reg), Reg(dst_reg)))
+			}
 		}
 		4 {
 			if g.is_signed_int_type(typ) {
