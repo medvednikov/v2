@@ -13,27 +13,25 @@ import v3.ssa.optimize
 import v3.transform
 import v3.types
 
-fn C.open(charptr, i32, i32) i32
-fn C.write(i32, voidptr, usize) isize
-fn C.close(i32) i32
-fn C.chmod(charptr, i32) i32
+fn C.open(charptr, int, int) int
+fn C.write(int, voidptr, int) int
+fn C.close(int) int
+fn C.chmod(charptr, int) int
 
 const o_wronly_creat_trunc = 0x601 // O_WRONLY | O_CREAT | O_TRUNC on Darwin
 
 fn main() {
 	args := os.args[1..]
 	if args.len == 0 {
-		eprintln('usage: v3 <file.v> [-o output] [-b c|arm64] [-arch arch|-m32|-m64]')
+		eprintln('usage: v3 <file.v> [-o output] [-b c|arm64]')
 		exit(1)
 	}
 
 	mut input_file := ''
 	mut output_file := ''
 	mut backend := 'c'
-	mut target_arch := ''
 	mut is_prod := false
 	mut is_strict := false
-	mut is_selfhost := false
 	mut no_parallel := false
 	mut i := 0
 	for i < args.len {
@@ -43,20 +41,10 @@ fn main() {
 		} else if args[i] == '-b' && i + 1 < args.len {
 			backend = args[i + 1]
 			i += 2
-		} else if args[i] == '-arch' && i + 1 < args.len {
-			target_arch = pref.normalized_arch(args[i + 1])
-			i += 2
-		} else if args[i] == '-m32' {
-			target_arch = 'i386'
-			i++
-		} else if args[i] == '-m64' {
-			target_arch = 'amd64'
-			i++
 		} else if args[i] == '-prod' {
 			is_prod = true
 			i++
 		} else if args[i] == '-selfhost' {
-			is_selfhost = true
 			i++
 		} else if args[i] == '-strict' {
 			is_strict = true
@@ -90,34 +78,7 @@ fn main() {
 	// Parse directly to flat AST
 	mut prefs := pref.new_preferences()
 	prefs.backend = backend
-	if target_arch.len > 0 {
-		prefs.target_arch = target_arch
-	} else if backend == 'arm64' {
-		prefs.target_arch = 'arm64'
-	}
 	prefs.vroot = resolve_vroot(prefs.vroot)
-	if is_selfhost {
-		prefs.building_v = true
-	}
-	if !prefs.building_v {
-		abs_input := if os.is_abs_path(input_file) {
-			input_file
-		} else {
-			os.join_path_single(os.getwd(), input_file)
-		}
-		if abs_input.contains('/vlib/v3/') || abs_input.contains('/vlib/v3') {
-			prefs.building_v = true
-		}
-	}
-	if prefs.building_v {
-		mut filtered := []string{}
-		for d in prefs.user_defines {
-			if d != 'gcboehm' && d != 'gcboehm_opt' {
-				filtered << d
-			}
-		}
-		prefs.user_defines = filtered
-	}
 	mut p := parser.Parser.new(prefs)
 
 	mut files := []string{}
@@ -148,8 +109,7 @@ fn main() {
 	// Type-collect + annotate expression types BEFORE transform, so the
 	// transformer is type-aware (like v2: check runs before transform). The
 	// transformer reads per-expression types to own type-dependent lowering.
-	mut pre_tc := types.TypeChecker.new_with_prefs(a, prefs)
-	pre_tc.building_v = prefs.building_v
+	mut pre_tc := types.TypeChecker.new(a)
 	pre_tc.collect(a)
 	pre_tc.annotate_types()
 	pre_tc.diagnose_unknown_calls = true
@@ -166,8 +126,8 @@ fn main() {
 	transform.transform(mut a, &pre_tc)
 	b.step('transform')
 
-	// Recollect after transform — monomorphization may have added declarations
-	pre_tc.collect(a)
+	// Reuse the pre-transform checker. Transform does not add declarations, so
+	// recollecting all type/index maps only duplicates memory when GC is off.
 	pre_tc.diagnose_unknown_calls = false
 	pre_tc.reject_unlowered_map_mutation = true
 	pre_tc.annotate_types()

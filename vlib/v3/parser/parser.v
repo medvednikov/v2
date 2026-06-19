@@ -7,10 +7,10 @@ import v3.pref
 import v3.scanner
 import v3.token
 
-fn C.open(charptr, i32, i32) i32
-fn C.read(i32, voidptr, usize) isize
-fn C.close(i32) i32
-fn C.malloc(usize) &u8
+fn C.open(charptr, int, int) int
+fn C.read(int, voidptr, int) int
+fn C.close(int) int
+fn C.malloc(int) &u8
 
 const max_source_file_size = 8388608
 
@@ -139,7 +139,7 @@ fn read_source_file_raw(path string) string {
 		if nread <= 0 {
 			break
 		}
-		total += int(nread)
+		total += nread
 	}
 	C.close(fd)
 	if total <= 0 {
@@ -656,10 +656,9 @@ fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type strin
 }
 
 fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type string, is_method bool, _ bool) flat.NodeId {
-	// generic params — preserve in name as name[T, U]
-	mut actual_name := name
+	// generic params — skip
 	if p.tok == .lsbr {
-		actual_name += p.parse_generic_type_params()
+		p.skip_brackets()
 	}
 
 	// params
@@ -727,7 +726,7 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 	start := p.add_children(all_ids)
 	return p.a.add_node(flat.Node{
 		kind:           .fn_decl
-		value:          actual_name
+		value:          name
 		typ:            ret_type
 		children_start: start
 		children_count: flat.child_count(all_ids.len)
@@ -797,9 +796,9 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 			name += '.' + p.expect_name_or_keyword()
 		}
 	}
-	// generic params — preserve in name as Name[T, U]
+	// generic params — skip
 	if p.tok == .lsbr {
-		name += p.parse_generic_type_params()
+		p.skip_brackets()
 	}
 	// implements clause
 	if p.tok == .name && p.lit == 'implements' {
@@ -1176,10 +1175,10 @@ fn (mut p Parser) type_decl() flat.NodeId {
 			p.next()
 		}
 	}
-	mut name := p.expect_name()
-	// generic params — preserve in name
+	name := p.expect_name()
+	// generic params
 	if p.tok == .lsbr {
-		name += p.parse_generic_type_params()
+		p.skip_brackets()
 	}
 	p.expect(.assign)
 	first_type := p.parse_type_name()
@@ -1225,9 +1224,9 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 		p.next()
 		name += '.' + p.expect(.name)
 	}
-	// generic params — preserve in name
+	// generic params
 	if p.tok == .lsbr {
-		name += p.parse_generic_type_params()
+		p.skip_brackets()
 	}
 	p.check(.lcbr)
 	mut ids := []flat.NodeId{}
@@ -1645,65 +1644,6 @@ fn (mut p Parser) skip_brackets() {
 		}
 		p.next()
 	}
-}
-
-// parse_generic_type_params parses `[T]` or `[T, U]` and returns the string
-// including brackets, e.g. `"[T, U]"`. The opening `[` is expected as the
-// current token.
-fn (mut p Parser) parse_generic_type_params() string {
-	if p.tok != .lsbr {
-		return ''
-	}
-	p.next() // skip [
-	mut params := []string{}
-	for p.tok != .rsbr && p.tok != .eof {
-		if p.tok == .name {
-			params << p.lit
-			p.next()
-		} else if p.tok == .comma {
-			p.next()
-		} else {
-			p.next()
-		}
-	}
-	if p.tok == .rsbr {
-		p.next()
-	}
-	if params.len == 0 {
-		return ''
-	}
-	return '[' + params.join(', ') + ']'
-}
-
-// reconstruct_type_name rebuilds a type name string from a parsed AST node,
-// used to reconstruct generic names like "Box[string]" from index expressions.
-fn (p &Parser) reconstruct_type_name(node &flat.Node) string {
-	if node.kind == .ident {
-		return node.value
-	}
-	if node.kind == .selector && node.children_count >= 1 {
-		base := p.a.child_node(node, 0)
-		return p.reconstruct_type_name(base) + '.' + node.value
-	}
-	if node.kind == .index && node.children_count >= 2 {
-		base := p.a.child_node(node, 0)
-		mut name := p.reconstruct_type_name(base) + '['
-		for i in 1 .. node.children_count {
-			if i > 1 {
-				name += ', '
-			}
-			arg := p.a.child_node(node, i)
-			name += p.reconstruct_type_name(arg)
-		}
-		return name + ']'
-	}
-	if node.kind == .prefix && node.value.len > 0 {
-		return node.value
-	}
-	if node.value.len > 0 {
-		return node.value
-	}
-	return ''
 }
 
 // ==================== statements ====================
@@ -2436,7 +2376,6 @@ fn (mut p Parser) expr_with_lhs(first flat.NodeId, min_bp token.BindingPower) fl
 			continue
 		}
 		// module-qualified struct init: module.Type{} or module.Type{field: val, ...}
-		// Also handles generic struct init: Box[string]{...}
 		if p.tok == .lcbr {
 			lhs_node := p.a.nodes[int(lhs)]
 			if lhs_node.kind == .selector && lhs_node.value.len > 0
@@ -2446,26 +2385,6 @@ fn (mut p Parser) expr_with_lhs(first flat.NodeId, min_bp token.BindingPower) fl
 					&& (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
 					full_name := '${base.value}.${lhs_node.value}'
 					lhs = p.struct_init(full_name)
-					continue
-				}
-			}
-			// Generic struct init: Name[Type]{...} — parsed as index(ident, type)
-			if lhs_node.kind == .index && lhs_node.children_count >= 2
-				&& (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
-				base := p.a.child_node(&lhs_node, 0)
-				if base.kind == .ident && base.value.len > 0 && base.value[0] >= `A`
-					&& base.value[0] <= `Z` {
-					// Reconstruct the generic name: Box[string]
-					mut gen_name := base.value + '['
-					for ci in 1 .. lhs_node.children_count {
-						if ci > 1 {
-							gen_name += ', '
-						}
-						arg := p.a.child_node(&lhs_node, ci)
-						gen_name += p.reconstruct_type_name(arg)
-					}
-					gen_name += ']'
-					lhs = p.struct_init(gen_name)
 					continue
 				}
 			}

@@ -2,7 +2,6 @@ module c
 
 import strings
 import v3.ast
-import v3.pref
 
 const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default',
 	'do', 'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if', 'inline', 'int', 'long',
@@ -15,9 +14,6 @@ fn c_name(name string) string {
 	}
 	if name == 'malloc' {
 		return 'v_malloc'
-	}
-	if name == 'exit' {
-		return 'v_exit'
 	}
 	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
 		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',
@@ -39,28 +35,12 @@ mut:
 	str_lit_id   int
 	fn_ret_types map[string]string
 	var_types    map[string]string
-	int_bits     int
 }
 
 pub fn Gen.new() Gen {
 	return Gen{
-		sb:       strings.new_builder(4096)
-		int_bits: pref.target_int_bits('')
+		sb: strings.new_builder(4096)
 	}
-}
-
-fn (g &Gen) int_c_type() string {
-	if g.int_bits == 32 {
-		return 'i32'
-	}
-	return 'i64'
-}
-
-fn (g &Gen) int_printf_fmt() string {
-	if g.int_bits == 32 {
-		return '%d'
-	}
-	return '%lld'
 }
 
 pub fn (mut g Gen) gen(files []ast.File) string {
@@ -130,9 +110,9 @@ fn (mut g Gen) preamble() {
 	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')
 	g.writeln('}')
 	g.writeln('')
-	g.writeln('string int_str(${g.int_c_type()} n) {')
-	g.writeln('\tstatic char buf[32];')
-	g.writeln('\tint len = snprintf(buf, sizeof(buf), "${g.int_printf_fmt()}", n);')
+	g.writeln('string int_str(int n) {')
+	g.writeln('\tstatic char buf[20];')
+	g.writeln('\tint len = snprintf(buf, sizeof(buf), "%d", n);')
 	g.writeln('\treturn (string){buf, len, 1};')
 	g.writeln('}')
 	g.writeln('')
@@ -614,7 +594,7 @@ fn (g &Gen) c_type_name(expr ast.Expr) string {
 	match expr {
 		ast.Ident {
 			return match expr.name {
-				'int' { g.int_c_type() }
+				'int' { 'int' }
 				'i8' { 'i8' }
 				'i16' { 'i16' }
 				'i32' { 'i32' }

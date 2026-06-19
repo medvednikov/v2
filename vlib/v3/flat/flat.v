@@ -139,7 +139,7 @@ pub mut:
 pub:
 	pos            token.Pos
 	children_start i32
-	children_count int
+	children_count i16
 	kind           NodeKind
 	op             Op
 }
@@ -182,12 +182,12 @@ pub fn (mut a FlatAst) add_node(node Node) NodeId {
 	return id
 }
 
-// child_count validates dynamic child counts before storing them on flat nodes.
-pub fn child_count(count int) int {
+// child_count converts a dynamic child count to Node's compact storage type.
+pub fn child_count(count int) i16 {
 	if count > 32767 {
 		panic('flat node has too many children')
 	}
-	return count
+	return i16(count)
 }
 
 pub fn (mut a FlatAst) begin_children() int {

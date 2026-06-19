@@ -23,8 +23,6 @@ pub type Type = Void
 	| SumType
 	| Alias
 	| MultiReturn
-	| GenericParam
-	| GenericInstance
 
 pub struct Void {
 	dummy_ u8
@@ -147,17 +145,6 @@ pub:
 pub struct MultiReturn {
 pub:
 	types []Type
-}
-
-pub struct GenericParam {
-pub:
-	name string
-}
-
-pub struct GenericInstance {
-pub:
-	name string
-	args []Type
 }
 
 pub struct StructField {
@@ -283,16 +270,6 @@ pub fn (t Type) name() string {
 			parts << nested_type_name(t.types[i])
 		}
 		return '(${parts.join(', ')})'
-	}
-	if t is GenericParam {
-		return t.name
-	}
-	if t is GenericInstance {
-		mut args := []string{}
-		for i in 0 .. t.args.len {
-			args << nested_type_name(t.args[i])
-		}
-		return '${t.name}[${args.join(', ')}]'
 	}
 	return ''
 }

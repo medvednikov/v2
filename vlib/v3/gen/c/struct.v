@@ -262,8 +262,7 @@ fn (mut g FlatGen) gen_map_init(node flat.Node) {
 	if map_type is types.Map {
 		g.write_new_map(map_type.key_type, map_type.value_type)
 	} else {
-		int_type := g.tc.int_c_type()
-		g.write('new_map(sizeof(${int_type}), sizeof(${int_type}), 0, 0, 0, 0)')
+		g.write('new_map(sizeof(int), sizeof(int), 0, 0, 0, 0)')
 	}
 }
 
@@ -315,7 +314,7 @@ fn (mut g FlatGen) struct_decls() {
 	if g.has_builtins {
 		g.writeln('typedef array Array;')
 	}
-	g.writeln('typedef struct Optional { bool ok; ${g.tc.int_c_type()} value; } Optional;')
+	g.writeln('typedef struct Optional { bool ok; int value; } Optional;')
 	g.writeln('')
 	mut emitted := map[string]bool{}
 	mut remaining := map[string]bool{}
@@ -352,11 +351,11 @@ fn (mut g FlatGen) struct_decls() {
 			}
 			if can_emit {
 				g.writeln('struct ${cn} {')
-				g.writeln('\ti32 _typ;')
+				g.writeln('\tint _typ;')
 				if cn == 'IError' {
 					g.writeln('\tvoid* _object;')
 					g.writeln('\tstring message;')
-					g.writeln('\ti32 code;')
+					g.writeln('\tint code;')
 				}
 				g.writeln('};')
 				g.writeln('')
@@ -437,11 +436,11 @@ fn (mut g FlatGen) struct_decls() {
 	for name, _ in iface_remaining {
 		cn := c_name(name)
 		g.writeln('struct ${cn} {')
-		g.writeln('\ti32 _typ;')
+		g.writeln('\tint _typ;')
 		if cn == 'IError' {
 			g.writeln('\tvoid* _object;')
 			g.writeln('\tstring message;')
-			g.writeln('\ti32 code;')
+			g.writeln('\tint code;')
 		}
 		g.writeln('};')
 		g.writeln('')

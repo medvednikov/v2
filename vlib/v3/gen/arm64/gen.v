@@ -809,9 +809,6 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 	if !is_indirect {
 		fn_name = fn_ref.name
 	}
-	if fn_name.starts_with('C.') {
-		fn_name = fn_name[2..]
-	}
 	ret_indirect := g.is_large_struct_type(instr.typ)
 
 	out_stack_size := g.call_stack_arg_size(instr)
@@ -1396,15 +1393,9 @@ fn (mut g Gen) emit_load_typed(dst_reg int, ptr_reg int, typ ssa.TypeID) {
 	match size {
 		1 {
 			g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg)))
-			if g.is_signed_int_type(typ) {
-				g.emit32(asm_sxtb(Reg(dst_reg), Reg(dst_reg)))
-			}
 		}
 		2 {
 			g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg)))
-			if g.is_signed_int_type(typ) {
-				g.emit32(asm_sxth(Reg(dst_reg), Reg(dst_reg)))
-			}
 		}
 		4 {
 			if g.is_signed_int_type(typ) {

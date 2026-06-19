@@ -6,16 +6,12 @@ import v3.ssa
 import v3.types
 
 fn parse_checked_source(name string, source string) (&flat.FlatAst, &types.TypeChecker) {
-	return parse_checked_source_with_int_bits(name, source, pref.target_int_bits(''))
-}
-
-fn parse_checked_source_with_int_bits(name string, source string, int_bits int) (&flat.FlatAst, &types.TypeChecker) {
 	src := os.join_path(os.temp_dir(), 'v3_ssa_builder_${name}.v')
 	os.write_file(src, source) or { panic(err) }
 	prefs := pref.new_preferences()
 	mut p := parser.Parser.new(prefs)
 	mut a := p.parse_file(src)
-	mut tc := types.TypeChecker.new_with_int_bits(a, int_bits)
+	mut tc := types.TypeChecker.new(a)
 	tc.collect(a)
 	tc.annotate_types()
 	assert tc.errors.len == 0
@@ -24,11 +20,6 @@ fn parse_checked_source_with_int_bits(name string, source string, int_bits int) 
 
 fn build_source(name string, source string) &ssa.Module {
 	return build_source_with_used(name, source, map[string]bool{})
-}
-
-fn build_source_with_int_bits(name string, source string, int_bits int) &ssa.Module {
-	a, tc := parse_checked_source_with_int_bits(name, source, int_bits)
-	return ssa.build_with_used(a, map[string]bool{}, tc)
 }
 
 fn build_source_with_used(name string, source string, used_fns map[string]bool) &ssa.Module {
@@ -167,7 +158,7 @@ fn same(a string, b string) bool {
 
 fn test_c_fn_decl_registers_extern_signature() {
 	m := build_source('c_fn_decl', '
-fn C.abs(x i32) i32
+fn C.abs(x int) int
 
 fn main() {
 	_ := C.abs(-3)
@@ -178,48 +169,6 @@ fn main() {
 	ret_type := m.type_store.types[f.typ]
 	assert ret_type.kind == .int_t
 	assert ret_type.width == 32
-}
-
-fn test_plain_int_uses_64_bit_ssa_type() {
-	m := build_source_with_int_bits('plain_int_width_64', '
-fn add(a int, b int) int {
-	return a + b
-}
-', 64)
-	f := find_func(m, 'add')
-	ret_type := m.type_store.types[f.typ]
-	assert ret_type.kind == .int_t
-	assert ret_type.width == 64
-	for param_id in f.params {
-		param_type := m.type_store.types[m.values[param_id].typ]
-		assert param_type.kind == .int_t
-		assert param_type.width == 64
-	}
-}
-
-fn test_plain_int_uses_32_bit_ssa_type_for_32_bit_target() {
-	m := build_source_with_int_bits('plain_int_width_32', '
-fn add(a int, b int) int {
-	return a + b
-}
-', 32)
-	f := find_func(m, 'add')
-	ret_type := m.type_store.types[f.typ]
-	assert ret_type.kind == .int_t
-	assert ret_type.width == 32
-	for param_id in f.params {
-		param_type := m.type_store.types[m.values[param_id].typ]
-		assert param_type.kind == .int_t
-		assert param_type.width == 32
-	}
-}
-
-fn test_plain_int_c_type_follows_target_bits() {
-	a := &flat.FlatAst{}
-	tc32 := types.TypeChecker.new_with_int_bits(a, 32)
-	assert tc32.c_type(types.Type(types.int_)) == 'i32'
-	tc64 := types.TypeChecker.new_with_int_bits(a, 64)
-	assert tc64.c_type(types.Type(types.int_)) == 'i64'
 }
 
 fn test_function_parameter_call_lowers_to_call_indirect() {
@@ -322,7 +271,7 @@ fn widen(x u8) i64 {
 	return i64(x)
 }
 
-fn widen_signed(x i32) i64 {
+fn widen_signed(x int) i64 {
 	return i64(x)
 }
 ')

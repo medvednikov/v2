@@ -995,13 +995,6 @@ struct OptionalContextHolder117 {
 	items []OptionalContext117
 }
 
-struct NarrowInts117 {
-	a i8
-	b i16
-	c u8
-	d u16
-}
-
 struct ConstHolder117 {
 	value int
 }
@@ -1276,29 +1269,6 @@ fn optional_context_score117() int {
 		return 1
 	}
 	return 0
-}
-
-fn signed_narrow_load_score117() int {
-	values117 := NarrowInts117{
-		a: i8(-3)
-		b: i16(-300)
-		c: u8(250)
-		d: u16(65000)
-	}
-	mut score117 := 0
-	if values117.a < 0 {
-		score117 += 1
-	}
-	if values117.b < 0 {
-		score117 += 2
-	}
-	if values117.c == u8(250) {
-		score117 += 4
-	}
-	if values117.d == u16(65000) {
-		score117 += 8
-	}
-	return score117
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5549,9 +5519,6 @@ fn main() {
 
 	// 117.25 Optional struct payloads preserve string fields from array indexes.
 	print_int(optional_context_score117()) // 1
-
-	// 117.26 Signed narrow struct fields sign-extend when loaded.
-	print_int(signed_narrow_load_score117()) // 15
 
 	print_str('arm64 self-host regression coverage: ok')
 

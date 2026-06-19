@@ -22,16 +22,6 @@ fn run_bad(v3_bin string, name string, src string, expected string) {
 	assert !result.output.contains('C compilation failed')
 }
 
-fn run_bad_selfhost(v3_bin string, name string, src string, expected string) {
-	bad_src := os.join_path(os.temp_dir(), 'v3_${name}.v')
-	os.write_file(bad_src, src) or { panic(err) }
-	bad_bin := os.join_path(os.temp_dir(), 'v3_${name}')
-	result := os.execute('${v3_bin} ${bad_src} -selfhost -b c -o ${bad_bin}')
-	assert result.exit_code != 0
-	assert result.output.contains(expected)
-	assert !result.output.contains('C compilation failed')
-}
-
 fn run_good(v3_bin string, name string, src string) string {
 	good_src := os.join_path(os.temp_dir(), 'v3_${name}.v')
 	os.write_file(good_src, src) or { panic(err) }
@@ -137,11 +127,10 @@ fn test_type_checker_reports_core_semantic_errors() {
 		'`Bird` is not a variant of sum type `Animal`')
 	run_bad(v3_bin, 'bad_unknown_decl_type', 'fn f(x Missing) {}\nfn main() {}\n',
 		'unknown type `Missing`')
-	run_bad_selfhost(v3_bin, 'bad_generic_param',
+	run_bad(v3_bin, 'bad_generic_param',
 		'fn id[T](x T) T {\n\treturn x\n}\nfn main() {\n\t_ := id(1)\n}\n',
 		'unsupported generic type parameter `T`')
-	run_bad_selfhost(v3_bin, 'bad_generic_type_application',
-		'fn takes_box(x Box[int]) {}\nfn main() {}\n',
+	run_bad(v3_bin, 'bad_generic_type_application', 'fn takes_box(x Box[int]) {}\nfn main() {}\n',
 		'unsupported generic type application `Box[int]`')
 	run_bad_project(v3_bin, 'bad_bare_imported_call', {
 		'main.v':      'module main\n\nimport moda\n\nfn main() {\n\t_ := answer()\n}\n'

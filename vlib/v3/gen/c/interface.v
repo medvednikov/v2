@@ -5,7 +5,7 @@ import v3.types
 fn (mut g FlatGen) emit_sum_type(name string) {
 	variants := g.tc.sum_types[name]
 	g.writeln('struct ${c_name(name)} {')
-	g.writeln('\ti32 typ;')
+	g.writeln('\tint typ;')
 	g.writeln('\tunion {')
 	for v in variants {
 		ct := g.tc.c_type(g.tc.parse_type(v))
@@ -104,7 +104,6 @@ fn (g &FlatGen) sum_field_name(variant string) string {
 		'int' { '_int' }
 		'i8' { '_i8' }
 		'i16' { '_i16' }
-		'i32' { '_i32' }
 		'i64' { '_i64' }
 		'u8', 'byte' { '_u8' }
 		'u16' { '_u16' }

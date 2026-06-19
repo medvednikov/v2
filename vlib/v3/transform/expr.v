@@ -566,17 +566,8 @@ fn c_name(name string) string {
 	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
 		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',
 		'__lt').replace('.>', '__gt').replace('.', '__')
-	if is_c_reserved_word(n) {
+	if n in c_reserved_words {
 		return 'v_${n}'
 	}
 	return n
-}
-
-fn is_c_reserved_word(name string) bool {
-	for word in c_reserved_words {
-		if word == name {
-			return true
-		}
-	}
-	return false
 }
