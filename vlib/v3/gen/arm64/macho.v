@@ -69,7 +69,7 @@ pub fn (mut m MachOObject) add_symbol(name string, addr u64, is_ext bool, sect u
 	typ := if is_ext { u8(0x0f) } else { u8(0x0e) } // N_SECT | N_EXT : N_SECT
 
 	// Check if symbol already exists (e.g., was added as undefined earlier)
-	if i := m.sym_by_name[name] {
+	if i := m.find_symbol(name) {
 		mut s := &m.symbols[i]
 		s.type_ = typ
 		s.sect = sect
@@ -80,8 +80,17 @@ pub fn (mut m MachOObject) add_symbol(name string, addr u64, is_ext bool, sect u
 	// Add new symbol
 	idx := m.symbols.len
 	name_off := m.str_table.len
-	unsafe { m.str_table.push_many(name.str, name.len) }
-	m.str_table << 0
+	mut str_table := []u8{}
+	for ch in m.str_table {
+		str_table << ch
+	}
+	for i in 0 .. name.len {
+		unsafe {
+			str_table << name.str[i]
+		}
+	}
+	str_table << 0
+	m.str_table = str_table
 
 	m.symbols << Symbol{
 		name:     name
@@ -91,20 +100,28 @@ pub fn (mut m MachOObject) add_symbol(name string, addr u64, is_ext bool, sect u
 		value:    addr
 		name_off: name_off
 	}
-	m.sym_by_name[name] = idx
 	return idx
 }
 
 pub fn (mut m MachOObject) add_undefined(name string) int {
 	// Check for any existing symbol with this name (defined or undefined)
-	if i := m.sym_by_name[name] {
+	if i := m.find_symbol(name) {
 		return i
 	}
 
 	idx := m.symbols.len
 	name_off := m.str_table.len
-	unsafe { m.str_table.push_many(name.str, name.len) }
-	m.str_table << 0
+	mut str_table := []u8{}
+	for ch in m.str_table {
+		str_table << ch
+	}
+	for i in 0 .. name.len {
+		unsafe {
+			str_table << name.str[i]
+		}
+	}
+	str_table << 0
+	m.str_table = str_table
 
 	m.symbols << Symbol{
 		name:     name
@@ -114,8 +131,16 @@ pub fn (mut m MachOObject) add_undefined(name string) int {
 		value:    0
 		name_off: name_off
 	}
-	m.sym_by_name[name] = idx
 	return idx
+}
+
+fn (m &MachOObject) find_symbol(name string) ?int {
+	for i, sym in m.symbols {
+		if sym.name == name {
+			return i
+		}
+	}
+	return none
 }
 
 pub fn (mut m MachOObject) add_reloc(addr int, sym_idx int, typ int, pcrel bool) {

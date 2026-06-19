@@ -809,6 +809,9 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 	if !is_indirect {
 		fn_name = fn_ref.name
 	}
+	if fn_name.starts_with('C.') {
+		fn_name = fn_name[2..]
+	}
 	ret_indirect := g.is_large_struct_type(instr.typ)
 
 	out_stack_size := g.call_stack_arg_size(instr)

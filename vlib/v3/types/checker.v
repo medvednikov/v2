@@ -647,10 +647,21 @@ fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
 		else {}
 	}
 
-	tc.remember_expr_type(id, tc.resolve_type(id))
+	if should_annotate_expr_type(node.kind) {
+		tc.remember_expr_type(id, tc.resolve_type(id))
+	}
 	for i in 0 .. node.children_count {
 		tc.annotate_node(tc.a.child(&node, i))
 	}
+}
+
+fn should_annotate_expr_type(kind flat.NodeKind) bool {
+	return kind in [.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
+		.string_interp, .ident, .infix, .prefix, .postfix, .paren, .call, .selector, .index,
+		.struct_init, .field_init, .array_literal, .array_init, .map_init, .fn_literal,
+		.or_expr, .cast_expr, .as_expr, .enum_val, .assoc, .range, .nil_literal, .none_expr,
+		.spawn_expr, .lock_expr, .lambda_expr, .sizeof_expr, .typeof_expr, .dump_expr,
+		.offsetof_expr, .is_expr, .in_expr]
 }
 
 fn (mut tc TypeChecker) annotate_for_in(_id flat.NodeId, node flat.Node) {
@@ -777,8 +788,7 @@ fn should_cache_expr_type(kind flat.NodeKind, typ Type) bool {
 		|| typ is GenericParam || typ is GenericInstance {
 		return true
 	}
-	return kind !in [.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
-		.nil_literal]
+	return kind == .or_expr
 }
 
 pub fn (mut tc TypeChecker) check_semantics() {
@@ -952,9 +962,7 @@ fn (mut tc TypeChecker) check_fn_type_string_for_unsupported_generics(typ string
 	}
 	for part in split_params(typ[params_start..params_end]) {
 		trimmed := part.trim_space()
-		parts := trimmed.split(' ')
-		param_type := if parts.len >= 2 { parts[parts.len - 1] } else { trimmed }
-		tc.check_type_string_for_unsupported_generics(param_type, node_id)
+		tc.check_type_string_for_unsupported_generics(last_space_part(trimmed), node_id)
 	}
 	ret := typ[params_end + 1..].trim_space()
 	tc.check_type_string_for_unsupported_generics(ret, node_id)
@@ -1974,10 +1982,44 @@ fn fn_type_from_type(typ Type) ?FnType {
 }
 
 fn (tc &TypeChecker) selector_fn_type(node flat.Node) ?FnType {
-	if typ := tc.selector_type(flat.NodeId(-1), node) {
-		return fn_type_from_type(typ)
+	if node.children_count == 0 {
+		return none
+	}
+	if !valid_string_data(node.value) {
+		return none
+	}
+	base_id := tc.a.child(&node, 0)
+	base_type := tc.resolve_type(base_id)
+	clean0 := unwrap_pointer(base_type)
+	mut clean := clean0
+	if clean0 is Alias {
+		clean = clean0.base_type
+	}
+	if clean is Struct {
+		fields := tc.structs[clean.name] or { return none }
+		for f in fields {
+			if !valid_string_data(f.name) {
+				continue
+			}
+			if f.name == node.value {
+				return fn_type_from_type(f.typ)
+			}
+		}
+	}
+	if clean is Interface {
+		if typ := tc.interface_field_type(clean.name, node.value) {
+			return fn_type_from_type(typ)
+		}
 	}
 	return none
+}
+
+fn valid_string_data(s string) bool {
+	if s.len == 0 {
+		return true
+	}
+	ptr := unsafe { u64(voidptr(s.str)) }
+	return ptr >= 4096
 }
 
 fn array_elem_type(arr Array) Type {
@@ -2818,10 +2860,23 @@ fn (tc &TypeChecker) enum_value_matches(value string, enum_name string) bool {
 
 fn (tc &TypeChecker) enum_has_field(enum_name string, field string) bool {
 	fields := tc.enum_fields[enum_name] or { return false }
-	return field in fields
+	for f in fields {
+		if f == field {
+			return true
+		}
+	}
+	return false
 }
 
 fn (tc &TypeChecker) resolve_enum_name(name string) ?string {
+	resolved := tc.resolve_enum_name_or_empty(name)
+	if resolved.len > 0 {
+		return resolved
+	}
+	return none
+}
+
+fn (tc &TypeChecker) resolve_enum_name_or_empty(name string) string {
 	if name in tc.enum_names {
 		return name
 	}
@@ -2829,7 +2884,7 @@ fn (tc &TypeChecker) resolve_enum_name(name string) ?string {
 	if qname in tc.enum_names {
 		return qname
 	}
-	return none
+	return ''
 }
 
 fn (tc &TypeChecker) enum_selector_type(node &flat.Node) ?Type {
@@ -2839,12 +2894,12 @@ fn (tc &TypeChecker) enum_selector_type(node &flat.Node) ?Type {
 	base := tc.a.child_node(node, 0)
 	mut enum_name := ''
 	if base.kind == .ident {
-		enum_name = tc.resolve_enum_name(base.value) or { '' }
+		enum_name = tc.resolve_enum_name_or_empty(base.value)
 	} else if base.kind == .selector && base.children_count > 0 {
 		inner := tc.a.child_node(base, 0)
 		if inner.kind == .ident {
 			mod_name := tc.resolve_import_alias(inner.value) or { inner.value }
-			enum_name = tc.resolve_enum_name('${mod_name}.${base.value}') or { '' }
+			enum_name = tc.resolve_enum_name_or_empty('${mod_name}.${base.value}')
 		}
 	}
 	if enum_name.len == 0 || !tc.enum_has_field(enum_name, node.value) {
@@ -3579,9 +3634,7 @@ fn (tc &TypeChecker) parse_fn_type(typ string) Type {
 		param_parts := split_params(params_str)
 		for p in param_parts {
 			trimmed := p.trim_space()
-			parts := trimmed.split(' ')
-			param_type := if parts.len >= 2 { parts[parts.len - 1] } else { trimmed }
-			params << tc.parse_type(param_type)
+			params << tc.parse_type(last_space_part(trimmed))
 		}
 	}
 	mut ret_type := Type(Void{})
@@ -3592,6 +3645,19 @@ fn (tc &TypeChecker) parse_fn_type(typ string) Type {
 		params:      params
 		return_type: ret_type
 	})
+}
+
+fn last_space_part(s string) string {
+	mut last_space := -1
+	for i in 0 .. s.len {
+		if s[i] == ` ` {
+			last_space = i
+		}
+	}
+	if last_space >= 0 && last_space + 1 < s.len {
+		return s[last_space + 1..]
+	}
+	return s
 }
 
 pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
@@ -4474,10 +4540,19 @@ fn c_name(name string) string {
 	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
 		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',
 		'__lt').replace('.>', '__gt').replace('.', '__')
-	if n in c_reserved_words {
+	if is_c_reserved_word(n) {
 		return 'v_${n}'
 	}
 	return n
+}
+
+fn is_c_reserved_word(name string) bool {
+	for word in c_reserved_words {
+		if word == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Public wrappers for functions needed by the transform module.

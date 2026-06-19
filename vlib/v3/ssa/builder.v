@@ -937,9 +937,19 @@ fn (mut b Builder) register_functions() {
 				param_types << b.resolve_c_decl_type(child.typ)
 			}
 		}
-		b.register_extern(node.value, ret_type, param_types)
 		if node.value.starts_with('C.') {
-			b.register_extern(node.value[2..], ret_type, param_types)
+			c_name := node.value[2..]
+			b.register_extern(c_name, ret_type, param_types)
+			if idx := b.fn_ids[c_name] {
+				if ft := b.fn_types[c_name] {
+					b.fn_ids[node.value] = idx
+					b.c_fn_ids[node.value] = idx
+					b.fn_types[node.value] = ft
+					b.c_fn_types[node.value] = ft
+				}
+			}
+		} else {
+			b.register_extern(node.value, ret_type, param_types)
 		}
 	}
 
@@ -953,7 +963,8 @@ fn (mut b Builder) register_functions() {
 			if b.skip_source_fn_in_module(node.value, cur_module) {
 				continue
 			}
-			if b.used_fns.len > 0 && !b.fn_is_used(node.value) {
+			ssa_name := source_fn_name(node.value, cur_module)
+			if b.used_fns.len > 0 && !b.fn_is_used(ssa_name) && !b.fn_is_used(node.value) {
 				continue
 			}
 			ret_type := b.checker_return_type(node.value, cur_module) or {
@@ -980,9 +991,8 @@ fn (mut b Builder) register_functions() {
 				ret_type: ret_type
 				params:   param_types
 			})
-			b.fn_types[node.value] = fn_type
-			func_id := b.m.new_function(node.value, ret_type)
-			b.fn_ids[node.value] = func_id
+			func_id := b.m.new_function(ssa_name, ret_type)
+			b.register_source_fn_aliases(node.value, ssa_name, fn_type, func_id)
 		}
 	}
 	b.register_top_level_main()
@@ -3864,7 +3874,8 @@ fn (mut b Builder) build_functions() {
 			if b.skip_source_fn_in_module(node.value, cur_module) {
 				continue
 			}
-			if b.used_fns.len > 0 && !b.fn_is_used(node.value) {
+			ssa_name := source_fn_name(node.value, cur_module)
+			if b.used_fns.len > 0 && !b.fn_is_used(ssa_name) && !b.fn_is_used(node.value) {
 				continue
 			}
 			b.build_function(node, cur_module)
@@ -3872,6 +3883,37 @@ fn (mut b Builder) build_functions() {
 	}
 	if b.top_level_main {
 		b.build_top_level_main()
+	}
+}
+
+fn source_fn_name(name string, module_name string) string {
+	if module_name.len == 0 || module_name == 'main' || module_name == 'builtin'
+		|| name.starts_with(module_name + '.') {
+		return name
+	}
+	return module_name + '.' + name
+}
+
+fn (mut b Builder) register_source_fn_aliases(name string, ssa_name string, fn_type TypeID, func_id int) {
+	b.fn_types[ssa_name] = fn_type
+	b.fn_ids[ssa_name] = func_id
+	if ssa_name.contains('.') {
+		lowered := ssa_name.replace('.', '__')
+		if lowered !in b.fn_ids {
+			b.fn_ids[lowered] = func_id
+			b.fn_types[lowered] = fn_type
+		}
+	}
+	if name != ssa_name && name !in b.fn_ids {
+		b.fn_ids[name] = func_id
+		b.fn_types[name] = fn_type
+	}
+	if name.contains('.') {
+		lowered_short := name.replace('.', '__')
+		if lowered_short !in b.fn_ids {
+			b.fn_ids[lowered_short] = func_id
+			b.fn_types[lowered_short] = fn_type
+		}
 	}
 }
 
@@ -3955,7 +3997,8 @@ fn (b &Builder) fn_is_used(name string) bool {
 }
 
 fn (mut b Builder) build_function(node flat.Node, module_name string) {
-	func_id := b.fn_ids[node.value]
+	ssa_name := source_fn_name(node.value, module_name)
+	func_id := b.fn_ids[ssa_name] or { return }
 	b.cur_module = module_name
 	b.cur_func = func_id
 	b.vars = map[string]ValueID{}
@@ -4525,13 +4568,15 @@ fn (mut b Builder) build_for_in(node flat.Node) {
 }
 
 fn (mut b Builder) build_range_for_in(node flat.Node, key_id flat.NodeId, start_id flat.NodeId, end_id flat.NodeId, body_start int) {
-	start_val := b.build_expr(start_id)
-	end_val := b.build_expr(end_id)
+	mut start_val := b.build_expr(start_id)
+	mut end_val := b.build_expr(end_id)
+	start_val = b.coerce_int_value(start_val, b.i64_type)
+	end_val = b.coerce_int_value(end_val, b.i64_type)
 	idx_alloca := b.emit0(.alloca, b.m.type_store.get_ptr(b.i64_type))
 	b.emit2(.store, b.void_type, start_val, idx_alloca)
 	key_name := b.ident_name(key_id)
 	old_key := b.save_var_binding(key_name)
-	key_alloca := b.bind_loop_var(key_name, b.i64_type, 'int')
+	key_alloca := b.bind_loop_var(key_name, b.int_type, 'int')
 
 	cond_block := b.m.add_block(b.cur_func, 'for_in_range_cond')
 	body_block := b.m.add_block(b.cur_func, 'for_in_range_body')
@@ -4546,7 +4591,8 @@ fn (mut b Builder) build_range_for_in(node flat.Node, key_id flat.NodeId, start_
 
 	b.cur_block = body_block
 	if key_alloca > 0 {
-		b.emit2(.store, b.void_type, idx, key_alloca)
+		key_idx := b.coerce_int_value(idx, b.int_type)
+		b.emit2(.store, b.void_type, key_idx, key_alloca)
 	}
 	b.break_targets << exit_block
 	b.continue_targets << post_block
@@ -4585,7 +4631,7 @@ fn (mut b Builder) build_array_for_in(node flat.Node, key_id flat.NodeId, val_id
 	old_key := b.save_var_binding(key_name)
 	old_val := if has_value_var { b.save_var_binding(val_name) } else { VarBinding{} }
 	key_alloca := if has_value_var {
-		b.bind_loop_var(key_name, b.i64_type, 'int')
+		b.bind_loop_var(key_name, b.int_type, 'int')
 	} else {
 		ValueID(0)
 	}
@@ -4606,7 +4652,8 @@ fn (mut b Builder) build_array_for_in(node flat.Node, key_id flat.NodeId, val_id
 	b.cur_block = body_block
 	body_idx := b.emit1(.load, b.i64_type, idx_alloca)
 	if key_alloca > 0 {
-		b.emit2(.store, b.void_type, body_idx, key_alloca)
+		key_idx := b.coerce_int_value(body_idx, b.int_type)
+		b.emit2(.store, b.void_type, key_idx, key_alloca)
 	}
 	if val_alloca > 0 {
 		elem_ptr := b.build_array_data_index_addr(arr_alloca, body_idx, elem_type)
@@ -4651,7 +4698,7 @@ fn (mut b Builder) build_string_for_in(node flat.Node, key_id flat.NodeId, val_i
 	old_key := b.save_var_binding(key_name)
 	old_val := if has_value_var { b.save_var_binding(val_name) } else { VarBinding{} }
 	key_alloca := if has_value_var {
-		b.bind_loop_var(key_name, b.i64_type, 'int')
+		b.bind_loop_var(key_name, b.int_type, 'int')
 	} else {
 		ValueID(0)
 	}
@@ -4674,7 +4721,8 @@ fn (mut b Builder) build_string_for_in(node flat.Node, key_id flat.NodeId, val_i
 	b.cur_block = body_block
 	body_idx := b.emit1(.load, b.i64_type, idx_alloca)
 	if key_alloca > 0 {
-		b.emit2(.store, b.void_type, body_idx, key_alloca)
+		key_idx := b.coerce_int_value(body_idx, b.int_type)
+		b.emit2(.store, b.void_type, key_idx, key_alloca)
 	}
 	data_ptr := b.get_field_ptr(str_alloca, 'str')
 	data := b.emit1(.load, b.m.type_store.get_ptr(b.i8_type), data_ptr)
@@ -6857,16 +6905,16 @@ fn (mut b Builder) build_selector_addr(node flat.Node) ValueID {
 			if field_ptr := b.smartcast_sum_selector_addr(addr, base_id, node.value) {
 				return field_ptr
 			}
-			return b.get_field_ptr(addr, node.value)
+			return b.get_field_ptr(b.selector_base_addr(addr), node.value)
 		}
 	}
 	if base.kind == .selector {
 		base_addr := b.build_selector_addr(base)
-		return b.get_field_ptr(base_addr, node.value)
+		return b.get_field_ptr(b.selector_base_addr(base_addr), node.value)
 	}
 	if base.kind == .index {
 		base_addr := b.build_index_addr(base_id, base)
-		return b.get_field_ptr(base_addr, node.value)
+		return b.get_field_ptr(b.selector_base_addr(base_addr), node.value)
 	}
 	base_val := b.build_expr(base_id)
 	base_typ := b.value_type(base_val)
@@ -6877,6 +6925,20 @@ fn (mut b Builder) build_selector_addr(node flat.Node) ValueID {
 		return b.get_field_ptr(alloca, node.value)
 	}
 	return b.m.get_or_add_const(b.m.type_store.get_ptr(b.i8_type), '0')
+}
+
+fn (mut b Builder) selector_base_addr(addr ValueID) ValueID {
+	elem_type := b.deref_type(addr)
+	if elem_type > 0 && elem_type < b.m.type_store.types.len {
+		elem := b.m.type_store.types[elem_type]
+		if elem.kind == .ptr_t && elem.elem_type > 0 && elem.elem_type < b.m.type_store.types.len {
+			target := b.m.type_store.types[elem.elem_type]
+			if target.kind == .struct_t {
+				return b.emit1(.load, elem_type, addr)
+			}
+		}
+	}
+	return addr
 }
 
 fn (mut b Builder) build_arrow_selector_base_ptr(base_id flat.NodeId, base flat.Node) ValueID {
@@ -6959,6 +7021,10 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 		if resolved := b.resolved_call_name(id) {
 			actual_name = resolved
 		}
+	}
+	if actual_name.starts_with('C.') {
+		actual_name = actual_name[2..]
+		is_c_call = true
 	}
 
 	if fn_node.kind == .selector && fn_node.value in ['set', 'clear', 'has'] {
@@ -7125,6 +7191,9 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 			eprintln('  child[${i}]: kind=${child.kind} value="${child.value}" typ="${child.typ}" op=${child.op} children=${child.children_count}')
 		}
 		panic('ssa: unknown function `${actual_name}`')
+	}
+	if !is_c_call && fn_idx >= 0 && fn_idx < b.m.funcs.len {
+		resolved_name = b.m.funcs[fn_idx].name
 	}
 	fn_ref := b.m.add_value(.func_ref, b.void_type, resolved_name, fn_idx)
 	ret_type := b.m.funcs[fn_idx].typ

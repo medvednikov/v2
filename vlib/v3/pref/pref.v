@@ -57,6 +57,7 @@ pub fn normalized_arch(arch string) string {
 		'rv64', 'riscv64', 'risc-v64', 'riscv', 'risc-v' { 'rv64' }
 		'rv32', 'riscv32', 'risc-v32' { 'rv32' }
 		'x86_32', 'x32', 'i386', 'ia-32', 'ia32' { 'i386' }
+		'wasm32', 'wasm' { 'wasm32' }
 		else { a }
 	}
 }
@@ -269,16 +270,22 @@ pub fn comptime_flag_value(p &Preferences, name string) bool {
 				|| tos == 'dragonfly'
 		}
 		'x64', 'amd64' {
-			$if amd64 {
-				return true
-			}
-			return false
+			return normalized_arch(p.target_arch) == 'amd64'
 		}
 		'arm64', 'aarch64' {
-			$if arm64 {
-				return true
-			}
-			return false
+			return normalized_arch(p.target_arch) == 'arm64'
+		}
+		'i386', 'x32', 'x86_32' {
+			return normalized_arch(p.target_arch) == 'i386'
+		}
+		'arm32', 'aarch32', 'arm' {
+			return normalized_arch(p.target_arch) == 'arm32'
+		}
+		'rv64', 'riscv64' {
+			return normalized_arch(p.target_arch) == 'rv64'
+		}
+		'rv32', 'riscv32' {
+			return normalized_arch(p.target_arch) == 'rv32'
 		}
 		'little_endian' {
 			$if little_endian {
@@ -316,8 +323,7 @@ pub fn comptime_flag_value(p &Preferences, name string) bool {
 			}
 			return name in p.user_defines
 		}
-		'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
-		'nofloat' {
+		'prealloc', 'autofree', 'no_bounds_checking', 'freestanding', 'nofloat' {
 			return name in p.user_defines
 		}
 		else {
