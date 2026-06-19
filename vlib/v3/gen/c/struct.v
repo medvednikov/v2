@@ -262,7 +262,8 @@ fn (mut g FlatGen) gen_map_init(node flat.Node) {
 	if map_type is types.Map {
 		g.write_new_map(map_type.key_type, map_type.value_type)
 	} else {
-		g.write('new_map(sizeof(i64), sizeof(i64), 0, 0, 0, 0)')
+		int_type := g.tc.int_c_type()
+		g.write('new_map(sizeof(${int_type}), sizeof(${int_type}), 0, 0, 0, 0)')
 	}
 }
 
@@ -314,7 +315,7 @@ fn (mut g FlatGen) struct_decls() {
 	if g.has_builtins {
 		g.writeln('typedef array Array;')
 	}
-	g.writeln('typedef struct Optional { bool ok; i64 value; } Optional;')
+	g.writeln('typedef struct Optional { bool ok; ${g.tc.int_c_type()} value; } Optional;')
 	g.writeln('')
 	mut emitted := map[string]bool{}
 	mut remaining := map[string]bool{}

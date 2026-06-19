@@ -1393,9 +1393,15 @@ fn (mut g Gen) emit_load_typed(dst_reg int, ptr_reg int, typ ssa.TypeID) {
 	match size {
 		1 {
 			g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg)))
+			if g.is_signed_int_type(typ) {
+				g.emit32(asm_sxtb(Reg(dst_reg), Reg(dst_reg)))
+			}
 		}
 		2 {
 			g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg)))
+			if g.is_signed_int_type(typ) {
+				g.emit32(asm_sxth(Reg(dst_reg), Reg(dst_reg)))
+			}
 		}
 		4 {
 			if g.is_signed_int_type(typ) {

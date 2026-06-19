@@ -1,6 +1,7 @@
 module types
 
 import v3.flat
+import v3.pref
 
 fn tarr1(a Type) []Type {
 	mut r := []Type{}
@@ -98,14 +99,24 @@ pub mut:
 	errors                        []TypeError
 	resolved_calls                map[int]string // node_id -> resolved function name
 	expr_types                    map[int]Type   // node_id -> complex/contextual resolved type
+	building_v                    bool
 	diagnose_unknown_calls        bool
 	reject_unlowered_map_mutation bool
 	diagnostic_files              map[string]bool
 	cur_fn_ret_type               Type = Type(void_)
 	smartcasts                    map[string]Type
+	int_bits                      int
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
+	return TypeChecker.new_with_int_bits(a, pref.target_int_bits(''))
+}
+
+pub fn TypeChecker.new_with_prefs(a &flat.FlatAst, prefs &pref.Preferences) TypeChecker {
+	return TypeChecker.new_with_int_bits(a, prefs.int_bits())
+}
+
+pub fn TypeChecker.new_with_int_bits(a &flat.FlatAst, int_bits int) TypeChecker {
 	fs := new_scope(unsafe { nil })
 	return TypeChecker{
 		a:                a
@@ -134,7 +145,22 @@ pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
 		expr_types:       map[int]Type{}
 		diagnostic_files: map[string]bool{}
 		smartcasts:       map[string]Type{}
+		int_bits:         normalize_int_bits(int_bits)
 	}
+}
+
+fn normalize_int_bits(int_bits int) int {
+	if int_bits == 32 {
+		return 32
+	}
+	return 64
+}
+
+pub fn (tc &TypeChecker) int_c_type() string {
+	if tc.int_bits == 32 {
+		return 'i32'
+	}
+	return 'i64'
 }
 
 pub fn (mut tc TypeChecker) push_scope() {
@@ -769,6 +795,9 @@ fn (mut tc TypeChecker) check_fn_body(node flat.Node) {
 }
 
 fn (mut tc TypeChecker) check_decl_type_strings(node_id flat.NodeId, node flat.Node) {
+	if !tc.building_v {
+		return
+	}
 	if !(node.kind == .struct_decl && node.typ == 'union') {
 		tc.check_type_string_for_unsupported_generics(node.typ, node_id)
 	}
@@ -1652,7 +1681,7 @@ fn (mut tc TypeChecker) resolve_call_info(_id flat.NodeId, node flat.Node) ?Call
 				else {}
 			}
 		}
-		type_name := resolve_type_name_for_method(clean)
+		type_name := tc.resolve_type_name_for_method(clean)
 		if type_name.len > 0 {
 			mname := '${type_name}.${fn_node.value}'
 			if mname in tc.fn_ret_types {
@@ -1944,7 +1973,7 @@ fn (tc &TypeChecker) is_known_call(node flat.Node) bool {
 			if mname in tc.fn_ret_types {
 				return true
 			}
-			base_name := resolve_type_name_for_method(clean_type.base_type)
+			base_name := tc.resolve_type_name_for_method(clean_type.base_type)
 			if base_name.len > 0 {
 				return '${base_name}.${fn_node.value}' in tc.fn_ret_types
 			}
@@ -1962,7 +1991,7 @@ fn (tc &TypeChecker) is_known_call(node flat.Node) bool {
 			return '${clean_type.name}.${fn_node.value}' in tc.fn_ret_types
 		}
 		if clean_type is Primitive {
-			mname := '${prim_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
+			mname := '${tc.primitive_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
 			return mname in tc.fn_ret_types
 		}
 		return false
@@ -2982,7 +3011,7 @@ fn (tc &TypeChecker) type_implements_interface(actual Type, expected Interface) 
 	if clean is Interface {
 		return tc.interface_implements_interface(clean.name, expected.name)
 	}
-	concrete_name := method_type_name(clean)
+	concrete_name := tc.method_type_name(clean)
 	if concrete_name.len == 0 {
 		return false
 	}
@@ -3117,7 +3146,7 @@ fn (tc &TypeChecker) method_signature_compatible(actual_key string, expected_key
 	return tc.type_compatible(actual_ret, expected_ret)
 }
 
-fn method_type_name(t Type) string {
+fn (tc &TypeChecker) method_type_name(t Type) string {
 	if t is Alias {
 		return t.name
 	}
@@ -3137,7 +3166,7 @@ fn method_type_name(t Type) string {
 		return 'string'
 	}
 	if t is Primitive {
-		return prim_c_type_from(t.props, t.size)
+		return tc.primitive_c_type_from(t.props, t.size)
 	}
 	if t is ISize {
 		return 'isize'
@@ -3700,7 +3729,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 							unknown_type('unknown return type for `${mname}`')
 						}
 					}
-					base_name := resolve_type_name_for_method(clean_type.base_type)
+					base_name := tc.resolve_type_name_for_method(clean_type.base_type)
 					if base_name.len > 0 {
 						base_mname := '${base_name}.${fn_node.value}'
 						if base_mname in tc.fn_ret_types {
@@ -3743,7 +3772,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 					}
 				}
 				if clean_type is Primitive {
-					mname := '${prim_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
+					mname := '${tc.primitive_c_type_from(clean_type.props, clean_type.size)}.${fn_node.value}'
 					if mname in tc.fn_ret_types {
 						return tc.fn_ret_types[mname] or {
 							unknown_type('unknown return type for `${mname}`')
@@ -4105,7 +4134,7 @@ pub fn (tc &TypeChecker) c_type(t Type) string {
 		return 'size_t'
 	}
 	if t is Primitive {
-		return prim_c_type_from(t.props, t.size)
+		return tc.primitive_c_type_from(t.props, t.size)
 	}
 	if t is Array {
 		return 'Array'
@@ -4168,7 +4197,7 @@ pub fn (tc &TypeChecker) c_type(t Type) string {
 	return 'int'
 }
 
-fn resolve_type_name_for_method(t Type) string {
+fn (tc &TypeChecker) resolve_type_name_for_method(t Type) string {
 	if t is Alias {
 		return t.name
 	}
@@ -4188,12 +4217,20 @@ fn resolve_type_name_for_method(t Type) string {
 		return 'map'
 	}
 	if t is Primitive {
-		return prim_c_type_from(t.props, t.size)
+		return tc.primitive_c_type_from(t.props, t.size)
 	}
 	return ''
 }
 
 fn prim_c_type_from(props Properties, size u8) string {
+	return prim_c_type_from_bits(props, size, pref.target_int_bits(''))
+}
+
+fn (tc &TypeChecker) primitive_c_type_from(props Properties, size u8) string {
+	return prim_c_type_from_bits(props, size, tc.int_bits)
+}
+
+fn prim_c_type_from_bits(props Properties, size u8, int_bits int) string {
 	if props.has(.boolean) {
 		return 'bool'
 	}
@@ -4208,7 +4245,7 @@ fn prim_c_type_from(props Properties, size u8) string {
 			}
 		}
 		return match size {
-			0 { 'i64' }
+			0 { if int_bits == 32 { 'i32' } else { 'i64' } }
 			8 { 'i8' }
 			16 { 'i16' }
 			32 { 'i32' }

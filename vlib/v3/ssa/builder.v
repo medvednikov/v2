@@ -50,6 +50,7 @@ mut:
 	var_type_names     map[string]string
 	i64_type           TypeID
 	i32_type           TypeID
+	int_type           TypeID
 	i8_type            TypeID
 	i1_type            TypeID
 	u64_type           TypeID
@@ -136,6 +137,7 @@ pub fn build_with_used(a_ &flat.FlatAst, used_fns map[string]bool, tc &types.Typ
 	b.void_type = TypeID(0)
 	b.i64_type = b.m.type_store.get_int(64)
 	b.i32_type = b.m.type_store.get_int(32)
+	b.int_type = if b.tc != unsafe { nil } && b.tc.int_bits == 32 { b.i32_type } else { b.i64_type }
 	b.i8_type = b.m.type_store.get_int(8)
 	b.i1_type = b.m.type_store.get_int(1)
 	b.u64_type = b.m.type_store.get_uint(64)
@@ -1293,9 +1295,9 @@ fn (mut b Builder) register_basic_format_stubs() {
 
 	mut p1_string := []TypeID{}
 	p1_string << b.str_type
-	string_int_id := b.register_synthetic_function('string.int', b.i64_type, p1_string)
+	string_int_id := b.register_synthetic_function('string.int', b.int_type, p1_string)
 	b.generate_string_int_body(string_int_id)
-	string_int_c_id := b.register_synthetic_function('string__int', b.i64_type, p1_string)
+	string_int_c_id := b.register_synthetic_function('string__int', b.int_type, p1_string)
 	b.generate_string_int_body(string_int_c_id)
 
 	mut p2_i64 := []TypeID{}
@@ -1521,7 +1523,9 @@ fn (mut b Builder) generate_string_int_body(func_id int) {
 	parsed := b.block_instr1(.load, done, b.i64_type, result_slot)
 	sign := b.block_instr1(.load, done, b.i64_type, sign_slot)
 	signed := b.block_instr2(.mul, done, b.i64_type, parsed, sign)
-	b.block_instr1(.ret, done, b.void_type, signed)
+	result := if b.int_type == b.i64_type { signed } else { b.block_instr1(.trunc, done, b.int_type,
+		signed) }
+	b.block_instr1(.ret, done, b.void_type, result)
 }
 
 fn (mut b Builder) register_bench_runtime_stubs() {
@@ -2573,7 +2577,7 @@ fn (mut b Builder) register_fixed_array_contains_stubs() {
 	mut p3_int := []TypeID{}
 	p3_int << ptr_i8
 	p3_int << b.i64_type
-	p3_int << b.i64_type
+	p3_int << b.int_type
 	contains_int_id := b.register_synthetic_function('fixed_array_contains_int', b.i1_type, p3_int)
 	b.generate_const_bool_body(contains_int_id, false)
 }
@@ -2631,28 +2635,30 @@ fn (mut b Builder) register_array_contains_stubs() {
 	mut p2_string := []TypeID{}
 	p2_string << b.array_type
 	p2_string << b.str_type
-	index_string_id := b.register_synthetic_function('array_index_string', b.i64_type, p2_string)
+	index_string_id := b.register_synthetic_function('array_index_string', b.int_type, p2_string)
 	b.generate_array_index_string_body(index_string_id)
 	contains_string_id := b.register_synthetic_function('array_contains_string', b.i1_type,
 		p2_string)
-	b.generate_array_contains_from_index_body(contains_string_id, 'array_index_string', b.str_type)
+	b.generate_array_contains_from_index_body(contains_string_id, 'array_index_string', b.str_type,
+		b.int_type)
 
 	mut p2_int := []TypeID{}
 	p2_int << b.array_type
-	p2_int << b.i64_type
-	index_int_id := b.register_synthetic_function('array_index_int', b.i64_type, p2_int)
+	p2_int << b.int_type
+	index_int_id := b.register_synthetic_function('array_index_int', b.int_type, p2_int)
 	b.generate_array_index_int_body(index_int_id)
 	contains_int_id := b.register_synthetic_function('array_contains_int', b.i1_type, p2_int)
-	b.generate_array_contains_from_index_body(contains_int_id, 'array_index_int', b.i64_type)
+	b.generate_array_contains_from_index_body(contains_int_id, 'array_index_int', b.int_type,
+		b.int_type)
 }
 
-fn (mut b Builder) generate_array_contains_from_index_body(func_id int, index_name string, needle_type TypeID) {
+fn (mut b Builder) generate_array_contains_from_index_body(func_id int, index_name string, needle_type TypeID, index_type TypeID) {
 	entry := b.m.add_block(func_id, 'entry')
 	arr := b.func_add_argument(func_id, b.array_type, 'arr')
 	needle := b.func_add_argument(func_id, needle_type, 'needle')
 	index_ref := b.m.add_value(.func_ref, b.void_type, index_name, b.fn_ids[index_name])
-	idx := b.block_instr3(.call, entry, b.i64_type, index_ref, arr, needle)
-	zero := b.m.get_or_add_const(b.i64_type, '0')
+	idx := b.block_instr3(.call, entry, index_type, index_ref, arr, needle)
+	zero := b.m.get_or_add_const(index_type, '0')
 	found := b.block_instr2(.ge, entry, b.i1_type, idx, zero)
 	b.block_instr1(.ret, entry, b.void_type, found)
 }
@@ -2703,19 +2709,21 @@ fn (mut b Builder) generate_array_index_string_body(func_id int) {
 	b.block_instr2(.store, blk_next, b.void_type, next_i, alloca_i)
 	b.block_instr1(.jmp, blk_next, b.void_type, ValueID(blk_loop))
 
-	b.block_instr1(.ret, blk_found, b.void_type, i)
-	not_found := b.m.get_or_add_const(b.i64_type, '-1')
+	result_i := if b.int_type == b.i64_type { i } else { b.block_instr1(.trunc, blk_found, b.int_type,
+		i) }
+	b.block_instr1(.ret, blk_found, b.void_type, result_i)
+	not_found := b.m.get_or_add_const(b.int_type, '-1')
 	b.block_instr1(.ret, blk_not_found, b.void_type, not_found)
 }
 
 fn (mut b Builder) generate_array_index_int_body(func_id int) {
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
 	ptr_i64 := b.m.type_store.get_ptr(b.i64_type)
-	ptr_i32 := b.m.type_store.get_ptr(b.i32_type)
+	ptr_int := b.m.type_store.get_ptr(b.int_type)
 	ptr_array := b.m.type_store.get_ptr(b.array_type)
 	entry := b.m.add_block(func_id, 'entry')
 	arr := b.func_add_argument(func_id, b.array_type, 'arr')
-	needle := b.func_add_argument(func_id, b.i64_type, 'needle')
+	needle := b.func_add_argument(func_id, b.int_type, 'needle')
 	alloca_arr := b.block_instr0(.alloca, entry, ptr_array)
 	alloca_i := b.block_instr0(.alloca, entry, ptr_i64)
 	b.block_instr2(.store, entry, b.void_type, arr, alloca_arr)
@@ -2744,18 +2752,19 @@ fn (mut b Builder) generate_array_index_int_body(func_id int) {
 	elem_size := b.block_instr1(.zext, blk_body, b.i64_type, elem_size32)
 	offset := b.block_instr2(.mul, blk_body, b.i64_type, i, elem_size)
 	slot := b.block_instr2(.add, blk_body, ptr_i8, data, offset)
-	slot_i32_ptr := b.block_instr1(.bitcast, blk_body, ptr_i32, slot)
-	slot_i32 := b.block_instr1(.load, blk_body, b.i32_type, slot_i32_ptr)
-	slot_i64 := b.block_instr1(.sext, blk_body, b.i64_type, slot_i32)
-	is_eq := b.block_instr2(.eq, blk_body, b.i1_type, slot_i64, needle)
+	slot_int_ptr := b.block_instr1(.bitcast, blk_body, ptr_int, slot)
+	slot_int := b.block_instr1(.load, blk_body, b.int_type, slot_int_ptr)
+	is_eq := b.block_instr2(.eq, blk_body, b.i1_type, slot_int, needle)
 	b.block_instr3(.br, blk_body, b.void_type, is_eq, ValueID(blk_found), ValueID(blk_next))
 
 	next_i := b.block_instr2(.add, blk_next, b.i64_type, i, one)
 	b.block_instr2(.store, blk_next, b.void_type, next_i, alloca_i)
 	b.block_instr1(.jmp, blk_next, b.void_type, ValueID(blk_loop))
 
-	b.block_instr1(.ret, blk_found, b.void_type, i)
-	not_found := b.m.get_or_add_const(b.i64_type, '-1')
+	result_i := if b.int_type == b.i64_type { i } else { b.block_instr1(.trunc, blk_found, b.int_type,
+		i) }
+	b.block_instr1(.ret, blk_found, b.void_type, result_i)
+	not_found := b.m.get_or_add_const(b.int_type, '-1')
 	b.block_instr1(.ret, blk_not_found, b.void_type, not_found)
 }
 
@@ -7345,11 +7354,11 @@ fn (mut b Builder) build_array_index_call(base_id flat.NodeId, needle_id flat.No
 	base := b.build_expr(base_id)
 	elem_type := b.array_receiver_elem_type(base_id)
 	fn_name := if elem_type == b.str_type { 'array_index_string' } else { 'array_index_int' }
-	needle_type := if elem_type == b.str_type { b.str_type } else { b.i64_type }
+	needle_type := if elem_type == b.str_type { b.str_type } else { b.int_type }
 	mut needle := b.build_expr(needle_id)
 	needle = b.coerce_int_value(needle, needle_type)
-	fn_ref := b.m.add_value(.func_ref, b.i64_type, fn_name, b.fn_ids[fn_name])
-	return b.emit3(.call, b.i64_type, fn_ref, base, needle)
+	fn_ref := b.m.add_value(.func_ref, b.int_type, fn_name, b.fn_ids[fn_name])
+	return b.emit3(.call, b.int_type, fn_ref, base, needle)
 }
 
 fn (mut b Builder) build_array_join_call(base_id flat.NodeId, sep_id flat.NodeId) ValueID {
@@ -8963,7 +8972,7 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 fn (mut b Builder) primitive_type_id(name string) ?TypeID {
 	return match name {
 		'int' {
-			b.i64_type
+			b.int_type
 		}
 		'i8' {
 			b.i8_type

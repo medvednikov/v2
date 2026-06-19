@@ -25,16 +25,16 @@ fn (mut g FlatGen) optional_type_name(t types.Type) string {
 fn (mut g FlatGen) optional_value_ct(t types.Type) (string, types.Type) {
 	if t is types.OptionType {
 		if t.base_type is types.Void {
-			return 'i64', types.Type(types.int_)
+			return g.tc.int_c_type(), types.Type(types.int_)
 		}
 		return g.tc.c_type(t.base_type), t.base_type
 	} else if t is types.ResultType {
 		if t.base_type is types.Void {
-			return 'i64', types.Type(types.int_)
+			return g.tc.int_c_type(), types.Type(types.int_)
 		}
 		return g.tc.c_type(t.base_type), t.base_type
 	}
-	return 'i64', types.Type(types.int_)
+	return g.tc.int_c_type(), types.Type(types.int_)
 }
 
 fn (mut g FlatGen) optional_typedefs() {

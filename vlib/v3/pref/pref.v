@@ -5,8 +5,10 @@ import os
 pub struct Preferences {
 pub mut:
 	verbose      bool
+	building_v   bool
 	output_file  string
 	target_os    string = os.user_os()
+	target_arch  string = host_arch()
 	user_defines []string
 	backend      string = 'c'
 	vroot        string = detect_vroot()
@@ -14,6 +16,60 @@ pub mut:
 
 pub fn new_preferences() &Preferences {
 	return &Preferences{}
+}
+
+pub fn host_arch() string {
+	$if amd64 {
+		return 'amd64'
+	} $else $if i386 {
+		return 'i386'
+	} $else $if arm64 {
+		return 'arm64'
+	} $else $if arm32 {
+		return 'arm32'
+	} $else $if rv64 {
+		return 'rv64'
+	} $else $if rv32 {
+		return 'rv32'
+	} $else $if s390x {
+		return 's390x'
+	} $else $if ppc64le {
+		return 'ppc64le'
+	} $else $if loongarch64 {
+		return 'loongarch64'
+	} $else {
+		if sizeof(voidptr) == 8 {
+			return 'amd64'
+		}
+		return 'i386'
+	}
+}
+
+pub fn normalized_arch(arch string) string {
+	a := arch.to_lower()
+	if a == '' || a == '_auto' || a == 'auto' {
+		return host_arch()
+	}
+	return match a {
+		'amd64', 'x86_64', 'x64', 'x86' { 'amd64' }
+		'aarch64', 'arm64' { 'arm64' }
+		'aarch32', 'arm32', 'arm' { 'arm32' }
+		'rv64', 'riscv64', 'risc-v64', 'riscv', 'risc-v' { 'rv64' }
+		'rv32', 'riscv32', 'risc-v32' { 'rv32' }
+		'x86_32', 'x32', 'i386', 'ia-32', 'ia32' { 'i386' }
+		else { a }
+	}
+}
+
+pub fn target_int_bits(arch string) int {
+	return match normalized_arch(arch) {
+		'arm32', 'rv32', 'i386', 'ppc', 'wasm32' { 32 }
+		else { 64 }
+	}
+}
+
+pub fn (p &Preferences) int_bits() int {
+	return target_int_bits(p.target_arch)
 }
 
 fn detect_vroot() string {
@@ -254,7 +310,13 @@ pub fn comptime_flag_value(p &Preferences, name string) bool {
 		'no_backtrace' {
 			return p.backend == 'arm64' || name in p.user_defines
 		}
-		'gcboehm', 'gcboehm_opt', 'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
+		'gcboehm', 'gcboehm_opt' {
+			if p.building_v {
+				return false
+			}
+			return name in p.user_defines
+		}
+		'prealloc', 'autofree', 'no_bounds_checking', 'freestanding',
 		'nofloat' {
 			return name in p.user_defines
 		}
