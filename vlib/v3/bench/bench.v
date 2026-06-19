@@ -1,6 +1,5 @@
 module bench
 
-import time
 import os
 
 pub struct Step {
@@ -12,36 +11,42 @@ pub:
 
 pub struct Bench {
 mut:
-	steps []Step
-	start time.StopWatch
-	t0    time.StopWatch
+	steps    []Step
+	start_us i64
+	t0_us    i64
 }
 
 pub fn new() Bench {
+	now := bench_now_us()
 	return Bench{
-		start: time.new_stopwatch()
-		t0:    time.new_stopwatch()
+		start_us: now
+		t0_us:    now
 	}
 }
 
 pub fn (mut b Bench) step(name string) {
-	elapsed := b.t0.elapsed()
+	now := bench_now_us()
+	elapsed_us := now - b.t0_us
 	ram_mb := f64(current_rss_kb()) / 1024.0
-	ms := f64(elapsed.microseconds()) / 1000.0
+	ms := f64(elapsed_us) / 1000.0
 	println('  ${name:-20s} ${ms:8.2f} ms   ${ram_mb:6.0f} MB resident RAM')
 	b.steps << Step{
 		name:    name
-		time_us: elapsed.microseconds()
+		time_us: elapsed_us
 		ram_kb:  i64(ram_mb * 1024)
 	}
-	b.t0 = time.new_stopwatch()
+	b.t0_us = now
 }
 
 pub fn (b &Bench) print_report() {
-	total := b.start.elapsed()
-	total_ms := f64(total.microseconds()) / 1000.0
+	total_us := bench_now_us() - b.start_us
+	total_ms := f64(total_us) / 1000.0
 	println('  ${'total':-20s} ${total_ms:8.2f} ms')
 	println('')
+}
+
+fn bench_now_us() i64 {
+	return C.clock()
 }
 
 fn current_rss_kb() i64 {
@@ -76,3 +81,5 @@ fn linux_rss_kb() i64 {
 }
 
 fn C.getpid() int
+
+fn C.clock() i64

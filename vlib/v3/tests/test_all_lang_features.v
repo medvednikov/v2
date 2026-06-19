@@ -910,6 +910,57 @@ struct Defaults116 {
 	count int    = 42
 }
 
+type MetaType117 = MetaNamed117 | MetaArray117 | MetaMap117
+
+struct MetaNamed117 {
+	name string
+}
+
+struct MetaArray117 {
+	elem MetaType117
+}
+
+struct MetaMap117 {
+	key MetaType117
+	val MetaType117
+}
+
+struct Registry117 {
+	prefix string
+mut:
+	items map[string]MetaType117
+}
+
+fn (r &Registry117) qualify(name string) string {
+	if r.prefix.len == 0 {
+		return name
+	}
+	return '${r.prefix}.${name}'
+}
+
+fn meta_name117(t MetaType117) string {
+	if t is MetaNamed117 {
+		return t.name
+	}
+	if t is MetaArray117 {
+		return '[]' + meta_name117(t.elem)
+	}
+	if t is MetaMap117 {
+		return 'map[' + meta_name117(t.key) + ']' + meta_name117(t.val)
+	}
+	return 'unknown'
+}
+
+fn maybe_strings117(ok bool) ?[]string {
+	if ok {
+		mut values := []string{}
+		values << 'ssa'
+		values << 'arm64'
+		return values
+	}
+	return none
+}
+
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
 	return a + b + c + d + e + f + g + h + i
 }
@@ -4948,5 +4999,44 @@ fn main() {
 
 	print_str('additional self-host feature coverage: ok')
 
-	print_str('=== ALL 116 TESTS PASSED ===')
+	print_str('--- 117. ARM64 Self-Host Regression Coverage ---')
+
+	// 117.1 Recursive sumtype values survive string-keyed map storage and lookup.
+	mut registry117 := Registry117{
+		prefix: 'types'
+		items:  map[string]MetaType117{}
+	}
+	registry117.items['types.Type'] = MetaType117(MetaMap117{
+		key: MetaType117(MetaNamed117{
+			name: 'string'
+		})
+		val: MetaType117(MetaArray117{
+			elem: MetaType117(MetaNamed117{
+				name: 'Type'
+			})
+		})
+	})
+	type_key117 := registry117.qualify('Type')
+	if type_key117 in registry117.items {
+		type_meta117 := registry117.items[type_key117] or {
+			MetaType117(MetaNamed117{
+				name: 'missing'
+			})
+		}
+		print_str(meta_name117(type_meta117)) // map[string][]Type
+	} else {
+		print_str('missing')
+	}
+
+	// 117.2 Option-returned array can be unwrapped with `or` and then iterated.
+	strings117 := maybe_strings117(true) or { []string{} }
+	mut strings_len117 := 0
+	for item117 in strings117 {
+		strings_len117 += item117.len
+	}
+	print_int(strings_len117) // 9
+
+	print_str('arm64 self-host regression coverage: ok')
+
+	print_str('=== ALL 117 TESTS PASSED ===')
 }

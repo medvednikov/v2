@@ -29,6 +29,13 @@ fn unknown_type(reason string) Type {
 	})
 }
 
+fn debug_check_string(label string, s string) {
+	if (s.len > 0 && u64(s.str) < 4096) || s.len > 100000 {
+		println('debug bad string ${label} len=${s.len} ptr=${u64(s.str)}')
+		exit(2)
+	}
+}
+
 pub struct TypeError {
 pub:
 	msg  string
@@ -567,6 +574,14 @@ fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
 		return
 	}
 	node := tc.a.nodes[int(id)]
+	if (node.value.len > 0 && u64(node.value.str) < 4096) || node.value.len > 100000 {
+		println('debug bad node value before annotate id=${int(id)} kind=${int(node.kind)} len=${node.value.len} ptr=${u64(node.value.str)}')
+		exit(2)
+	}
+	if (node.typ.len > 0 && u64(node.typ.str) < 4096) || node.typ.len > 100000 {
+		println('debug bad node typ before annotate id=${int(id)} kind=${int(node.kind)} len=${node.typ.len} ptr=${u64(node.typ.str)}')
+		exit(2)
+	}
 	match node.kind {
 		.decl_assign {
 			// children are interleaved pairs [lhs0, rhs0, lhs1, rhs1, ...].
@@ -3160,6 +3175,8 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 				}
 			}
 			qfn := tc.qualify_fn_name(fn_node.value)
+			debug_check_string('resolve.call.qfn', qfn)
+			debug_check_string('resolve.call.fn_node.value', fn_node.value)
 			if qfn in tc.fn_ret_types {
 				return tc.fn_ret_types[qfn] or { unknown_type('unknown return type for `${qfn}`') }
 			}

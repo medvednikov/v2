@@ -8,6 +8,7 @@ mut:
 	macho                &MachOObject = unsafe { nil }
 	stack_map            map[int]int
 	alloca_offset        map[int]int
+	alloca_size          map[int]int
 	stack_size           int
 	block_offsets        []int
 	pending_jmps         []PendingJmp
@@ -28,6 +29,7 @@ pub fn Gen.new(m &ssa.Module) &Gen {
 		macho:         MachOObject.new()
 		stack_map:     map[int]int{}
 		alloca_offset: map[int]int{}
+		alloca_size:   map[int]int{}
 		block_offsets: []int{}
 		pending_jmps:  []PendingJmp{}
 		fn_offsets:    map[string]int{}
@@ -152,6 +154,7 @@ fn (mut g Gen) gen_func(func_idx int) {
 				slot_offset = (slot_offset + 15) & ~0xF
 				slot_offset += alloc_size
 				g.alloca_offset[val_id] = -slot_offset
+				g.alloca_size[val_id] = alloc_size
 				slot_offset += 8
 			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp
 				&& instr.op != .unreachable {
@@ -258,12 +261,73 @@ fn (g &Gen) is_zero_const(val_id int) bool {
 	return val.kind == .constant && parse_arm64_int(val.name) == 0
 }
 
-fn (mut g Gen) emit_zero_aggregate(ptr_reg int, typ_id ssa.TypeID) {
-	size := g.m.type_size(typ_id)
+fn (mut g Gen) emit_zero_aggregate(ptr_reg int, typ_id ssa.TypeID, max_size int) {
+	mut size := g.m.type_size(typ_id)
+	if max_size > 0 && max_size < size {
+		size = max_size
+	}
 	n_words := (size + 7) / 8
 	for wi in 0 .. n_words {
 		g.emit32(asm_str_imm(xzr, Reg(ptr_reg), u32(wi)))
 	}
+}
+
+fn (g &Gen) aggregate_store_size(ptr_id int, typ_id ssa.TypeID) int {
+	mut size := g.m.type_size(typ_id)
+	if remaining := g.stack_alloca_remaining(ptr_id) {
+		if remaining > 0 && remaining < size {
+			size = remaining
+		}
+	}
+	return size
+}
+
+fn (g &Gen) stack_alloca_remaining(ptr_id int) ?int {
+	mut cur := ptr_id
+	mut total_offset := 0
+	for _ in 0 .. 8 {
+		if cur <= 0 || cur >= g.m.values.len {
+			return none
+		}
+		val := g.m.values[cur]
+		if val.kind != .instruction {
+			return none
+		}
+		instr := g.m.instrs[val.index]
+		match instr.op {
+			.alloca {
+				size := g.alloca_size[cur] or { return none }
+				remaining := size - total_offset
+				if remaining > 0 {
+					return remaining
+				}
+				return none
+			}
+			.get_element_ptr {
+				if instr.operands.len < 2 {
+					return none
+				}
+				off_id := instr.operands[1]
+				if off_id > 0 && off_id < g.m.values.len {
+					off_val := g.m.values[off_id]
+					if off_val.kind == .constant {
+						total_offset += int(parse_arm64_int(off_val.name))
+					}
+				}
+				cur = int(instr.operands[0])
+			}
+			.bitcast {
+				if instr.operands.len == 0 {
+					return none
+				}
+				cur = int(instr.operands[0])
+			}
+			else {
+				return none
+			}
+		}
+	}
+	return none
 }
 
 fn (mut g Gen) gen_instr(val_id int) {
@@ -301,7 +365,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 					&& g.m.type_store.types[src_val.typ].kind == .struct_t {
 					if src_off := g.stack_map[src_id] {
 						ptr_reg := g.load_val(ptr_id, 9)
-						n_words := (src_size + 7) / 8
+						copy_size := g.aggregate_store_size(ptr_id, src_val.typ)
+						n_words := (copy_size + 7) / 8
 						for wi in 0 .. n_words {
 							g.emit_load_fp(8, src_off + wi * 8)
 							g.emit32(asm_str_imm(Reg(8), Reg(ptr_reg), u32(wi)))
@@ -315,7 +380,8 @@ fn (mut g Gen) gen_instr(val_id int) {
 					ptr_reg := g.load_val(ptr_id, 9)
 					dest_type := g.ptr_elem_type(ptr_id)
 					if g.is_zero_const(src_id) && g.is_aggregate_type(dest_type) {
-						g.emit_zero_aggregate(ptr_reg, dest_type)
+						g.emit_zero_aggregate(ptr_reg, dest_type, g.aggregate_store_size(ptr_id,
+							dest_type))
 						return
 					}
 					src_reg := g.load_val(src_id, 8)

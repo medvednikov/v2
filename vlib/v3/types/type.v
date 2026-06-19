@@ -213,16 +213,26 @@ pub fn (t Type) name() string {
 		return prim_name_from(t.props, t.size)
 	}
 	if t is Array {
-		return '[]${t.elem_type.name()}'
+		elem_name := t.elem_type.name()
+		debug_check_string('Type.Array.elem', elem_name)
+		return '[]${elem_name}'
 	}
 	if t is ArrayFixed {
-		return '${t.elem_type.name()}[${t.len}]'
+		elem_name := t.elem_type.name()
+		debug_check_string('Type.ArrayFixed.elem', elem_name)
+		return '${elem_name}[${t.len}]'
 	}
 	if t is Map {
-		return 'map[${t.key_type.name()}]${t.value_type.name()}'
+		key_name := t.key_type.name()
+		val_name := t.value_type.name()
+		debug_check_string('Type.Map.key', key_name)
+		debug_check_string('Type.Map.val', val_name)
+		return 'map[${key_name}]${val_name}'
 	}
 	if t is Pointer {
-		return '&${t.base_type.name()}'
+		base_name := t.base_type.name()
+		debug_check_string('Type.Pointer.base', base_name)
+		return '&${base_name}'
 	}
 	if t is FnType {
 		mut s := 'fn('
@@ -239,24 +249,33 @@ pub fn (t Type) name() string {
 		return s
 	}
 	if t is OptionType {
-		return '?${t.base_type.name()}'
+		base_name := t.base_type.name()
+		debug_check_string('Type.Option.base', base_name)
+		return '?${base_name}'
 	}
 	if t is ResultType {
-		return '!${t.base_type.name()}'
+		base_name := t.base_type.name()
+		debug_check_string('Type.Result.base', base_name)
+		return '!${base_name}'
 	}
 	if t is Struct {
+		debug_check_string('Type.Struct.name', t.name)
 		return t.name
 	}
 	if t is Interface {
+		debug_check_string('Type.Interface.name', t.name)
 		return t.name
 	}
 	if t is Enum {
+		debug_check_string('Type.Enum.name', t.name)
 		return t.name
 	}
 	if t is SumType {
+		debug_check_string('Type.SumType.name', t.name)
 		return t.name
 	}
 	if t is Alias {
+		debug_check_string('Type.Alias.name', t.name)
 		return t.name
 	}
 	if t is MultiReturn {

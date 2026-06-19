@@ -81,7 +81,7 @@ const force_external_syms = ['_malloc', '_free', '_calloc', '_realloc', '_exit',
 	'_strdup', '_strcmp', '_strncmp', '_strchr', '_strrchr', '_strerror',
 	'_strncasecmp', '_strcasecmp', '_atoi', '_atof', '_qsort',
 	// Time
-	'_time', '_localtime_r', '_gmtime_r', '_mktime', '_gettimeofday',
+	'_time', '_localtime_r', '_gmtime_r', '_mktime', '_gettimeofday', '_clock',
 	'_clock_gettime_nsec_np', '_mach_absolute_time', '_mach_timebase_info', '_nanosleep', '_sleep',
 	'_usleep', '_strftime',
 	'_task_info', '_mach_task_self_',

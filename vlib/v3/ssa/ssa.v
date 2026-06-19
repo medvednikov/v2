@@ -94,6 +94,8 @@ pub mut:
 	cache map[string]TypeID
 }
 
+const recursive_type_slot_size = 256
+
 pub fn TypeStore.new() TypeStore {
 	mut ts := TypeStore{
 		cache: map[string]TypeID{}
@@ -333,7 +335,7 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) in
 		return 0
 	}
 	if depth > 32 {
-		return 8
+		return recursive_type_slot_size
 	}
 	typ := m.type_store.types[typ_id]
 	if typ.width > 0 {
@@ -352,7 +354,7 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) in
 		return 8
 	}
 	if type_is_active(typ_id, active) {
-		return 8
+		return recursive_type_slot_size
 	}
 	active << typ_id
 	mut offset := 0
@@ -490,22 +492,37 @@ pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
 	if typ.kind != .struct_t {
 		return 0
 	}
+	mut active := []TypeID{}
+	active << typ_id
 	mut offset := 0
 	for i in 0 .. field_idx {
 		if i >= typ.fields.len {
 			break
 		}
-		align := m.type_align(typ.fields[i])
+		align := m.type_align_inner(typ.fields[i], 1, mut active)
 		if align > 1 && offset % align != 0 {
 			offset = (offset + align - 1) & ~(align - 1)
 		}
-		offset += m.type_size(typ.fields[i])
+		offset += m.type_size_inner(typ.fields[i], 1, mut active)
 	}
 	if field_idx < typ.fields.len {
-		align := m.type_align(typ.fields[field_idx])
+		align := m.type_align_inner(typ.fields[field_idx], 1, mut active)
 		if align > 1 && offset % align != 0 {
 			offset = (offset + align - 1) & ~(align - 1)
 		}
 	}
 	return offset
+}
+
+pub fn (m &Module) struct_field_size(typ_id TypeID, field_idx int) int {
+	if typ_id <= 0 || typ_id >= m.type_store.types.len {
+		return 0
+	}
+	typ := m.type_store.types[typ_id]
+	if typ.kind != .struct_t || field_idx < 0 || field_idx >= typ.fields.len {
+		return 0
+	}
+	mut active := []TypeID{}
+	active << typ_id
+	return m.type_size_inner(typ.fields[field_idx], 1, mut active)
 }

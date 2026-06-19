@@ -14,28 +14,28 @@ const arm64_force_external_syms = ['_malloc', '_free', '_calloc', '_realloc', '_
 	'_ftell', '_rewind', '_fileno', '_popen', '_pclose', '_dup', '_dup2', '_pipe', '_isatty',
 	'_freopen', '_dprintf', '_getc', '_strdup', '_strcmp', '_strncmp', '_strchr', '_strrchr',
 	'_strerror', '_strncasecmp', '_strcasecmp', '_atoi', '_atof', '_qsort', '_time', '_localtime_r',
-	'_gmtime_r', '_mktime', '_gettimeofday', '_clock_gettime_nsec_np', '_mach_absolute_time',
-	'_mach_timebase_info', '_nanosleep', '_sleep', '_usleep', '_strftime', '_task_info',
-	'_mach_task_self_', '_rand', '_srand', '_isdigit', '_isspace', '_tolower', '_toupper', '_setenv',
-	'_unsetenv', '_sysconf', '_uname', '_gethostname', '_pthread_mutex_init', '_pthread_mutex_lock',
-	'_pthread_mutex_unlock', '_pthread_mutex_destroy', '_pthread_self', '_pthread_create',
-	'_pthread_join', '_pthread_attr_init', '_pthread_attr_setstacksize', '_pthread_attr_destroy',
-	'_arc4random_buf', '_proc_pidpath', '_backtrace', '_backtrace_symbols', '_backtrace_symbols_fd',
-	'_dispatch_semaphore_create', '_dispatch_semaphore_signal', '_dispatch_semaphore_wait',
-	'_dispatch_time', '_dispatch_release', '_setvbuf', '_setbuf', '_memchr', '_getlogin_r',
-	'_getppid', '_getgid', '_getegid', '_ftruncate', '_mkstemp', '_statvfs', '_chown', '_sigaction',
-	'_sigemptyset', '_sigaddset', '_sigprocmask', '_select', '_kqueue', '_abs', '_tcgetattr',
-	'_tcsetattr', '_ioctl', '_getchar', '_getline', '_fdopen', '_feof', '_ferror', '_setpgid',
-	'_ptrace', '_wait', '_timegm', '_clock_gettime', '_aligned_alloc', '_utime', '_getlogin',
-	'_environ', '___error', '___stdinp', '__dyld_get_image_name', '__dyld_get_image_header', '_cos',
-	'_sin', '_tan', '_acos', '_asin', '_atan', '_atan2', '_cosh', '_sinh', '_tanh', '_acosh',
-	'_asinh', '_atanh', '_exp', '_exp2', '_log', '_log2', '_log10', '_pow', '_sqrt', '_cbrt', '_ceil',
-	'_floor', '_round', '_trunc', '_fmod', '_remainder', '_fabs', '_copysign', '_fmax', '_fmin',
-	'_hypot', '_ldexp', '_frexp', '_modf', '_scalbn', '_ilogb', '_logb', '_erf', '_erfc', '_lgamma',
-	'_tgamma', '_j0', '_j1', '_jn', '_y0', '_y1', '_yn', '_mprotect', '_sys_icache_invalidate',
-	'_objc_msgSend', '_objc_getClass', '_sel_registerName', '_objc_alloc_init',
-	'_objc_autoreleasePoolPush', '_objc_autoreleasePoolPop', '_MTLCreateSystemDefaultDevice',
-	'_dlopen', '_dlsym']
+	'_gmtime_r', '_mktime', '_gettimeofday', '_clock', '_clock_gettime_nsec_np',
+	'_mach_absolute_time', '_mach_timebase_info', '_nanosleep', '_sleep', '_usleep', '_strftime',
+	'_task_info', '_mach_task_self_', '_rand', '_srand', '_isdigit', '_isspace', '_tolower',
+	'_toupper', '_setenv', '_unsetenv', '_sysconf', '_uname', '_gethostname', '_pthread_mutex_init',
+	'_pthread_mutex_lock', '_pthread_mutex_unlock', '_pthread_mutex_destroy', '_pthread_self',
+	'_pthread_create', '_pthread_join', '_pthread_attr_init', '_pthread_attr_setstacksize',
+	'_pthread_attr_destroy', '_arc4random_buf', '_proc_pidpath', '_backtrace', '_backtrace_symbols',
+	'_backtrace_symbols_fd', '_dispatch_semaphore_create', '_dispatch_semaphore_signal',
+	'_dispatch_semaphore_wait', '_dispatch_time', '_dispatch_release', '_setvbuf', '_setbuf',
+	'_memchr', '_getlogin_r', '_getppid', '_getgid', '_getegid', '_ftruncate', '_mkstemp', '_statvfs',
+	'_chown', '_sigaction', '_sigemptyset', '_sigaddset', '_sigprocmask', '_select', '_kqueue',
+	'_abs', '_tcgetattr', '_tcsetattr', '_ioctl', '_getchar', '_getline', '_fdopen', '_feof',
+	'_ferror', '_setpgid', '_ptrace', '_wait', '_timegm', '_clock_gettime', '_aligned_alloc',
+	'_utime', '_getlogin', '_environ', '___error', '___stdinp', '__dyld_get_image_name',
+	'__dyld_get_image_header', '_cos', '_sin', '_tan', '_acos', '_asin', '_atan', '_atan2', '_cosh',
+	'_sinh', '_tanh', '_acosh', '_asinh', '_atanh', '_exp', '_exp2', '_log', '_log2', '_log10',
+	'_pow', '_sqrt', '_cbrt', '_ceil', '_floor', '_round', '_trunc', '_fmod', '_remainder', '_fabs',
+	'_copysign', '_fmax', '_fmin', '_hypot', '_ldexp', '_frexp', '_modf', '_scalbn', '_ilogb',
+	'_logb', '_erf', '_erfc', '_lgamma', '_tgamma', '_j0', '_j1', '_jn', '_y0', '_y1', '_yn',
+	'_mprotect', '_sys_icache_invalidate', '_objc_msgSend', '_objc_getClass', '_sel_registerName',
+	'_objc_alloc_init', '_objc_autoreleasePoolPush', '_objc_autoreleasePoolPop',
+	'_MTLCreateSystemDefaultDevice', '_dlopen', '_dlsym']
 
 pub struct Builder {
 mut:
@@ -812,6 +812,7 @@ fn (mut b Builder) register_functions() {
 	b.register_extern('pthread_mutex_destroy', b.i64_type, p1)
 	b.register_extern('pthread_self', b.i64_type, []TypeID{})
 	b.register_extern('getpid', b.i64_type, []TypeID{})
+	b.register_extern('clock', b.i64_type, []TypeID{})
 	b.register_extern('mach_absolute_time', b.i64_type, []TypeID{})
 	p1 = []TypeID{}
 	p1 << ptr_i8
@@ -2156,8 +2157,9 @@ fn (mut b Builder) register_os_stat_stubs() {
 	b.generate_os_stat_kind_body(is_dir_id, 'stat', '16384')
 	is_link_id := b.register_synthetic_function('is_link', b.i1_type, p1)
 	b.generate_os_stat_kind_body(is_link_id, 'lstat', '40960')
-	ls_id := b.register_synthetic_function('ls', b.array_type, p1)
-	b.generate_os_ls_body(ls_id)
+	ls_result_type := b.option_type_id('[]string')
+	ls_id := b.register_synthetic_function('ls', ls_result_type, p1)
+	b.generate_os_ls_body(ls_id, ls_result_type)
 }
 
 fn (mut b Builder) generate_os_stat_kind_body(func_id int, stat_fn string, expected_mode string) {
@@ -2197,7 +2199,7 @@ fn (mut b Builder) generate_os_stat_kind_body(func_id int, stat_fn string, expec
 	b.block_instr1(.ret, ok_block, b.void_type, is_kind)
 }
 
-fn (mut b Builder) generate_os_ls_body(func_id int) {
+fn (mut b Builder) generate_os_ls_body(func_id int, result_type TypeID) {
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
 	ptr_array := b.m.type_store.get_ptr(b.array_type)
 	ptr_string := b.m.type_store.get_ptr(b.str_type)
@@ -2222,7 +2224,8 @@ fn (mut b Builder) generate_os_ls_body(func_id int) {
 	b.block_instr3(.br, entry, b.void_type, dir_is_null, ValueID(blk_empty), ValueID(blk_loop))
 
 	empty_result := b.block_instr1(.load, blk_empty, b.array_type, arr_alloca)
-	b.block_instr1(.ret, blk_empty, b.void_type, empty_result)
+	empty_wrapped := b.block_option_value(blk_empty, result_type, false, empty_result)
+	b.block_instr1(.ret, blk_empty, b.void_type, empty_wrapped)
 
 	readdir_ref := b.m.add_value(.func_ref, b.void_type, 'readdir', b.c_fn_ids['readdir'])
 	ent := b.block_instr2(.call, blk_loop, ptr_i8, readdir_ref, dir_ptr)
@@ -2254,7 +2257,26 @@ fn (mut b Builder) generate_os_ls_body(func_id int) {
 	closedir_ref := b.m.add_value(.func_ref, b.void_type, 'closedir', b.c_fn_ids['closedir'])
 	b.block_instr2(.call, blk_done, b.i64_type, closedir_ref, dir_ptr)
 	result := b.block_instr1(.load, blk_done, b.array_type, arr_alloca)
-	b.block_instr1(.ret, blk_done, b.void_type, result)
+	wrapped := b.block_option_value(blk_done, result_type, true, result)
+	b.block_instr1(.ret, blk_done, b.void_type, wrapped)
+}
+
+fn (mut b Builder) block_option_value(block_id BlockID, opt_typ TypeID, ok bool, raw_value ValueID) ValueID {
+	ptr_opt := b.m.type_store.get_ptr(opt_typ)
+	alloca := b.block_instr0(.alloca, block_id, ptr_opt)
+	ok_ptr := b.block_struct_field_ptr(block_id, alloca, opt_typ, 0)
+	ok_val := b.m.get_or_add_const(b.i1_type, if ok { '1' } else { '0' })
+	b.block_instr2(.store, block_id, b.void_type, ok_val, ok_ptr)
+	value_typ := b.option_value_type(opt_typ)
+	if value_typ != b.void_type {
+		value_ptr := b.block_struct_field_ptr(block_id, alloca, opt_typ, 1)
+		mut value := raw_value
+		if value <= 0 {
+			value = b.m.get_or_add_const(value_typ, '0')
+		}
+		b.block_instr2(.store, block_id, b.void_type, value, value_ptr)
+	}
+	return b.block_instr1(.load, block_id, opt_typ, alloca)
 }
 
 fn (mut b Builder) emit_cstring_from_string(block_id BlockID, value ValueID) ValueID {
