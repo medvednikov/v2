@@ -4208,7 +4208,7 @@ fn prim_c_type_from(props Properties, size u8) string {
 			}
 		}
 		return match size {
-			0 { 'int' }
+			0 { 'i64' }
 			8 { 'i8' }
 			16 { 'i16' }
 			32 { 'i32' }
@@ -4241,7 +4241,7 @@ fn prim_c_type(p Primitive) string {
 			}
 		}
 		return match p.size {
-			0 { 'int' }
+			0 { 'i64' }
 			8 { 'i8' }
 			16 { 'i16' }
 			32 { 'i32' }

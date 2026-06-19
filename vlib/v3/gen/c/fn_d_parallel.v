@@ -23,11 +23,11 @@ $if !windows {
 	@[typedef]
 	struct C.pthread_t {}
 
-	fn C.pthread_create(thread &C.pthread_t, attr voidptr, start_routine fn (voidptr) voidptr, arg voidptr) int
-	fn C.pthread_join(thread C.pthread_t, retval voidptr) int
-	fn C.pthread_attr_init(attr voidptr) int
-	fn C.pthread_attr_setstacksize(attr voidptr, stacksize usize) int
-	fn C.pthread_attr_destroy(attr voidptr) int
+	fn C.pthread_create(thread &C.pthread_t, attr voidptr, start_routine fn (voidptr) voidptr, arg voidptr) i32
+	fn C.pthread_join(thread C.pthread_t, retval voidptr) i32
+	fn C.pthread_attr_init(attr voidptr) i32
+	fn C.pthread_attr_setstacksize(attr voidptr, stacksize usize) i32
+	fn C.pthread_attr_destroy(attr voidptr) i32
 
 	fn flat_cgen_chunk_thread(arg voidptr) voidptr {
 		a := unsafe { &FlatCgenChunkArgs(arg) }

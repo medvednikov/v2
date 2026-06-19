@@ -15,6 +15,9 @@ fn c_name(name string) string {
 	if name == 'malloc' {
 		return 'v_malloc'
 	}
+	if name == 'exit' {
+		return 'v_exit'
+	}
 	n := name.replace('[]', 'Array_').replace('.-', '__minus').replace('.+', '__plus').replace('.==',
 		'__eq').replace('.!=', '__ne').replace('.<=', '__le').replace('.>=', '__ge').replace('.<',
 		'__lt').replace('.>', '__gt').replace('.', '__')
@@ -110,9 +113,9 @@ fn (mut g Gen) preamble() {
 	g.writeln('\tfwrite(s.str, 1, s.len, stdout);')
 	g.writeln('}')
 	g.writeln('')
-	g.writeln('string int_str(int n) {')
-	g.writeln('\tstatic char buf[20];')
-	g.writeln('\tint len = snprintf(buf, sizeof(buf), "%d", n);')
+	g.writeln('string int_str(i64 n) {')
+	g.writeln('\tstatic char buf[32];')
+	g.writeln('\tint len = snprintf(buf, sizeof(buf), "%lld", n);')
 	g.writeln('\treturn (string){buf, len, 1};')
 	g.writeln('}')
 	g.writeln('')
@@ -594,7 +597,7 @@ fn (g &Gen) c_type_name(expr ast.Expr) string {
 	match expr {
 		ast.Ident {
 			return match expr.name {
-				'int' { 'int' }
+				'int' { 'i64' }
 				'i8' { 'i8' }
 				'i16' { 'i16' }
 				'i32' { 'i32' }

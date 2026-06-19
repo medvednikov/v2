@@ -12,9 +12,9 @@ pub:
 
 pub struct Bench {
 mut:
-	steps      []Step
-	total_sw   time.StopWatch
-	step_sw    time.StopWatch
+	steps    []Step
+	total_sw time.StopWatch
+	step_sw  time.StopWatch
 }
 
 pub fn new() Bench {
@@ -74,4 +74,4 @@ fn linux_rss_kb() i64 {
 	return 0
 }
 
-fn C.getpid() int
+fn C.getpid() i32

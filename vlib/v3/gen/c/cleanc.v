@@ -1186,7 +1186,7 @@ fn (mut g FlatGen) preamble() {
 	g.writeln('typedef int bool;')
 	g.writeln('#endif')
 	g.writeln('typedef void* voidptr;')
-	g.writeln('typedef int int_literal;')
+	g.writeln('typedef i64 int_literal;')
 	g.writeln('typedef double float_literal;')
 	g.writeln('typedef void* chan;')
 	g.writeln('#define true 1')
@@ -1215,7 +1215,7 @@ fn (mut g FlatGen) builtin_compat_decls() {
 	}
 	g.writeln('#define array_new(elem_size, len, cap) __new_array((len), (cap), (elem_size))')
 	g.writeln('#define array_push array__push')
-	g.writeln('void array__push_many(array* a, void* val, int size);')
+	g.writeln('void array__push_many(array* a, void* val, i64 size);')
 	g.writeln('static inline void array_push_many(Array* a, Array b) { array__push_many(a, b.data, b.len); }')
 	g.writeln('#define array_push_many_ptr array__push_many')
 	g.writeln('#define array_get array__get')

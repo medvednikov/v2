@@ -13,10 +13,10 @@ import v3.ssa.optimize
 import v3.transform
 import v3.types
 
-fn C.open(charptr, int, int) int
-fn C.write(int, voidptr, int) int
-fn C.close(int) int
-fn C.chmod(charptr, int) int
+fn C.open(charptr, i32, i32) i32
+fn C.write(i32, voidptr, usize) isize
+fn C.close(i32) i32
+fn C.chmod(charptr, i32) i32
 
 const o_wronly_creat_trunc = 0x601 // O_WRONLY | O_CREAT | O_TRUNC on Darwin
 

@@ -7,11 +7,11 @@ module arm64
 import os
 import time
 
-fn C.open(charptr, int, int) int
-fn C.write(int, voidptr, int) int
-fn C.close(int) int
-fn C.chmod(charptr, int) int
-fn C.rename(charptr, charptr) int
+fn C.open(charptr, i32, i32) i32
+fn C.write(i32, voidptr, usize) isize
+fn C.close(i32) i32
+fn C.chmod(charptr, i32) i32
+fn C.rename(charptr, charptr) i32
 
 // Mach-O executable constants
 const mh_execute = 2

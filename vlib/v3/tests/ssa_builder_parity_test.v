@@ -158,7 +158,7 @@ fn same(a string, b string) bool {
 
 fn test_c_fn_decl_registers_extern_signature() {
 	m := build_source('c_fn_decl', '
-fn C.abs(x int) int
+fn C.abs(x i32) i32
 
 fn main() {
 	_ := C.abs(-3)
@@ -169,6 +169,23 @@ fn main() {
 	ret_type := m.type_store.types[f.typ]
 	assert ret_type.kind == .int_t
 	assert ret_type.width == 32
+}
+
+fn test_plain_int_uses_64_bit_ssa_type() {
+	m := build_source('plain_int_width', '
+fn add(a int, b int) int {
+	return a + b
+}
+')
+	f := find_func(m, 'add')
+	ret_type := m.type_store.types[f.typ]
+	assert ret_type.kind == .int_t
+	assert ret_type.width == 64
+	for param_id in f.params {
+		param_type := m.type_store.types[m.values[param_id].typ]
+		assert param_type.kind == .int_t
+		assert param_type.width == 64
+	}
 }
 
 fn test_function_parameter_call_lowers_to_call_indirect() {
@@ -271,7 +288,7 @@ fn widen(x u8) i64 {
 	return i64(x)
 }
 
-fn widen_signed(x int) i64 {
+fn widen_signed(x i32) i64 {
 	return i64(x)
 }
 ')

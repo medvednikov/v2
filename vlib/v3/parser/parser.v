@@ -7,10 +7,10 @@ import v3.pref
 import v3.scanner
 import v3.token
 
-fn C.open(charptr, int, int) int
-fn C.read(int, voidptr, int) int
-fn C.close(int) int
-fn C.malloc(int) &u8
+fn C.open(charptr, i32, i32) i32
+fn C.read(i32, voidptr, usize) isize
+fn C.close(i32) i32
+fn C.malloc(usize) &u8
 
 const max_source_file_size = 8388608
 
@@ -139,7 +139,7 @@ fn read_source_file_raw(path string) string {
 		if nread <= 0 {
 			break
 		}
-		total += nread
+		total += int(nread)
 	}
 	C.close(fd)
 	if total <= 0 {

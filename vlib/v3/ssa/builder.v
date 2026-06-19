@@ -299,9 +299,9 @@ fn (mut b Builder) register_types() {
 		sum_typ_id := b.struct_type_id_for_decl(node.value, cur_module)
 		mut field_types := []TypeID{}
 		mut field_names := []string{}
-		field_types << b.i64_type
+		field_types << b.i32_type
 		field_names << 'typ'
-		b.register_sum_field_type(node.value, cur_module, 'typ', 'int')
+		b.register_sum_field_type(node.value, cur_module, 'typ', 'i32')
 		variants := b.sum_type_variants_for_decl(node, cur_module)
 		for variant in variants {
 			field_name := sum_variant_field_name(variant)
@@ -6978,6 +6978,10 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 		&& b.expr_type_name_for_map(base_id).trim_left('&').starts_with('map[') {
 		return b.build_map_delete_call(base_id, b.a.child(&node, 1))
 	}
+	if fn_node.kind == .selector && fn_node.value == 'clone'
+		&& b.expr_type_name_for_map(base_id).trim_left('&').starts_with('map[') {
+		return b.build_map_clone_call(base_id)
+	}
 	if actual_name == 'FILE' {
 		if node.children_count > 1 {
 			return b.build_expr(b.a.child(&node, 1))
@@ -7757,6 +7761,11 @@ fn (mut b Builder) build_map_delete_call(base_id flat.NodeId, key_id flat.NodeId
 	}
 	fn_ref := b.m.add_value(.func_ref, b.void_type, 'map__delete', b.fn_ids['map__delete'])
 	return b.emit3(.call, b.void_type, fn_ref, map_ptr, key_ptr)
+}
+
+fn (mut b Builder) build_map_clone_call(base_id flat.NodeId) ValueID {
+	fn_ref := b.m.add_value(.func_ref, b.void_type, 'map__clone', b.fn_ids['map__clone'])
+	return b.emit2(.call, b.map_type, fn_ref, b.build_expr(base_id))
 }
 
 fn (mut b Builder) map_set_call_sizes(node flat.Node) (int, int) {
@@ -8954,7 +8963,7 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 fn (mut b Builder) primitive_type_id(name string) ?TypeID {
 	return match name {
 		'int' {
-			b.i32_type
+			b.i64_type
 		}
 		'i8' {
 			b.i8_type
