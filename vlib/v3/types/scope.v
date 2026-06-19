@@ -2,10 +2,15 @@ module types
 
 @[heap]
 pub struct Scope {
-pub:
-	parent &Scope = unsafe { nil }
 pub mut:
-	objects map[string]Type
+	parent     &Scope = unsafe { nil }
+	objects    map[string]ScopedObject
+	generation int
+}
+
+struct ScopedObject {
+	typ        Type
+	generation int
 }
 
 pub fn new_scope(parent &Scope) &Scope {
@@ -16,12 +21,19 @@ pub fn new_scope(parent &Scope) &Scope {
 	}
 }
 
+pub fn (mut s Scope) reset(parent &Scope) {
+	s.parent = parent
+	s.generation++
+}
+
 pub fn (s &Scope) lookup(name string) ?Type {
 	if name.len == 0 {
 		return none
 	}
-	if name in s.objects {
-		return s.objects[name] or { Type(int_) }
+	if obj := s.objects[name] {
+		if obj.generation == s.generation {
+			return obj.typ
+		}
 	}
 	if s.parent != unsafe { nil } {
 		return s.parent.lookup(name)
@@ -30,5 +42,8 @@ pub fn (s &Scope) lookup(name string) ?Type {
 }
 
 pub fn (mut s Scope) insert(name string, typ Type) {
-	s.objects[name] = typ
+	s.objects[name] = ScopedObject{
+		typ:        typ
+		generation: s.generation
+	}
 }

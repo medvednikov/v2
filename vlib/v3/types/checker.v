@@ -90,12 +90,14 @@ pub mut:
 	file_modules                  map[string]string
 	file_scope                    &Scope = unsafe { nil }
 	cur_scope                     &Scope = unsafe { nil }
+	scope_pool                    []&Scope
+	scope_pool_index              int
 	has_builtins                  bool
 	cur_module                    string
 	cur_file                      string
 	errors                        []TypeError
 	resolved_calls                map[int]string // node_id -> resolved function name
-	expr_types                    map[int]Type   // node_id -> resolved type (populated by annotate_types)
+	expr_types                    map[int]Type   // node_id -> complex/contextual resolved type
 	diagnose_unknown_calls        bool
 	reject_unlowered_map_mutation bool
 	diagnostic_files              map[string]bool
@@ -136,7 +138,7 @@ pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
 }
 
 pub fn (mut tc TypeChecker) push_scope() {
-	tc.cur_scope = new_scope(tc.cur_scope)
+	tc.cur_scope = tc.reuse_scope(tc.cur_scope)
 }
 
 pub fn (mut tc TypeChecker) pop_scope() {
@@ -147,7 +149,23 @@ pub fn (mut tc TypeChecker) pop_scope() {
 	if parent == unsafe { nil } {
 		return
 	}
+	if tc.scope_pool_index > 0 && tc.cur_scope == tc.scope_pool[tc.scope_pool_index - 1] {
+		tc.scope_pool_index--
+	}
 	tc.cur_scope = parent
+}
+
+fn (mut tc TypeChecker) reuse_scope(parent &Scope) &Scope {
+	if tc.scope_pool_index < tc.scope_pool.len {
+		mut scope := tc.scope_pool[tc.scope_pool_index]
+		scope.reset(parent)
+		tc.scope_pool_index++
+		return scope
+	}
+	scope := new_scope(parent)
+	tc.scope_pool << scope
+	tc.scope_pool_index++
+	return scope
 }
 
 fn (mut tc TypeChecker) record_error(kind TypeErrorKind, msg string, node flat.NodeId) {
@@ -165,6 +183,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 	tc.a = a
 	tc.file_scope = new_scope(unsafe { nil })
 	tc.cur_scope = tc.file_scope
+	tc.scope_pool_index = 0
 	for node in a.nodes {
 		if node.kind == .struct_decl && node.value == 'string' {
 			tc.has_builtins = true
@@ -482,11 +501,11 @@ fn (mut tc TypeChecker) register_fn_name_alias(name string, ret_type Type, param
 }
 
 // annotate_types performs a scope-aware walk over every function body, tracking
-// local variable types as they are declared, and records the resolved type of
-// every expression node into tc.expr_types (keyed by node id). This mirrors what
-// the v2 transformer relies on: the type checker runs BEFORE the transformer and
-// publishes per-expression types, so the transformer can own type-dependent
-// lowering (string ops, `in` membership, ...) instead of the backend.
+// local variable types as they are declared, and records complex/contextual
+// expression types. This mirrors what the v2 transformer relies on: the type
+// checker runs BEFORE the transformer and publishes per-expression types, so the
+// transformer can own type-dependent lowering (string ops, `in` membership, ...)
+// instead of the backend.
 //
 // It uses a single flat scope per function (an over-approximation: a local stays
 // visible after its block ends), which is harmless for type lookup since variable
@@ -499,7 +518,8 @@ pub fn (mut tc TypeChecker) annotate_types() {
 		} else if node.kind == .module_decl {
 			tc.enter_module(node.value)
 		} else if node.kind == .fn_decl {
-			tc.cur_scope = new_scope(tc.file_scope)
+			tc.cur_scope = tc.file_scope
+			tc.push_scope()
 			for pi in 0 .. node.children_count {
 				p := tc.a.child_node(&node, pi)
 				if p.kind == .param && p.value.len > 0 {
@@ -542,7 +562,7 @@ fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
 					}
 					if typ !is MultiReturn && typ !is Void {
 						tc.cur_scope.insert(lhs.value, typ)
-						tc.expr_types[int(lhs_id)] = typ
+						tc.remember_expr_type(lhs_id, typ)
 					}
 				}
 				i += 2
@@ -556,7 +576,7 @@ fn (mut tc TypeChecker) annotate_node(id flat.NodeId) {
 		else {}
 	}
 
-	tc.expr_types[int(id)] = tc.resolve_type(id)
+	tc.remember_expr_type(id, tc.resolve_type(id))
 	for i in 0 .. node.children_count {
 		tc.annotate_node(tc.a.child(&node, i))
 	}
@@ -624,7 +644,7 @@ fn (mut tc TypeChecker) insert_loop_var(id flat.NodeId, typ Type) {
 	v := tc.a.nodes[int(id)]
 	if v.kind == .ident && v.value.len > 0 {
 		tc.cur_scope.insert(v.value, typ)
-		tc.expr_types[int(id)] = typ
+		tc.remember_expr_type(id, typ)
 	}
 }
 
@@ -663,10 +683,30 @@ fn (tc &TypeChecker) resolved_call_type(id flat.NodeId) ?Type {
 
 // register_synth_type records the type of a generated or transformed node.
 pub fn (mut tc TypeChecker) register_synth_type(id flat.NodeId, typ Type) {
+	tc.remember_expr_type(id, typ)
+}
+
+fn (mut tc TypeChecker) remember_expr_type(id flat.NodeId, typ Type) {
 	if int(id) < 0 {
 		return
 	}
-	tc.expr_types[int(id)] = typ
+	kind := if int(id) < tc.a.nodes.len { tc.a.nodes[int(id)].kind } else { flat.NodeKind.empty }
+	if should_cache_expr_type(kind, typ) {
+		tc.expr_types[int(id)] = typ
+	}
+}
+
+fn should_cache_expr_type(kind flat.NodeKind, typ Type) bool {
+	if typ is Void || typ is Unknown {
+		return false
+	}
+	if typ is Array || typ is ArrayFixed || typ is Map || typ is Pointer || typ is FnType
+		|| typ is OptionType || typ is ResultType || typ is Struct || typ is Interface
+		|| typ is Enum || typ is SumType || typ is Alias || typ is MultiReturn {
+		return true
+	}
+	return kind !in [.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
+		.nil_literal]
 }
 
 pub fn (mut tc TypeChecker) check_semantics() {

@@ -111,7 +111,7 @@ fn (mut t Transformer) transform_infix_struct_ops(_id flat.NodeId, node flat.Nod
 		return none
 	}
 	method_name := '${struct_type}.${op_name}'
-	if method_name !in t.fn_ret_types {
+	if !t.is_known_fn_name(method_name) {
 		if node.op != .eq && node.op != .ne {
 			return none
 		}

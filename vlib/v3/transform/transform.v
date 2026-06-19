@@ -39,7 +39,6 @@ mut:
 	globals         map[string]string
 	sum_types       map[string][]string
 	fn_ret_types    map[string]string
-	fn_param_types  map[string][]string
 	enum_types      map[string][]string
 	cur_file        string
 	cur_module      string
@@ -191,37 +190,18 @@ fn (mut t Transformer) collect_types() {
 			.fn_decl {
 				if node.typ.len > 0 {
 					t.fn_ret_types[node.value] = node.typ
-					mut ptypes := []string{}
-					for i in 0 .. node.children_count {
-						child := t.a.child_node(&node, i)
-						if child.kind == .param {
-							ptypes << child.typ
-						}
-					}
-					t.fn_param_types[node.value] = ptypes
 					if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
 						t.fn_ret_types['${cur_mod}.${node.value}'] = node.typ
-						t.fn_param_types['${cur_mod}.${node.value}'] = ptypes
 					}
 				}
 			}
 			.c_fn_decl {
 				if node.typ.len > 0 {
 					t.fn_ret_types[node.value] = node.typ
-					mut ptypes := []string{}
-					for i in 0 .. node.children_count {
-						child := t.a.child_node(&node, i)
-						if child.kind == .param {
-							ptypes << child.typ
-						}
-					}
-					t.fn_param_types[node.value] = ptypes
 					if node.value.starts_with('C.') {
 						t.fn_ret_types[node.value[2..]] = node.typ
-						t.fn_param_types[node.value[2..]] = ptypes
 					} else {
 						t.fn_ret_types['C.${node.value}'] = node.typ
-						t.fn_param_types['C.${node.value}'] = ptypes
 					}
 				}
 			}

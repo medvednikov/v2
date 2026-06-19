@@ -57,7 +57,13 @@ fn (t &Transformer) resolve_call_name(node flat.Node) string {
 }
 
 fn (t &Transformer) is_known_fn_name(name string) bool {
-	return name in t.fn_ret_types || name in t.fn_param_types
+	if name in t.fn_ret_types {
+		return true
+	}
+	if !isnil(t.tc) {
+		return name in t.tc.fn_ret_types || name in t.tc.fn_param_types
+	}
+	return false
 }
 
 fn (t &Transformer) resolve_receiver_method_name(base_id flat.NodeId, method string) string {
@@ -126,15 +132,16 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 		})
 	}
 	call_name := t.resolve_call_name(node)
-	param_types := t.fn_param_types[call_name] or { []string{} }
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	for i in 0 .. node.children_count {
 		child_id := t.a.children[node.children_start + i]
-		if i > 0 && i - 1 < param_types.len {
+		if i > 0 {
 			mut child := &t.a.nodes[int(child_id)]
-			if child.kind == .array_literal && child.typ.len == 0
-				&& param_types[i - 1].starts_with('[]') {
-				child.typ = param_types[i - 1]
+			if child.kind == .array_literal && child.typ.len == 0 {
+				param_type := t.call_param_type_name(call_name, i - 1)
+				if param_type.starts_with('[]') {
+					child.typ = param_type
+				}
 			}
 		}
 		new_children << t.transform_expr(child_id)
@@ -152,6 +159,17 @@ fn (mut t Transformer) transform_call_args(node flat.Node) flat.NodeId {
 		value:          node.value
 		typ:            node.typ
 	})
+}
+
+fn (t &Transformer) call_param_type_name(call_name string, idx int) string {
+	if idx < 0 || call_name.len == 0 || isnil(t.tc) {
+		return ''
+	}
+	params := t.tc.fn_param_types[call_name] or { return '' }
+	if idx >= params.len {
+		return ''
+	}
+	return params[idx].name()
 }
 
 fn (mut t Transformer) stringify_expr(expr_id flat.NodeId) flat.NodeId {
