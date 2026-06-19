@@ -248,9 +248,19 @@ fn (mut g FlatGen) gen_expr_with_expected_type(id flat.NodeId, expected types.Ty
 	old_expected := g.expected_expr_type
 	g.expected_expr_type = expected
 	actual := g.usable_expr_type(id)
+	node := g.a.nodes[int(id)]
+	if expected is types.Array && node.kind == .array_literal {
+		elem_type := if node.children_count > 0 {
+			g.tc.resolve_type(g.a.child(&node, 0))
+		} else {
+			expected.elem_type
+		}
+		g.gen_array_literal_value(node, elem_type)
+		g.expected_expr_type = old_expected
+		return
+	}
 	if expected !is types.Pointer && expected !is types.Void && actual is types.Pointer
 		&& g.type_names_match(actual.base_type, expected) {
-		node := g.a.nodes[int(id)]
 		needs_paren := node.kind !in [.ident, .selector, .call, .index]
 		g.write('*')
 		if needs_paren {

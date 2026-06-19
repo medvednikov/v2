@@ -1272,6 +1272,10 @@ fn (mut t Transformer) transform_typeof_expr(id flat.NodeId, node flat.Node) fla
 		return id
 	}
 	expr_id := t.a.child(&node, 0)
+	expr := t.a.nodes[int(expr_id)]
+	if expr.kind == .int_literal {
+		return t.make_string_literal('int literal')
+	}
 	mut typ := t.node_type(expr_id)
 	if typ.len == 0 {
 		typ = t.reliable_stringify_type(expr_id)
@@ -1600,8 +1604,29 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 			}
 			return ''
 		}
-		.array_literal, .array_init {
-			return node.typ
+		.array_literal {
+			if node.typ.len > 0 {
+				return node.typ
+			}
+			if node.children_count > 0 {
+				elem_type := t.node_type(t.a.child(&node, 0))
+				if elem_type.len > 0 {
+					return '[]${elem_type}'
+				}
+			}
+			return '[]int'
+		}
+		.array_init {
+			if node.typ.len > 0 {
+				return node.typ
+			}
+			if is_fixed_array_type(node.value) {
+				return node.value
+			}
+			if node.value.len > 0 {
+				return '[]${node.value}'
+			}
+			return '[]int'
 		}
 		.map_init {
 			return node.value
@@ -1975,7 +2000,11 @@ fn (mut t Transformer) lower_array_appends() {
 			if lhs_type.starts_with('[]') {
 				rhs_id := t.a.child(&node, 1)
 				rhs_type := t.lvalue_type(rhs_id)
-				val := if rhs_type.starts_with('[]') { 'push_many' } else { 'push' }
+				val := if rhs_type.starts_with('[]') || is_fixed_array_type(rhs_type) {
+					'push_many'
+				} else {
+					'push'
+				}
 				t.a.nodes[i] = flat.Node{
 					kind:           node.kind
 					op:             node.op
@@ -2066,7 +2095,7 @@ fn (mut t Transformer) annotate_left_shift(node_id flat.NodeId) {
 	}
 	rhs_id := t.a.child(&node, 1)
 	rhs_type := t.lvalue_type(rhs_id)
-	if rhs_type.starts_with('[]') {
+	if rhs_type.starts_with('[]') || is_fixed_array_type(rhs_type) {
 		t.a.nodes[int(node_id)] = flat.Node{
 			kind:           .infix
 			op:             .left_shift
@@ -2103,7 +2132,11 @@ fn (mut t Transformer) annotate_left_shift_assign(node_id flat.NodeId) {
 	}
 	rhs_id := t.a.child(&node, 1)
 	rhs_type := t.lvalue_type(rhs_id)
-	val := if rhs_type.starts_with('[]') { 'push_many' } else { 'push' }
+	val := if rhs_type.starts_with('[]') || is_fixed_array_type(rhs_type) {
+		'push_many'
+	} else {
+		'push'
+	}
 	t.a.nodes[int(node_id)] = flat.Node{
 		kind:           node.kind
 		op:             node.op

@@ -20,24 +20,16 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 				return
 			} else if child.kind == .infix && child.op == .left_shift {
 				lhs_id := g.a.child(&child, 0)
-				lhs_is_ptr := g.tc.resolve_type(lhs_id) is types.Pointer
-				amp := if lhs_is_ptr { '' } else { '&' }
 				if child.value == 'push_many' {
-					g.write('array_push_many(${amp}')
-					g.gen_expr_lvalue(lhs_id)
-					g.write(', ')
-					g.gen_expr(g.a.child(&child, 1))
-					g.writeln(');')
+					g.gen_array_push_many_stmt(lhs_id, g.a.child(&child, 1))
 				} else if child.value == 'push' {
 					push_rhs_id := g.a.child(&child, 1)
 					push_rhs_type := g.tc.resolve_type(push_rhs_id)
 					push_rhs_clean := types.unwrap_pointer(push_rhs_type)
 					if _ := array_like_type(push_rhs_clean) {
-						g.write('array_push_many(${amp}')
-						g.gen_expr_lvalue(lhs_id)
-						g.write(', ')
-						g.gen_expr(push_rhs_id)
-						g.writeln(');')
+						g.gen_array_push_many_stmt(lhs_id, push_rhs_id)
+					} else if _ := array_fixed_type(push_rhs_clean) {
+						g.gen_array_push_many_stmt(lhs_id, push_rhs_id)
 					} else {
 						mut c_elem := if child.typ.len > 0 {
 							g.tc.c_type(g.tc.parse_type(child.typ))
@@ -48,6 +40,8 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						if lhs_arr := array_like_type(lhs_arr_type) {
 							c_elem = g.tc.c_type(lhs_arr.elem_type)
 						}
+						lhs_is_ptr := g.tc.resolve_type(lhs_id) is types.Pointer
+						amp := if lhs_is_ptr { '' } else { '&' }
 						g.write('array_push(${amp}')
 						g.gen_expr_lvalue(lhs_id)
 						g.write(', &(${c_elem}[]){')
@@ -62,13 +56,13 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 						rhs_type := g.tc.resolve_type(rhs_id)
 						rhs_clean := types.unwrap_pointer(rhs_type)
 						if _ := array_like_type(rhs_clean) {
-							g.write('array_push_many(${amp}')
-							g.gen_expr_lvalue(lhs_id)
-							g.write(', ')
-							g.gen_expr(rhs_id)
-							g.writeln(');')
+							g.gen_array_push_many_stmt(lhs_id, rhs_id)
+						} else if _ := array_fixed_type(rhs_clean) {
+							g.gen_array_push_many_stmt(lhs_id, rhs_id)
 						} else {
 							c_elem := g.tc.c_type(lhs_arr.elem_type)
+							lhs_is_ptr := g.tc.resolve_type(lhs_id) is types.Pointer
+							amp := if lhs_is_ptr { '' } else { '&' }
 							g.write('array_push(${amp}')
 							g.gen_expr_lvalue(lhs_id)
 							g.write(', &(${c_elem}[]){')
@@ -364,22 +358,14 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			} else {
 				types.Type(types.int_)
 			}
-			c_elem := g.tc.c_type(elem_type)
-			count := rhs.children_count
-			g.write('${c_elem} ')
+			g.write('Array ')
 			g.gen_decl_lhs(lhs_id)
-			g.write('[] = {')
-			for j in 0 .. count {
-				if j > 0 {
-					g.write(', ')
-				}
-				g.gen_expr(g.a.child(&rhs, j))
-			}
-			g.writeln('};')
+			g.write(' = ')
+			g.gen_array_literal_value(rhs, elem_type)
+			g.writeln(';')
 			if lhs.kind == .ident {
-				g.tc.cur_scope.insert(lhs.value, types.Type(types.ArrayFixed{
+				g.tc.cur_scope.insert(lhs.value, types.Type(types.Array{
 					elem_type: elem_type
-					len:       count
 				}))
 			}
 		} else if rhs.kind == .or_expr {
@@ -535,13 +521,11 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 			g.gen_expr(g.a.child(&node, i + 1))
 			g.writeln(');')
 		} else if node.op == .left_shift_assign && lhs.kind == .ident {
-			lhs_is_ptr := g.tc.resolve_type(g.a.child(&node, i)) is types.Pointer
-			amp := if lhs_is_ptr { '' } else { '&' }
 			if node.value == 'push_many' {
-				g.write('array_push_many(${amp}${c_name(lhs.value)}, ')
-				g.gen_expr(g.a.child(&node, i + 1))
-				g.writeln(');')
+				g.gen_array_push_many_stmt(g.a.child(&node, i), g.a.child(&node, i + 1))
 			} else if node.value == 'push' {
+				lhs_is_ptr := g.tc.resolve_type(g.a.child(&node, i)) is types.Pointer
+				amp := if lhs_is_ptr { '' } else { '&' }
 				c_elem := g.tc.c_type(g.tc.parse_type(node.typ))
 				g.write('array_push(${amp}${c_name(lhs.value)}, &(${c_elem}[]){')
 				g.gen_expr(g.a.child(&node, i + 1))
@@ -564,17 +548,10 @@ fn (mut g FlatGen) gen_assign(node flat.Node) {
 			}
 			if rhs_node.kind == .array_literal && rhs_node.children_count > 0 {
 				elem_type := g.tc.resolve_type(g.a.child(&rhs_node, 0))
-				c_elem := g.tc.c_type(elem_type)
-				count := rhs_node.children_count
 				g.gen_expr(g.a.child(&node, i))
-				g.write(' = new_array_from_c_array(${count}, ${count}, sizeof(${c_elem}), (${c_elem}[${count}]){')
-				for j in 0 .. count {
-					if j > 0 {
-						g.write(', ')
-					}
-					g.gen_expr(g.a.child(&rhs_node, j))
-				}
-				g.writeln('});')
+				g.write(' = ')
+				g.gen_array_literal_value(rhs_node, elem_type)
+				g.writeln(';')
 			} else {
 				lhs_type := g.tc.resolve_type(g.a.child(&node, i))
 				rhs_type := g.tc.resolve_type(rhs_id)

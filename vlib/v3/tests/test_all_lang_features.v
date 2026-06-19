@@ -4172,7 +4172,7 @@ fn main() {
 	// 98. @FILE compile-time constant
 	file_path := @FILE
 	assert file_path.len > 0
-	assert file_path.contains('test.v')
+	assert file_path.contains('test_all_lang_features.v')
 	print_str('@FILE: ok')
 
 	// 99. Unsafe blocks
@@ -4804,7 +4804,7 @@ fn main() {
 
 	// 113.2 @FILE still works
 	file113 := @FILE
-	assert file113.contains('test.v')
+	assert file113.contains('test_all_lang_features.v')
 	print_str('@FN and @FILE: ok')
 
 	print_str('--- 114. String in Expressions ---')
@@ -4929,8 +4929,8 @@ fn main() {
 
 	// 116.3 typeof expression lowering.
 	type_name116 := typeof(123)
-	print_str(type_name116) // int
-	assert type_name116 == 'int'
+	print_str(type_name116) // int literal
+	assert type_name116 == 'int literal'
 
 	// 116.4 @VMODROOT compile-time path exists.
 	vmod_root116 := @VMODROOT

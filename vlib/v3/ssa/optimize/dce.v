@@ -21,7 +21,8 @@ fn dead_code_elimination(mut m ssa.Module) {
 						dead_instrs[val_id] = true
 						continue
 					}
-					has_side_effects := instr.op in [.store, .call, .ret, .br, .jmp]
+					has_side_effects := instr.op in [.store, .call, .call_indirect, .ret, .br,
+						.jmp, .unreachable]
 					if !has_side_effects && val.uses.len == 0 {
 						dead_instrs[val_id] = true
 					}

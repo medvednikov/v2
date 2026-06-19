@@ -95,6 +95,8 @@ fn select_operands(instr mir.Instruction) []Operand {
 	for i, operand in instr.operands {
 		kind := if instr.op == .br && i > 0 {
 			OperandKind.block
+		} else if instr.op == .phi && i % 2 == 1 {
+			OperandKind.block
 		} else if instr.op == .jmp {
 			OperandKind.block
 		} else {

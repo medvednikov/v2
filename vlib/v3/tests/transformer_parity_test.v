@@ -161,7 +161,7 @@ fn main() {
 		if stmt.kind == .decl_assign && stmt.children_count == 2 {
 			rhs := a.child_node(stmt, 1)
 			assert rhs.kind == .string_literal
-			assert rhs.value == 'int'
+			assert rhs.value == 'int literal'
 			return
 		}
 	}

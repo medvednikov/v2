@@ -105,7 +105,7 @@ fn (mut t Transformer) try_lower_array_append_stmt(id flat.NodeId) ?[]flat.NodeI
 	}
 
 	lhs_addr := t.runtime_addr(lhs, lhs_type)
-	if rhs_type.starts_with('[]') {
+	if rhs_type.starts_with('[]') || is_fixed_array_type(rhs_type) {
 		result << t.make_expr_stmt(t.make_call_typed('array_push_many', arr2(lhs_addr, rhs), 'void'))
 		return result
 	}

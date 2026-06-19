@@ -14,6 +14,66 @@ fn array_like_type(t types.Type) ?types.Array {
 	return none
 }
 
+fn array_fixed_type(t types.Type) ?types.ArrayFixed {
+	if t is types.ArrayFixed {
+		arr := t as types.ArrayFixed
+		return arr
+	}
+	if t is types.Alias && t.base_type is types.ArrayFixed {
+		return t.base_type as types.ArrayFixed
+	}
+	return none
+}
+
+fn (mut g FlatGen) gen_array_literal_value(node flat.Node, elem_type types.Type) {
+	c_elem := g.tc.c_type(elem_type)
+	count := node.children_count
+	g.write('new_array_from_c_array(${count}, ${count}, sizeof(${c_elem}), (${c_elem}[]){')
+	for i in 0 .. count {
+		if i > 0 {
+			g.write(', ')
+		}
+		g.gen_expr(g.a.child(&node, i))
+	}
+	g.write('})')
+}
+
+fn (mut g FlatGen) gen_fixed_array_data_arg(id flat.NodeId, arr types.ArrayFixed) {
+	node := g.a.nodes[int(id)]
+	if node.kind == .array_literal {
+		c_elem := g.tc.c_type(arr.elem_type)
+		g.write('(${c_elem}[]){')
+		for i in 0 .. node.children_count {
+			if i > 0 {
+				g.write(', ')
+			}
+			g.gen_expr(g.a.child(&node, i))
+		}
+		g.write('}')
+		return
+	}
+	g.gen_expr(id)
+}
+
+fn (mut g FlatGen) gen_array_push_many_stmt(lhs_id flat.NodeId, rhs_id flat.NodeId) {
+	lhs_is_ptr := g.tc.resolve_type(lhs_id) is types.Pointer
+	amp := if lhs_is_ptr { '' } else { '&' }
+	rhs_type := types.unwrap_pointer(g.tc.resolve_type(rhs_id))
+	if rhs_fixed := array_fixed_type(rhs_type) {
+		g.write('array_push_many_ptr(${amp}')
+		g.gen_expr_lvalue(lhs_id)
+		g.write(', ')
+		g.gen_fixed_array_data_arg(rhs_id, rhs_fixed)
+		g.writeln(', ${rhs_fixed.len});')
+		return
+	}
+	g.write('array_push_many(${amp}')
+	g.gen_expr_lvalue(lhs_id)
+	g.write(', ')
+	g.gen_expr(rhs_id)
+	g.writeln(');')
+}
+
 fn (mut g FlatGen) gen_slice_expr(node flat.Node, base_id flat.NodeId, base_type types.Type) {
 	start_node := g.a.child_node(&node, 1)
 	has_start := start_node.kind != .empty

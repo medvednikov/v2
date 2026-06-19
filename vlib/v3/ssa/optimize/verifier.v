@@ -114,6 +114,12 @@ fn verify_instruction_operands(m &ssa.Module, stage string, fi int, blk_id int, 
 					'jmp')
 			}
 		}
+		.unreachable {
+			if instr.operands.len != 0 {
+				verify_fail(stage,
+					'unreachable value ${val_id} in block ${blk_id} has ${instr.operands.len} operands')
+			}
+		}
 		.br {
 			if instr.operands.len != 3 {
 				verify_fail(stage,
@@ -123,6 +129,16 @@ fn verify_instruction_operands(m &ssa.Module, stage string, fi int, blk_id int, 
 					'br true')
 				verify_target_block(m, stage, fi, blk_id, int(instr.operands[2]), func_blocks,
 					'br false')
+			}
+		}
+		.phi {
+			if instr.operands.len == 0 || instr.operands.len % 2 != 0 {
+				verify_fail(stage,
+					'phi value ${val_id} in block ${blk_id} has ${instr.operands.len} operands')
+			}
+			for oi := 1; oi < instr.operands.len; oi += 2 {
+				verify_target_block(m, stage, fi, blk_id, int(instr.operands[oi]), func_blocks,
+					'phi predecessor')
 			}
 		}
 		else {}

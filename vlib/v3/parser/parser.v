@@ -26,6 +26,7 @@ mut:
 	has_peek       bool
 	cur_file       string
 	cur_module     string
+	cur_fn         string
 	pending_flag   bool
 	skip_next_decl bool
 pub mut:
@@ -605,6 +606,8 @@ fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type strin
 
 	mut body_ids := []flat.NodeId{}
 	if p.tok == .lcbr {
+		prev_fn := p.cur_fn
+		p.cur_fn = name
 		p.check(.lcbr)
 		for p.tok != .rcbr && p.tok != .eof {
 			id := p.stmt()
@@ -613,6 +616,7 @@ fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type strin
 			}
 		}
 		p.check(.rcbr)
+		p.cur_fn = prev_fn
 	}
 
 	mut all_ids := []flat.NodeId{cap: param_ids.len + body_ids.len}
@@ -681,6 +685,8 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 
 	// body
 	mut body_ids := []flat.NodeId{}
+	prev_fn := p.cur_fn
+	p.cur_fn = name
 	p.check(.lcbr)
 	for p.tok != .rcbr && p.tok != .eof {
 		id := p.stmt()
@@ -689,6 +695,7 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 		}
 	}
 	p.check(.rcbr)
+	p.cur_fn = prev_fn
 
 	mut all_ids := []flat.NodeId{cap: param_ids.len + body_ids.len}
 	for id in param_ids {
@@ -2647,7 +2654,7 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 				return p.a.add_val(.int_literal, '0')
 			}
 			if name == '@FN' {
-				return p.a.add_val(.string_literal, '')
+				return p.a.add_val(.string_literal, p.cur_fn)
 			}
 			if name == '@VCURRENTHASH' || name == '@VHASH' {
 				return p.a.add_val(.string_literal, '')

@@ -50,6 +50,18 @@ fn constant_fold(mut m ssa.Module) bool {
 							folded = true
 						}
 					}
+					.udiv {
+						if r_int != 0 {
+							result = i64(u64(l_int) / u64(r_int))
+							folded = true
+						}
+					}
+					.urem {
+						if r_int != 0 {
+							result = i64(u64(l_int) % u64(r_int))
+							folded = true
+						}
+					}
 					.and_ {
 						result = l_int & r_int
 						folded = true
@@ -102,6 +114,22 @@ fn constant_fold(mut m ssa.Module) bool {
 					}
 					.ge {
 						result = if l_int >= r_int { 1 } else { 0 }
+						folded = true
+					}
+					.ult {
+						result = if u64(l_int) < u64(r_int) { 1 } else { 0 }
+						folded = true
+					}
+					.ugt {
+						result = if u64(l_int) > u64(r_int) { 1 } else { 0 }
+						folded = true
+					}
+					.ule {
+						result = if u64(l_int) <= u64(r_int) { 1 } else { 0 }
+						folded = true
+					}
+					.uge {
+						result = if u64(l_int) >= u64(r_int) { 1 } else { 0 }
 						folded = true
 					}
 					else {}

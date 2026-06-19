@@ -5,7 +5,7 @@ import os
 const vexe = @VEXE
 const tests_dir = os.dir(@FILE)
 const v3_dir = os.dir(tests_dir)
-const test_v = os.join_path(tests_dir, 'test.v')
+const test_v = os.join_path(tests_dir, 'test_all_lang_features.v')
 const v3_src = os.join_path(v3_dir, 'v3.v')
 
 fn run(cmd string) os.Result {
