@@ -469,30 +469,6 @@ fn (tc &TypeChecker) has_active_import(alias string) bool {
 }
 
 fn (mut tc TypeChecker) register_runtime_methods() {
-	tc.fn_ret_types['strings.new_builder'] = tc.parse_type('strings.Builder')
-	tc.fn_param_types['strings.new_builder'] = tarr1(tc.parse_type('int'))
-	tc.fn_ret_types['strings.Builder.str'] = tc.parse_type('string')
-	tc.fn_param_types['strings.Builder.str'] = tarr1(tc.parse_type('&strings.Builder'))
-	tc.fn_ret_types['strings.Builder.write_string'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_string'] = tarr2(tc.parse_type('&strings.Builder'),
-		tc.parse_type('string'))
-	tc.fn_ret_types['strings.Builder.writeln'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.writeln'] = tarr2(tc.parse_type('&strings.Builder'),
-		tc.parse_type('string'))
-	tc.fn_ret_types['strings.Builder.write_ptr'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_ptr'] = tarr3(tc.parse_type('&strings.Builder'),
-		tc.parse_type('voidptr'), tc.parse_type('int'))
-	tc.fn_ret_types['strings.Builder.write_u8'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_u8'] = tarr2(tc.parse_type('&strings.Builder'),
-		tc.parse_type('u8'))
-	tc.fn_ret_types['strings.Builder.write_runes'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.write_runes'] = tarr2(tc.parse_type('&strings.Builder'),
-		tc.parse_type('[]rune'))
-	tc.fn_ret_types['strings.Builder.free'] = tc.parse_type('void')
-	tc.fn_param_types['strings.Builder.free'] = tarr1(tc.parse_type('&strings.Builder'))
-	tc.fn_ret_types['strings.Builder.last_n'] = tc.parse_type('string')
-	tc.fn_param_types['strings.Builder.last_n'] = tarr2(tc.parse_type('&strings.Builder'),
-		tc.parse_type('int'))
 	tc.fn_ret_types['check_fwrite'] = tc.parse_type('!int')
 	tc.fn_param_types['check_fwrite'] = tarr1(tc.parse_type('int'))
 	tc.fn_ret_types['os.check_fwrite'] = tc.parse_type('!int')
@@ -3225,13 +3201,6 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	if typ == 'array' && tc.has_builtins {
 		return Type(Struct{
 			name: typ
-		})
-	}
-	if typ == 'strings.Builder'
-		|| (typ == 'Builder' && tc.has_builtins && tc.cur_module == 'strings') {
-		return Type(Alias{
-			name:      typ
-			base_type: tc.parse_type('[]u8')
 		})
 	}
 	if is_builtin_type_name(typ) {

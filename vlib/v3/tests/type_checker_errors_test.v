@@ -164,4 +164,7 @@ fn test_type_checker_reports_core_semantic_errors() {
 		'moda/moda.v': 'module moda\n\nfn answer() int {\n\treturn 7\n}\n'
 	}, 'main.v')
 	assert imported_call_out == '7'
+	builder_out := run_good(v3_bin, 'strings_builder_from_vlib',
+		"import strings\n\nfn main() {\n\tmut sb := strings.new_builder(16)\n\tsb.write_string('ok')\n\tsb.write_u8(u8(33))\n\tprintln(sb.last_n(3))\n\tprintln(sb.str())\n}\n")
+	assert builder_out == 'ok!\nok!'
 }
