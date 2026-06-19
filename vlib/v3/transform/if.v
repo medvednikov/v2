@@ -343,9 +343,14 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	}
 
 	// Transform then-block children under the smartcast context.
+	saved_var_types := t.var_types.clone()
 	if !direct_ident_is {
 		for info in all_is {
 			t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
+		}
+	} else {
+		for info in all_is {
+			t.set_var_type(info.expr_name, t.resolve_variant(info.sum_type_name, info.variant_name))
 		}
 	}
 	then_node := t.a.nodes[int(then_id)]
@@ -369,6 +374,7 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 			t.pop_smartcast()
 		}
 	}
+	t.var_types = saved_var_types
 
 	// Transform else-block (no smartcast -- the is_expr was false here).
 	mut new_else_id := flat.empty_node

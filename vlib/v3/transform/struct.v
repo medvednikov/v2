@@ -26,6 +26,9 @@ fn (mut t Transformer) transform_struct_fields(id flat.NodeId, node flat.Node) f
 			val_id := t.a.child(&child, 0)
 			val_node := t.a.nodes[int(val_id)]
 			field_type := field_types[child.value] or { '' }
+			if val_node.kind == .array_literal && is_fixed_array_type(field_type) {
+				t.a.nodes[int(val_id)].typ = field_type
+			}
 			// Check if the value is an enum shorthand and the field type is an enum
 			new_val := if val_node.kind == .enum_val && field_type.len > 0
 				&& field_type in t.enum_types {
@@ -226,6 +229,9 @@ fn (mut t Transformer) transform_assoc_expr(id flat.NodeId, node flat.Node) flat
 		value_id := t.a.child(&field, 0)
 		value_node := t.a.nodes[int(value_id)]
 		field_type := field_types[field.value] or { '' }
+		if value_node.kind == .array_literal && is_fixed_array_type(field_type) {
+			t.a.nodes[int(value_id)].typ = field_type
+		}
 		value := if value_node.kind == .enum_val && field_type.len > 0 && field_type in t.enum_types {
 			t.transform_enum_shorthand(value_id, value_node, field_type)
 		} else {

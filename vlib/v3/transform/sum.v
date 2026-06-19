@@ -114,6 +114,22 @@ fn (mut t Transformer) transform_as_expr(id flat.NodeId, node flat.Node) flat.No
 	if clean_type !in t.sum_types {
 		return t.transform_expr(expr_id)
 	}
+	sc_key := t.expr_key(expr_id)
+	if sc_key.len > 0 {
+		if sc := t.find_smartcast(sc_key) {
+			mut sc_variant := sc.variant_name
+			if sc.variant_name.contains('.') {
+				sc_variant = sc.variant_name.all_after_last('.')
+			}
+			mut target_variant := node.value
+			if node.value.contains('.') {
+				target_variant = node.value.all_after_last('.')
+			}
+			if sc_variant == target_variant {
+				return t.transform_expr(expr_id)
+			}
+		}
+	}
 	qv := t.resolve_variant(clean_type, node.value)
 	field := t.sum_field_name(qv)
 	new_expr := t.transform_expr(expr_id)

@@ -1651,6 +1651,14 @@ fn (mut tc TypeChecker) resolve_call_info(_id flat.NodeId, node flat.Node) ?Call
 				}
 			}
 		}
+		if fn_typ := tc.selector_fn_type(fn_node) {
+			return CallInfo{
+				name:         ''
+				params:       fn_typ.params.clone()
+				return_type:  fn_typ.return_type
+				params_known: true
+			}
+		}
 		base_type := tc.resolve_type(base_id)
 		clean := unwrap_pointer(base_type)
 		if clean is Array && fn_node.value == 'clone' {
@@ -1909,6 +1917,26 @@ fn is_fn_pointer_type(typ Type) bool {
 	return clean is FnType
 }
 
+fn fn_type_from_type(typ Type) ?FnType {
+	if typ is FnType {
+		return typ
+	}
+	if typ is Alias {
+		base := typ.base_type
+		if base is FnType {
+			return base
+		}
+	}
+	return none
+}
+
+fn (tc &TypeChecker) selector_fn_type(node flat.Node) ?FnType {
+	if typ := tc.selector_type(flat.NodeId(-1), node) {
+		return fn_type_from_type(typ)
+	}
+	return none
+}
+
 fn array_elem_type(arr Array) Type {
 	return arr.elem_type
 }
@@ -1971,6 +1999,9 @@ fn (tc &TypeChecker) is_known_call(node flat.Node) bool {
 					return true
 				}
 			}
+		}
+		if _ := tc.selector_fn_type(fn_node) {
+			return true
 		}
 		base_type := tc.resolve_type(tc.a.child(fn_node, 0))
 		clean_type := unwrap_pointer(base_type)
@@ -2406,6 +2437,9 @@ fn (tc &TypeChecker) selector_type(_id flat.NodeId, node flat.Node) ?Type {
 	if node.children_count == 0 {
 		return none
 	}
+	if typ := tc.enum_selector_type(&node) {
+		return typ
+	}
 	base_id := tc.a.child(&node, 0)
 	base_type := tc.resolve_type(base_id)
 	clean0 := unwrap_pointer(base_type)
@@ -2740,6 +2774,41 @@ fn (tc &TypeChecker) enum_has_field(enum_name string, field string) bool {
 	return field in fields
 }
 
+fn (tc &TypeChecker) resolve_enum_name(name string) ?string {
+	if name in tc.enum_names {
+		return name
+	}
+	qname := tc.qualify_name(name)
+	if qname in tc.enum_names {
+		return qname
+	}
+	return none
+}
+
+fn (tc &TypeChecker) enum_selector_type(node &flat.Node) ?Type {
+	if node.kind != .selector || node.children_count == 0 {
+		return none
+	}
+	base := tc.a.child_node(node, 0)
+	mut enum_name := ''
+	if base.kind == .ident {
+		enum_name = tc.resolve_enum_name(base.value) or { '' }
+	} else if base.kind == .selector && base.children_count > 0 {
+		inner := tc.a.child_node(base, 0)
+		if inner.kind == .ident {
+			mod_name := tc.resolve_import_alias(inner.value) or { inner.value }
+			enum_name = tc.resolve_enum_name('${mod_name}.${base.value}') or { '' }
+		}
+	}
+	if enum_name.len == 0 || !tc.enum_has_field(enum_name, node.value) {
+		return none
+	}
+	return Type(Enum{
+		name:    enum_name
+		is_flag: enum_name in tc.flag_enums
+	})
+}
+
 fn (tc &TypeChecker) type_compatible(actual Type, expected Type) bool {
 	actual_raw := actual
 	expected_raw := expected
@@ -2834,7 +2903,7 @@ fn (tc &TypeChecker) type_compatible(actual Type, expected Type) bool {
 	}
 	if expected is ArrayFixed {
 		if actual is ArrayFixed {
-			return actual.len == expected.len
+			return tc.fixed_array_lengths_compatible(actual, expected)
 				&& tc.type_compatible(actual.elem_type, expected.elem_type)
 		}
 	}
@@ -2860,6 +2929,121 @@ fn (tc &TypeChecker) type_compatible(actual Type, expected Type) bool {
 		}
 	}
 	return false
+}
+
+fn (tc &TypeChecker) fixed_array_lengths_compatible(actual ArrayFixed, expected ArrayFixed) bool {
+	if actual.len > 0 && expected.len > 0 {
+		return actual.len == expected.len
+	}
+	actual_len := tc.fixed_array_len_value(actual) or {
+		return actual.len_expr == expected.len_expr
+	}
+	expected_len := tc.fixed_array_len_value(expected) or {
+		return actual.len_expr == expected.len_expr
+	}
+	return actual_len == expected_len
+}
+
+fn (tc &TypeChecker) fixed_array_len_value(arr ArrayFixed) ?int {
+	if arr.len > 0 {
+		return arr.len
+	}
+	if arr.len_expr.len == 0 {
+		return none
+	}
+	return tc.const_int_value(arr.len_expr, []string{})
+}
+
+fn (tc &TypeChecker) const_int_value(name string, seen []string) ?int {
+	if name in seen {
+		return none
+	}
+	mut candidates := []string{}
+	candidates << name
+	qname := tc.qualify_name(name)
+	if qname != name {
+		candidates << qname
+	}
+	for key in candidates {
+		if expr_id := tc.const_exprs[key] {
+			mut next_seen := seen.clone()
+			next_seen << key
+			return tc.const_int_expr(expr_id, next_seen)
+		}
+	}
+	if is_decimal_int_literal(name) {
+		return name.int()
+	}
+	return none
+}
+
+fn (tc &TypeChecker) const_int_expr(id flat.NodeId, seen []string) ?int {
+	if int(id) < 0 {
+		return none
+	}
+	node := tc.a.nodes[int(id)]
+	match node.kind {
+		.int_literal {
+			if is_decimal_int_literal(node.value) {
+				return node.value.int()
+			}
+		}
+		.ident {
+			return tc.const_int_value(node.value, seen)
+		}
+		.paren {
+			if node.children_count > 0 {
+				return tc.const_int_expr(tc.a.child(&node, 0), seen)
+			}
+		}
+		.prefix {
+			if node.children_count == 0 {
+				return none
+			}
+			value := tc.const_int_expr(tc.a.child(&node, 0), seen) or { return none }
+			return match node.op {
+				.minus { -value }
+				.plus { value }
+				else { none }
+			}
+		}
+		.infix {
+			if node.children_count < 2 {
+				return none
+			}
+			left := tc.const_int_expr(tc.a.child(&node, 0), seen) or { return none }
+			right := tc.const_int_expr(tc.a.child(&node, 1), seen) or { return none }
+			match node.op {
+				.plus {
+					return left + right
+				}
+				.minus {
+					return left - right
+				}
+				.mul {
+					return left * right
+				}
+				.div {
+					if right == 0 {
+						return none
+					}
+					return left / right
+				}
+				.mod {
+					if right == 0 {
+						return none
+					}
+					return left % right
+				}
+				else {
+					return none
+				}
+			}
+		}
+		else {}
+	}
+
+	return none
 }
 
 fn (tc &TypeChecker) type_implements_interface(actual Type, expected Interface) bool {
@@ -3510,6 +3694,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 						}
 					}
 				}
+				if fn_typ := tc.selector_fn_type(fn_node) {
+					return fn_typ.return_type
+				}
 				base_type := tc.resolve_type(tc.a.child(fn_node, 0))
 				clean_type := unwrap_pointer(base_type)
 				if clean_type is Array {
@@ -3717,6 +3904,9 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		.selector {
 			if smart_type := tc.smartcast_type(id) {
 				return smart_type
+			}
+			if typ := tc.enum_selector_type(&node) {
+				return typ
 			}
 			base_node := tc.a.child_node(&node, 0)
 			if base_node.kind == .ident {

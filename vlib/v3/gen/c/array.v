@@ -320,8 +320,9 @@ fn (mut g FlatGen) gen_index_assign(node flat.Node) {
 			is_array_base = true
 		} else if base_type is types.Pointer {
 			ptr_type := base_type
-			if ptr_type.base_type is types.Array {
-				arr_type = ptr_type.base_type as types.Array
+			ptr_base := ptr_type.base_type
+			if ptr_base is types.Array {
+				arr_type = ptr_base
 				is_array_base = true
 			}
 		}

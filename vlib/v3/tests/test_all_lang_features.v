@@ -910,7 +910,12 @@ struct Defaults116 {
 	count int    = 42
 }
 
-type MetaType117 = MetaNamed117 | MetaIface117 | MetaArray117 | MetaMap117 | MetaFn117
+type MetaType117 = MetaNamed117
+	| MetaIface117
+	| MetaArray117
+	| MetaMap117
+	| MetaFn117
+	| MetaPointer117
 
 type CastLeak117 = CastNamed117 | CastOther117
 
@@ -936,6 +941,10 @@ struct MetaFn117 {
 	ret    MetaType117
 }
 
+struct MetaPointer117 {
+	base MetaType117
+}
+
 struct Registry117 {
 	prefix string
 mut:
@@ -945,6 +954,19 @@ mut:
 struct Stack117 {
 mut:
 	values []int
+}
+
+struct Instr117 {
+	op       int
+	operands []int
+}
+
+struct FieldBag117 {
+	values []int
+}
+
+struct TypeStore117 {
+	types []FieldBag117
 }
 
 struct CastNamed117 {
@@ -979,6 +1001,14 @@ fn smartcast_name117(t CastLeak117) string {
 	return 'other'
 }
 
+fn smartcast_as_name117(t CastLeak117) string {
+	if t is CastNamed117 {
+		named := t as CastNamed117
+		return named.name
+	}
+	return 'other'
+}
+
 fn (t Marker117) is_on() bool {
 	return t == .on
 }
@@ -999,6 +1029,9 @@ fn meta_name117(t MetaType117) string {
 	}
 	if t is MetaMap117 {
 		return 'map[' + meta_name117(t.key) + ']' + meta_name117(t.val)
+	}
+	if t is MetaPointer117 {
+		return '&' + meta_name117(t.base)
 	}
 	return 'unknown'
 }
@@ -1041,6 +1074,50 @@ fn meta_iface_call117(t MetaType117) string {
 	return 'not-interface'
 }
 
+fn pointer_array_elem117(t MetaType117) string {
+	mut arr := MetaArray117{
+		elem: MetaType117(MetaNamed117{
+			name: 'none'
+		})
+	}
+	if t is MetaPointer117 {
+		ptr := t
+		base := ptr.base
+		if base is MetaArray117 {
+			arr = base
+		}
+	}
+	return meta_name117(arr.elem)
+}
+
+fn short_variant117(name string) string {
+	mut short := name
+	if name.contains('.') {
+		short = name.all_after_last('.')
+	}
+	return short
+}
+
+fn optional_match_arith117(op string, left int, right int) ?int {
+	match op {
+		'div' {
+			if right == 0 {
+				return none
+			}
+			return left / right
+		}
+		'mod' {
+			if right == 0 {
+				return none
+			}
+			return left % right
+		}
+		else {
+			return none
+		}
+	}
+}
+
 fn maybe_strings117(ok bool) ?[]string {
 	if ok {
 		mut values := []string{}
@@ -1073,6 +1150,18 @@ fn add117(a int, b int) int {
 
 fn fn_holder_call117(holder FnHolder117) int {
 	return holder.op(4, 5)
+}
+
+fn (i &Instr117) operand_total117(extra int) int {
+	return i.op + i.operands[0] + extra
+}
+
+fn indexed_struct_field117(store TypeStore117, idx int) int {
+	bag := store.types[idx]
+	if bag.values.len > 0 {
+		return bag.values[0]
+	}
+	return -1
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5219,9 +5308,8 @@ fn main() {
 	print_int(int(scalar_alias_if117(false))) // 12
 
 	// 117.10 Fixed-array lengths can come from const expressions in type declarations.
-	fixed_values117 := [7, 8, 9]!
 	fixed_holder117 := FixedHolder117{
-		values: fixed_values117
+		values: [7, 8, 9]!
 	}
 	print_int(fixed_holder_sum117(fixed_holder117)) // 24
 
@@ -5230,6 +5318,43 @@ fn main() {
 		op: add117
 	}
 	print_int(fn_holder_call117(fn_holder117)) // 9
+
+	// 117.12 Pointer-receiver methods on array index expressions receive element addresses.
+	mut instrs117 := []Instr117{}
+	instrs117 << Instr117{
+		op:       7
+		operands: [11]
+	}
+	print_int(instrs117[0].operand_total117(5)) // 23
+
+	// 117.13 Locals inferred from array indexing keep their struct field types.
+	store117 := TypeStore117{
+		types: [FieldBag117{
+			values: [31]
+		}]
+	}
+	print_int(indexed_struct_field117(store117, 0)) // 31
+
+	// 117.14 Direct smartcast `as` uses the narrowed local inside the branch.
+	print_str(smartcast_as_name117(CastLeak117(CastNamed117{
+		name: 'as-cast'
+	}))) // as-cast
+
+	// 117.15 Sum fields copied to locals can be smartcast before concrete assignment.
+	print_str(pointer_array_elem117(MetaType117(MetaPointer117{
+		base: MetaType117(MetaArray117{
+			elem: MetaType117(MetaNamed117{
+				name: 'Elem'
+			})
+		})
+	}))) // Elem
+
+	// 117.16 String short-name extraction uses mutable assignment instead of if-value.
+	print_str(short_variant117('types.Array')) // Array
+
+	// 117.17 Option-returning match branches return none explicitly.
+	print_int(optional_match_arith117('div', 8, 2) or { -1 }) // 4
+	print_int(optional_match_arith117('div', 8, 0) or { -5 }) // -5
 
 	print_str('arm64 self-host regression coverage: ok')
 

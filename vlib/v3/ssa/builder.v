@@ -245,13 +245,14 @@ fn (mut b Builder) register_types() {
 			for i in 0 .. node.children_count {
 				f := b.a.child_node(&node, i)
 				field_type := b.resolve_type_in_module(f.typ, cur_module)
+				field_type_name := qualify_type_ref_name(f.typ, cur_module)
 				field_types << field_type
 				field_names << f.value
-				b.struct_field_types[node.value + '.' + f.value] = f.typ
+				b.struct_field_types[node.value + '.' + f.value] = field_type_name
 				short_name := node.value.all_after('.')
-				b.struct_field_types[short_name + '.' + f.value] = f.typ
+				b.struct_field_types[short_name + '.' + f.value] = field_type_name
 				if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
-					b.struct_field_types[cur_module + '.' + short_name + '.' + f.value] = f.typ
+					b.struct_field_types[cur_module + '.' + short_name + '.' + f.value] = field_type_name
 				}
 			}
 			typ_id := b.struct_type_id_for_decl(node.value, cur_module)
@@ -545,6 +546,44 @@ fn qualify_type_name(name string, module_name string) string {
 		return name
 	}
 	return '${module_name}.${name}'
+}
+
+fn qualify_type_ref_name(name string, module_name string) string {
+	if name.len == 0 {
+		return name
+	}
+	if name.starts_with('&') {
+		return '&' + qualify_type_ref_name(name[1..], module_name)
+	}
+	if name.len > 1 && (name[0] == `?` || name[0] == `!`) {
+		return name[..1] + qualify_type_ref_name(name[1..], module_name)
+	}
+	if name.starts_with('[]') {
+		return '[]' + qualify_type_ref_name(name[2..], module_name)
+	}
+	if name.starts_with('[') {
+		idx := name.index_u8(`]`)
+		if idx > 0 && idx + 1 < name.len {
+			return name[..idx + 1] + qualify_type_ref_name(name[idx + 1..], module_name)
+		}
+	}
+	if name.starts_with('map[') {
+		key_type, val_type := map_type_parts(name)
+		if key_type.len > 0 && val_type.len > 0 {
+			return 'map[' + qualify_type_ref_name(key_type, module_name) + ']' +
+				qualify_type_ref_name(val_type, module_name)
+		}
+	}
+	if type_ref_is_builtin(name) || name.contains('.') || module_name.len == 0
+		|| module_name == 'main' || module_name == 'builtin' {
+		return name
+	}
+	return module_name + '.' + name
+}
+
+fn type_ref_is_builtin(name string) bool {
+	return name in ['int', 'i8', 'i16', 'i32', 'i64', 'u8', 'byte', 'u16', 'u32', 'u64', 'f32',
+		'f64', 'bool', 'string', 'void', 'voidptr', 'rune', 'char', 'array', 'map']
 }
 
 fn (b &Builder) sum_type_variants_for_decl(node flat.Node, module_name string) []string {
@@ -4224,8 +4263,11 @@ fn (mut b Builder) build_decl_assign(node flat.Node) {
 		if lhs.kind == .ident {
 			b.vars[lhs.value] = alloca
 			declared_type := b.declared_v_type_name(lhs_id, rhs_id)
+			rhs_type_name := b.checked_expr_type_name(rhs_id)
 			b.var_type_names[lhs.value] = if declared_type.len > 0 {
 				declared_type
+			} else if rhs_type_name.len > 0 && rhs_type_name != 'unknown' {
+				rhs_type_name
 			} else {
 				node.typ
 			}
@@ -6318,6 +6360,9 @@ fn (b &Builder) canonical_sum_type_name(name string) ?string {
 	if canonical := b.sum_type_canonical[name] {
 		return canonical
 	}
+	if name.contains('.') {
+		return none
+	}
 	short_name := name.all_after('.')
 	if canonical := b.sum_type_canonical[short_name] {
 		return canonical
@@ -6959,6 +7004,13 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 					}
 				} else if base_node.kind == .selector {
 					addr := b.build_selector_addr(base_node)
+					if b.should_pass_ident_addr_for_ptr_param(addr, param_types[0]) {
+						args << addr
+					} else {
+						args << b.build_expr(base_id)
+					}
+				} else if base_node.kind == .index {
+					addr := b.build_index_addr(base_id, base_node)
 					if b.should_pass_ident_addr_for_ptr_param(addr, param_types[0]) {
 						args << addr
 					} else {
@@ -7639,6 +7691,27 @@ fn map_type_parts(map_type string) (string, string) {
 	return '', ''
 }
 
+fn indexed_elem_type_name(container_type string) string {
+	clean := container_type.trim_left('&')
+	if clean.starts_with('[]') {
+		return clean[2..]
+	}
+	if clean.starts_with('[') {
+		idx := clean.index_u8(`]`)
+		if idx > 0 && idx + 1 < clean.len {
+			return clean[idx + 1..]
+		}
+	}
+	if clean.starts_with('map[') {
+		_, val_type := map_type_parts(clean)
+		return val_type
+	}
+	if clean == 'string' {
+		return 'u8'
+	}
+	return ''
+}
+
 fn (mut b Builder) build_join_path_call(node flat.Node) ValueID {
 	if node.children_count <= 1 {
 		return b.m.add_value(.string_literal, b.str_type, '', 0)
@@ -7715,31 +7788,44 @@ fn (b &Builder) checked_expr_type_name(id flat.NodeId) string {
 	if int(id) < 0 {
 		return ''
 	}
+	node := b.a.nodes[int(id)]
+	if node.kind == .selector {
+		if typ := b.selector_type_name(node) {
+			return typ
+		}
+	}
+	if node.kind == .index && node.children_count > 0 {
+		base_type := b.checked_expr_type_name(b.a.child(&node, 0))
+		elem_type := indexed_elem_type_name(base_type)
+		if elem_type.len > 0 {
+			return elem_type
+		}
+	}
 	if b.tc != unsafe { nil } {
 		if typ := b.tc.expr_type(id) {
 			if typ is types.MultiReturn {
 				return b.multi_return_c_type(typ)
 			}
-			return typ.name()
+			name := typ.name()
+			if name.len > 0 && name != 'unknown' {
+				return name
+			}
 		}
 		if typ := b.tc.expr_types[int(id)] {
 			if typ is types.MultiReturn {
 				return b.multi_return_c_type(typ)
 			}
-			return typ.name()
+			name := typ.name()
+			if name.len > 0 && name != 'unknown' {
+				return name
+			}
 		}
 	}
-	node := b.a.nodes[int(id)]
-	if node.typ.len > 0 {
+	if node.typ.len > 0 && node.typ != 'unknown' {
 		return node.typ
 	}
 	if node.kind == .ident {
 		if typ := b.var_type_names[node.value] {
-			return typ
-		}
-	}
-	if node.kind == .selector {
-		if typ := b.selector_type_name(node) {
 			return typ
 		}
 	}
