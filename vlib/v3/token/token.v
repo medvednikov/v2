@@ -129,17 +129,32 @@ pub enum BindingPower {
 
 @[inline]
 pub fn (t Token) left_binding_power() BindingPower {
-	return match t {
-		.logical_or { BindingPower.logical_or }
-		.and { BindingPower.logical_and }
-		.eq, .ne, .lt, .le, .gt, .ge, .key_in, .not_in, .key_is, .not_is { BindingPower.compare }
-		.pipe { BindingPower.bit_or }
-		.xor { BindingPower.bit_xor }
-		.left_shift, .right_shift, .right_shift_unsigned { BindingPower.shift }
-		.plus, .minus { BindingPower.add }
-		.mul, .div, .mod, .amp { BindingPower.product }
-		else { BindingPower.lowest }
+	if t == .logical_or {
+		return BindingPower.logical_or
 	}
+	if t == .and {
+		return BindingPower.logical_and
+	}
+	if t == .eq || t == .ne || t == .lt || t == .le || t == .gt || t == .ge || t == .key_in
+		|| t == .not_in || t == .key_is || t == .not_is {
+		return BindingPower.compare
+	}
+	if t == .pipe {
+		return BindingPower.bit_or
+	}
+	if t == .xor {
+		return BindingPower.bit_xor
+	}
+	if t == .left_shift || t == .right_shift || t == .right_shift_unsigned {
+		return BindingPower.shift
+	}
+	if t == .plus || t == .minus {
+		return BindingPower.add
+	}
+	if t == .mul || t == .div || t == .mod || t == .amp {
+		return BindingPower.product
+	}
+	return BindingPower.lowest
 }
 
 @[inline]
@@ -154,71 +169,43 @@ pub fn (t Token) is_keyword() bool {
 
 @[inline]
 pub fn (t Token) is_prefix() bool {
-	return t in [.minus, .amp, .and, .mul, .not, .bit_not, .arrow]
+	return t == .minus || t == .amp || t == .and || t == .mul || t == .not || t == .bit_not
+		|| t == .arrow
 }
 
 @[inline]
 pub fn (t Token) is_infix() bool {
-	return t in [
-		.amp,
-		.and,
-		.arrow,
-		.div,
-		.eq,
-		.ge,
-		.gt,
-		.key_in,
-		.key_is,
-		.le,
-		.left_shift,
-		.logical_or,
-		.lt,
-		.minus,
-		.mod,
-		.mul,
-		.ne,
-		.not_in,
-		.not_is,
-		.pipe,
-		.plus,
-		.right_shift,
-		.right_shift_unsigned,
-		.xor,
-	]
+	return t == .amp || t == .and || t == .arrow || t == .div || t == .eq || t == .ge
+		|| t == .gt || t == .key_in || t == .key_is || t == .le || t == .left_shift
+		|| t == .logical_or || t == .lt || t == .minus || t == .mod || t == .mul
+		|| t == .ne || t == .not_in || t == .not_is || t == .pipe || t == .plus
+		|| t == .right_shift || t == .right_shift_unsigned || t == .xor
 }
 
 @[inline]
 pub fn (t Token) is_postfix() bool {
-	return t in [.dec, .inc]
+	return t == .dec || t == .inc
 }
 
 @[inline]
 pub fn (t Token) is_assignment() bool {
-	return t in [
-		.and_assign,
-		.assign,
-		.decl_assign,
-		.div_assign,
-		.left_shift_assign,
-		.minus_assign,
-		.mod_assign,
-		.mul_assign,
-		.or_assign,
-		.plus_assign,
-		.right_shift_assign,
-		.right_shift_unsigned_assign,
-		.xor_assign,
-	]
+	return t == .and_assign || t == .assign || t == .decl_assign || t == .div_assign
+		|| t == .left_shift_assign || t == .minus_assign || t == .mod_assign
+		|| t == .mul_assign || t == .or_assign || t == .plus_assign
+		|| t == .right_shift_assign || t == .right_shift_unsigned_assign || t == .xor_assign
 }
 
 @[inline]
 pub fn (t Token) is_overloadable() bool {
-	return t in [.div, .eq, .ge, .gt, .le, .lt, .minus, .mod, .mul, .ne, .pipe, .plus, .xor]
+	return t == .div || t == .eq || t == .ge || t == .gt || t == .le || t == .lt
+		|| t == .minus || t == .mod || t == .mul || t == .ne || t == .pipe || t == .plus
+		|| t == .xor
 }
 
 @[inline]
 pub fn (t Token) is_comparison() bool {
-	return t in [.eq, .ge, .gt, .key_in, .key_is, .le, .lt, .ne, .not_in, .not_is]
+	return t == .eq || t == .ge || t == .gt || t == .key_in || t == .key_is || t == .le
+		|| t == .lt || t == .ne || t == .not_in || t == .not_is
 }
 
 pub fn (t Token) str() string {

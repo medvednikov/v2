@@ -159,6 +159,15 @@ pub fn FlatAst.new() FlatAst {
 	}
 }
 
+// free releases the flat AST's node and child storage.
+@[unsafe]
+pub fn (mut a FlatAst) free() {
+	unsafe {
+		a.nodes.free()
+		a.children.free()
+	}
+}
+
 pub fn (mut a FlatAst) add(kind NodeKind) NodeId {
 	id := NodeId(a.nodes.len)
 	a.nodes << Node{

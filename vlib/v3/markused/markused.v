@@ -85,15 +85,15 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 					contains2_total++
 				}
 				short := node.value.all_after_last('.')
-				suffix_map[short] << node.value
+				add_suffix_candidate(mut suffix_map, short, node.value)
 				if qname != node.value {
-					suffix_map[short] << qname
+					add_suffix_candidate(mut suffix_map, short, qname)
 				}
 			}
 			if qname != node.value && qname.contains('.') {
 				short := qname.all_after_last('.')
 				if short != node.value.all_after_last('.') {
-					suffix_map[short] << qname
+					add_suffix_candidate(mut suffix_map, short, qname)
 				}
 			}
 		}
@@ -150,7 +150,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	}
 	enqueue_detected_runtime_helpers(a, tc, mut used, mut queue)
 	enqueue_initializer_calls(a, collector, imports, fn_decls, mut used, mut queue)
-	mut calls_by_node := map[int][]string{}
+	mut processed_nodes := map[int]bool{}
 	mut qi := 0
 	for qi < queue.len {
 		name := queue[qi]
@@ -168,17 +168,20 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 		}
 		in_cg++
 		node_key := int(fn_info.node_id)
-		calls := calls_by_node[node_key] or {
-			node := a.node(fn_info.node_id)
-			receiver_name, receiver_struct := receiver_info(a, node)
-			mut new_calls := []string{}
-			collector.collect_calls(node, fn_info.module, imports, receiver_name, receiver_struct, mut
-				new_calls)
-			total_callees += new_calls.len
-			calls_by_node[node_key] = new_calls
-			new_calls
+		if node_key in processed_nodes {
+			continue
 		}
+		processed_nodes[node_key] = true
+		mut calls := []string{cap: 128}
+		node := a.node(fn_info.node_id)
+		receiver_name, receiver_struct := receiver_info(a, node)
+		collector.collect_calls(node, fn_info.module, imports, receiver_name, receiver_struct, mut
+			calls)
+		total_callees += calls.len
 		for callee in calls {
+			if !valid_symbol_name(callee) {
+				continue
+			}
 			mut found_direct := false
 			if callee_info := fn_decls[callee] {
 				found_direct = true
@@ -232,6 +235,19 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	return used
 }
 
+fn add_suffix_candidate(mut suffix_map map[string][]string, short string, name string) {
+	if !valid_symbol_name(short) || !valid_symbol_name(name) {
+		return
+	}
+	mut candidates := suffix_map[short] or { []string{} }
+	candidates << name
+	suffix_map[short] = candidates
+}
+
+fn valid_symbol_name(name string) bool {
+	return name.len > 0 && name.len < 512
+}
+
 fn enqueue_initializer_calls(a &flat.FlatAst, collector CallCollector, imports map[string]string, fn_decls map[string]FnDeclInfo, mut used map[string]bool, mut queue []string) {
 	mut cur_module := ''
 	for node in a.nodes {
@@ -266,6 +282,9 @@ fn enqueue_initializer_calls(a &flat.FlatAst, collector CallCollector, imports m
 }
 
 fn enqueue(name string, mut used map[string]bool, mut queue []string) bool {
+	if !valid_symbol_name(name) {
+		return false
+	}
 	if name in used {
 		return false
 	}

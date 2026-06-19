@@ -357,20 +357,19 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 
 	// Transform then-block children under the smartcast context.
 	then_node := t.a.nodes[int(then_id)]
-	new_then_id := if then_node.kind == .block {
+	mut new_then_id := then_id
+	if then_node.kind == .block {
 		child_ids := t.a.children_of(&then_node)
 		new_children := t.transform_stmts(child_ids)
 		block_start := t.a.children.len
 		for c in new_children {
 			t.a.children << c
 		}
-		t.a.add_node(flat.Node{
+		new_then_id = t.a.add_node(flat.Node{
 			kind:           .block
 			children_start: block_start
 			children_count: new_children.len
 		})
-	} else {
-		then_id
 	}
 
 	for _ in all_is {
@@ -378,11 +377,12 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	}
 
 	// Transform else-block (no smartcast -- the is_expr was false here).
-	new_else_id := if has_else {
+	mut new_else_id := flat.empty_node
+	if has_else {
 		else_node := t.a.nodes[int(else_id)]
 		if else_node.kind == .if_expr {
 			// else-if chain: recurse.
-			t.transform_if_branches_with_smartcast(else_id, else_node)
+			new_else_id = t.transform_if_branches_with_smartcast(else_id, else_node)
 		} else if else_node.kind == .block {
 			child_ids := t.a.children_of(&else_node)
 			new_children := t.transform_stmts(child_ids)
@@ -390,16 +390,14 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 			for c in new_children {
 				t.a.children << c
 			}
-			t.a.add_node(flat.Node{
+			new_else_id = t.a.add_node(flat.Node{
 				kind:           .block
 				children_start: block_start
 				children_count: new_children.len
 			})
 		} else {
-			else_id
+			new_else_id = else_id
 		}
-	} else {
-		flat.empty_node
 	}
 
 	// Rebuild the if_expr with (possibly) new children.

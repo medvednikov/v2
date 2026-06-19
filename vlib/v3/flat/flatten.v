@@ -473,7 +473,9 @@ fn type_name(expr ast.Expr) string {
 		}
 		ast.Type {
 			match expr {
+				ast.OptionType { return '?${type_name(expr.base_type)}' }
 				ast.PointerType { return '&${type_name(expr.base_type)}' }
+				ast.ResultType { return '!${type_name(expr.base_type)}' }
 				else { return '' }
 			}
 		}

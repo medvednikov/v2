@@ -4,14 +4,21 @@ import v3.flat
 import v3.types
 
 fn (mut g FlatGen) gen_if(node flat.Node) {
-	cond := g.a.child_node(&node, 0)
+	if node.children_count < 2 {
+		return
+	}
+	cond_id := g.a.child(&node, 0)
+	if !g.valid_node_id(cond_id) {
+		return
+	}
+	cond := g.a.nodes[int(cond_id)]
 	if cond.kind == .decl_assign {
-		g.gen_if_guard(node, *cond)
+		g.gen_if_guard(node, cond)
 		return
 	}
 	if cond.kind != .empty {
 		g.write('if (')
-		g.gen_expr(g.a.child(&node, 0))
+		g.gen_expr(cond_id)
 		g.writeln(') {')
 	} else {
 		g.writeln('{')
@@ -19,11 +26,17 @@ fn (mut g FlatGen) gen_if(node flat.Node) {
 	g.tc.push_scope()
 	g.indent++
 	if cond.kind == .is_expr {
-		g.smartcast_is_expr(cond)
+		g.smartcast_is_expr(&cond)
 	}
-	then_block := g.a.child_node(&node, 1)
-	for i in 0 .. then_block.children_count {
-		g.gen_node(g.a.child(then_block, i))
+	then_id := g.a.child(&node, 1)
+	if g.valid_node_id(then_id) {
+		then_block := g.a.nodes[int(then_id)]
+		for i in 0 .. then_block.children_count {
+			child_id := g.a.child(&then_block, i)
+			if g.valid_node_id(child_id) {
+				g.gen_node(child_id)
+			}
+		}
 	}
 	g.indent--
 	g.tc.pop_scope()
@@ -76,9 +89,16 @@ fn (g &FlatGen) expr_key(id flat.NodeId) string {
 }
 
 fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
-	lhs := g.a.child_node(&cond, 0)
+	if cond.children_count < 2 {
+		return
+	}
+	lhs_id := g.a.child(&cond, 0)
 	rhs_id := g.a.child(&cond, 1)
-	rhs := g.a.child_node(&cond, 1)
+	if !g.valid_node_id(lhs_id) || !g.valid_node_id(rhs_id) {
+		return
+	}
+	lhs := g.a.nodes[int(lhs_id)]
+	rhs := g.a.nodes[int(rhs_id)]
 	var_name := c_name(lhs.value)
 	tmp := g.tmp_name()
 	if rhs.kind == .index {
@@ -123,9 +143,15 @@ fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
 		g.writeln('${val_ct} ${var_name} = ${tmp}.value;')
 		g.tc.cur_scope.insert(lhs.value, val_type)
 	}
-	then_block := g.a.child_node(&node, 1)
-	for i in 0 .. then_block.children_count {
-		g.gen_node(g.a.child(then_block, i))
+	then_id := g.a.child(&node, 1)
+	if g.valid_node_id(then_id) {
+		then_block := g.a.nodes[int(then_id)]
+		for i in 0 .. then_block.children_count {
+			child_id := g.a.child(&then_block, i)
+			if g.valid_node_id(child_id) {
+				g.gen_node(child_id)
+			}
+		}
 	}
 	g.indent--
 	g.tc.pop_scope()
@@ -134,27 +160,40 @@ fn (mut g FlatGen) gen_if_guard(node flat.Node, cond flat.Node) {
 
 fn (mut g FlatGen) gen_if_else(node flat.Node) {
 	if node.children_count > 2 {
-		else_node := g.a.child_node(&node, 2)
+		else_id := g.a.child(&node, 2)
+		if !g.valid_node_id(else_id) {
+			g.writeln('}')
+			return
+		}
+		else_node := g.a.nodes[int(else_id)]
 		if else_node.kind == .if_expr {
-			else_cond := g.a.child_node(else_node, 0)
-			if else_cond.kind == .decl_assign {
+			else_cond_id := g.a.child(&else_node, 0)
+			else_cond_is_guard := if g.valid_node_id(else_cond_id) {
+				g.a.nodes[int(else_cond_id)].kind == .decl_assign
+			} else {
+				false
+			}
+			if else_cond_is_guard {
 				g.writeln('} else {')
 				g.tc.push_scope()
 				g.indent++
-				g.gen_if(*else_node)
+				g.gen_if(else_node)
 				g.indent--
 				g.tc.pop_scope()
 				g.writeln('}')
 			} else {
 				g.write('} else ')
-				g.gen_if(*else_node)
+				g.gen_if(else_node)
 			}
 		} else if else_node.kind == .block {
 			g.writeln('} else {')
 			g.tc.push_scope()
 			g.indent++
 			for i in 0 .. else_node.children_count {
-				g.gen_node(g.a.child(else_node, i))
+				child_id := g.a.child(&else_node, i)
+				if g.valid_node_id(child_id) {
+					g.gen_node(child_id)
+				}
 			}
 			g.indent--
 			g.tc.pop_scope()
@@ -218,7 +257,8 @@ fn (mut g FlatGen) gen_if_expr(node flat.Node) {
 
 fn (mut g FlatGen) gen_if_expr_block(block &flat.Node) {
 	for i in 0 .. block.children_count {
-		child := g.a.child_node(block, i)
+		child_id := g.a.child(block, i)
+		child := g.a.nodes[int(child_id)]
 		if i == block.children_count - 1 {
 			if child.kind == .expr_stmt {
 				g.write('_ifexpr = ')
@@ -226,13 +266,33 @@ fn (mut g FlatGen) gen_if_expr_block(block &flat.Node) {
 				g.writeln(';')
 			} else if child.kind == .if_expr {
 				g.write('_ifexpr = ')
-				g.gen_if_expr(*child)
+				g.gen_if_expr(child)
+				g.writeln(';')
+			} else if g.is_expr_kind(child.kind) {
+				g.write('_ifexpr = ')
+				g.gen_expr(child_id)
 				g.writeln(';')
 			} else {
-				g.gen_node(g.a.child(block, i))
+				g.gen_node(child_id)
 			}
 		} else {
-			g.gen_node(g.a.child(block, i))
+			g.gen_node(child_id)
+		}
+	}
+}
+
+fn (g &FlatGen) is_expr_kind(kind flat.NodeKind) bool {
+	return match kind {
+		.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
+		.string_interp, .ident, .infix, .prefix, .postfix, .paren, .call, .selector, .index,
+		.if_expr, .struct_init, .field_init, .array_literal, .array_init, .map_init, .fn_literal,
+		.or_expr, .cast_expr, .as_expr, .enum_val, .assoc, .range, .nil_literal, .none_expr,
+		.spawn_expr, .lock_expr, .lambda_expr, .sizeof_expr, .typeof_expr, .dump_expr,
+		.offsetof_expr, .is_expr, .in_expr {
+			true
+		}
+		else {
+			false
 		}
 	}
 }

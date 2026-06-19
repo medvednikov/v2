@@ -5,15 +5,20 @@ import v3.bench
 import v3.flat
 import v3.gen.arm64
 import v3.gen.c as cgen
-import v3.insel
 import v3.markused
-import v3.mir
 import v3.parser
 import v3.pref
 import v3.ssa
 import v3.ssa.optimize
 import v3.transform
 import v3.types
+
+fn C.open(charptr, int, int) int
+fn C.write(int, voidptr, int) int
+fn C.close(int) int
+fn C.chmod(charptr, int) int
+
+const o_wronly_creat_trunc = 0x601 // O_WRONLY | O_CREAT | O_TRUNC on Darwin
 
 fn main() {
 	args := os.args[1..]
@@ -73,17 +78,21 @@ fn main() {
 	// Parse directly to flat AST
 	mut prefs := pref.new_preferences()
 	prefs.backend = backend
+	prefs.vroot = resolve_vroot(prefs.vroot)
 	mut p := parser.Parser.new(prefs)
 
 	mut files := []string{}
-	builtin_dir := os.join_path(prefs.vroot, 'vlib', 'builtin')
+	builtin_dir := builtin_dir_for_vroot(prefs.vroot)
 	files << pref.get_v_files_from_dir(builtin_dir, prefs.user_defines, prefs.target_os)
-	mut a := p.parse_files(files)
+	p.parse_files(files)
+	mut a := p.a
 	a.user_code_start = a.nodes.len
 
 	// Parse user input: single file or directory
 	mut user_files := []string{}
-	if os.is_dir(input_file) {
+	if input_file.ends_with('.v') {
+		user_files << input_file
+	} else if os.is_dir(input_file) {
 		user_files = pref.get_v_files_from_dir(input_file, prefs.user_defines, prefs.target_os)
 	} else {
 		user_files << input_file
@@ -147,13 +156,6 @@ fn main() {
 			b.step('optimize')
 		}
 
-		mut mir_mod := mir.lower_from_ssa_for_target(m, mir.arm64_target())
-		b.step('mir')
-
-		selected := insel.select_(mut mir_mod)
-		_ = selected
-		b.step('insel')
-
 		mut g := arm64.Gen.new(m)
 		g.gen()
 		b.step('arm64 gen')
@@ -163,9 +165,9 @@ fn main() {
 	} else {
 		// C backend (default)
 		mut g := cgen.FlatGen.new()
-		c_code := g.gen_with_used_options(a, used_fns, tc, no_parallel)
-		os.write_file(output_file, c_code) or {
-			eprintln('error writing ${output_file}: ${err}')
+		c_code := g.gen_with_used_options(a, used_fns, &tc, no_parallel)
+		if !write_text_file_raw(output_file, c_code) {
+			eprintln('error writing ${output_file}')
 			exit(1)
 		}
 		b.step('gen C/write')
@@ -179,10 +181,11 @@ fn main() {
 		mut cc_cmd := ''
 		mut result := os.Result{}
 		if !is_prod {
-			tcc_dir := os.join_path(os.home_dir(), 'code', 'v', 'thirdparty', 'tcc')
-			tcc_path := os.join_path(tcc_dir, 'tcc.exe')
-			tcc_includes := '-I${os.join_path(tcc_dir, 'lib', 'include')}'
-			tcc_lib := '-L${os.join_path(tcc_dir, 'lib')}'
+			tcc_dir := os.join_path_single(os.join_path_single(prefs.vroot, 'thirdparty'), 'tcc')
+			tcc_path := os.join_path_single(tcc_dir, 'tcc.exe')
+			tcc_lib_dir := os.join_path_single(tcc_dir, 'lib')
+			tcc_includes := '-I${os.join_path_single(tcc_lib_dir, 'include')}'
+			tcc_lib := '-L${tcc_lib_dir}'
 			cc_cmd = '${tcc_path} ${tcc_includes} ${tcc_lib} ${warn_flags} -o ${bin_file} ${output_file} -lm'
 			println('  > ${cc_cmd}')
 			result = os.execute(cc_cmd)
@@ -204,6 +207,50 @@ fn main() {
 	}
 
 	b.print_report()
+}
+
+fn resolve_vroot(initial string) string {
+	if is_valid_vroot(initial) {
+		return initial
+	}
+	mut dir := os.getwd()
+	for _ in 0 .. 8 {
+		if is_valid_vroot(dir) {
+			return dir
+		}
+		parent := os.dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return initial
+}
+
+fn is_valid_vroot(root string) bool {
+	return root.len > 0 && os.is_dir(builtin_dir_for_vroot(root))
+}
+
+fn builtin_dir_for_vroot(root string) string {
+	return os.join_path_single(os.join_path_single(root, 'vlib'), 'builtin')
+}
+
+fn write_text_file_raw(path string, data string) bool {
+	fd := C.open(path.str, o_wronly_creat_trunc, 420)
+	if fd < 0 {
+		return false
+	}
+	if data.len > 0 {
+		written := C.write(fd, data.str, data.len)
+		if written != data.len {
+			C.close(fd)
+			return false
+		}
+	}
+	if C.close(fd) != 0 {
+		return false
+	}
+	return C.chmod(path.str, 420) == 0
 }
 
 fn print_type_errors(errors []types.TypeError) {
@@ -231,7 +278,9 @@ fn resolve_imports(mut a flat.FlatAst, mut p parser.Parser, prefs &pref.Preferen
 	for changed {
 		changed = false
 		mut cur_file := first_file
-		for node in a.nodes {
+		scan_len := a.nodes.len
+		for node_idx in 0 .. scan_len {
+			node := a.nodes[node_idx]
 			if node.kind == .file && node.value.len > 0 {
 				cur_file = node.value
 				continue

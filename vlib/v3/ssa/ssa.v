@@ -69,7 +69,9 @@ pub mut:
 }
 
 pub fn TypeStore.new() TypeStore {
-	mut ts := TypeStore{}
+	mut ts := TypeStore{
+		cache: map[string]TypeID{}
+	}
 	ts.types << Type{
 		kind: .void_t
 	}
@@ -77,26 +79,22 @@ pub fn TypeStore.new() TypeStore {
 }
 
 pub fn (mut ts TypeStore) get_int(width int) TypeID {
-	key := 'i${width}'
-	if id := ts.cache[key] {
-		if id > 0 {
-			return id
+	for id, typ in ts.types {
+		if typ.kind == .int_t && typ.width == width {
+			return TypeID(id)
 		}
 	}
 	id := ts.register(Type{ kind: .int_t, width: width })
-	ts.cache[key] = id
 	return id
 }
 
 pub fn (mut ts TypeStore) get_ptr(elem TypeID) TypeID {
-	key := 'p${elem}'
-	if id := ts.cache[key] {
-		if id > 0 {
-			return id
+	for id, typ in ts.types {
+		if typ.kind == .ptr_t && typ.elem_type == elem {
+			return TypeID(id)
 		}
 	}
 	id := ts.register(Type{ kind: .ptr_t, elem_type: elem })
-	ts.cache[key] = id
 	return id
 }
 
@@ -260,77 +258,99 @@ pub fn (mut m Module) get_or_add_const(typ TypeID, name string) ValueID {
 }
 
 pub fn (m &Module) type_size(typ_id TypeID) int {
+	return m.type_size_inner(typ_id, 0)
+}
+
+fn (m &Module) type_size_inner(typ_id TypeID, depth int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 0
 	}
-	typ := m.type_store.types[typ_id]
-	return match typ.kind {
-		.void_t {
-			0
-		}
-		.int_t {
-			if typ.width > 0 {
-				(typ.width + 7) / 8
-			} else {
-				8
-			}
-		}
-		.float_t {
-			if typ.width > 0 {
-				(typ.width + 7) / 8
-			} else {
-				8
-			}
-		}
-		.ptr_t {
-			8
-		}
-		.struct_t {
-			mut offset := 0
-			mut max_align := 1
-			for field_typ in typ.fields {
-				align := m.type_align(field_typ)
-				if align > max_align {
-					max_align = align
-				}
-				if align > 1 && offset % align != 0 {
-					offset = (offset + align - 1) & ~(align - 1)
-				}
-				offset += m.type_size(field_typ)
-			}
-			total := if max_align > 1 && offset % max_align != 0 {
-				(offset + max_align - 1) & ~(max_align - 1)
-			} else {
-				offset
-			}
-			if total > 0 {
-				total
-			} else {
-				8
-			}
-		}
-		.func_t {
-			8
-		}
+	if depth > 32 {
+		return 8
 	}
+	typ := m.type_store.types[typ_id]
+	if typ.width > 0 {
+		return (typ.width + 7) / 8
+	}
+	if typ.elem_type > 0 && typ.fields.len == 0 {
+		return 8
+	}
+	if typ.fields.len == 0 {
+		if typ.params.len > 0 || typ.ret_type > 0 {
+			return 8
+		}
+		return 0
+	}
+	if typ.fields.len > 256 {
+		return 8
+	}
+	mut offset := 0
+	mut max_align := 1
+	for i in 0 .. typ.fields.len {
+		field_typ := typ.fields[i]
+		align := m.type_align_inner(field_typ, depth + 1)
+		if align > max_align {
+			max_align = align
+		}
+		if align > 1 && offset % align != 0 {
+			offset = (offset + align - 1) & ~(align - 1)
+		}
+		offset += m.type_size_inner(field_typ, depth + 1)
+	}
+	total := if max_align > 1 && offset % max_align != 0 {
+		(offset + max_align - 1) & ~(max_align - 1)
+	} else {
+		offset
+	}
+	if total > 0 {
+		return total
+	}
+	return 8
 }
 
 pub fn (m &Module) type_align(typ_id TypeID) int {
+	return m.type_align_inner(typ_id, 0)
+}
+
+fn (m &Module) type_align_inner(typ_id TypeID, depth int) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 1
 	}
+	if depth > 32 {
+		return 8
+	}
 	typ := m.type_store.types[typ_id]
-	if typ.kind == .struct_t {
+	if typ.width > 0 {
+		size := (typ.width + 7) / 8
+		if size >= 8 {
+			return 8
+		}
+		if size >= 4 {
+			return 4
+		}
+		return 1
+	}
+	if typ.elem_type > 0 && typ.fields.len == 0 {
+		return 8
+	}
+	if typ.fields.len > 0 {
+		if typ.fields.len > 256 {
+			return 8
+		}
 		mut max_align := 1
-		for field_typ in typ.fields {
-			a := m.type_align(field_typ)
+		for i in 0 .. typ.fields.len {
+			field_typ := typ.fields[i]
+			a := m.type_align_inner(field_typ, depth + 1)
 			if a > max_align {
 				max_align = a
 			}
 		}
 		return max_align
 	}
-	size := m.type_size(typ_id)
+	if typ.params.len > 0 || typ.ret_type > 0 {
+		return 8
+	}
+	size := m.type_size_inner(typ_id, depth + 1)
 	if size >= 8 {
 		return 8
 	}

@@ -9,8 +9,7 @@ pub mut:
 	target_os    string = os.user_os()
 	user_defines []string
 	backend      string = 'c'
-pub:
-	vroot string = detect_vroot()
+	vroot        string = detect_vroot()
 }
 
 pub fn new_preferences() &Preferences {
@@ -18,6 +17,10 @@ pub fn new_preferences() &Preferences {
 }
 
 fn detect_vroot() string {
+	baked_root := @VMODROOT
+	if baked_root.len > 0 {
+		return baked_root
+	}
 	if os.args.len > 0 && os.args[0].len > 0 {
 		vroot := detect_vroot_from(os.args[0])
 		if vroot.len > 0 {

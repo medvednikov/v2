@@ -10,6 +10,7 @@ mut:
 	indent                  int
 	a                       &flat.FlatAst = unsafe { nil }
 	used_fns                map[string]bool
+	used_fn_names           []string
 	str_lits                []string
 	str_lit_ids             map[string]int
 	global_types            map[string]types.Type
@@ -19,7 +20,7 @@ mut:
 	const_vals              map[string]flat.NodeId
 	const_modules           map[string]string
 	global_modules          map[string]string
-	tc                      types.TypeChecker
+	tc                      &types.TypeChecker = unsafe { nil }
 	has_builtins            bool
 	tmp_count               int
 	line_start              bool
@@ -51,19 +52,23 @@ pub fn FlatGen.new() FlatGen {
 
 pub fn (mut g FlatGen) gen(a &flat.FlatAst) string {
 	tc := types.TypeChecker.new(a)
-	return g.gen_with_used(a, map[string]bool{}, tc)
+	return g.gen_with_used(a, map[string]bool{}, &tc)
 }
 
-pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, tc types.TypeChecker) string {
+pub fn (mut g FlatGen) gen_with_used(a &flat.FlatAst, used_fns map[string]bool, tc &types.TypeChecker) string {
 	return g.gen_with_used_options(a, used_fns, tc, false)
 }
 
-pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[string]bool, tc types.TypeChecker, no_parallel bool) string {
+pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[string]bool, tc &types.TypeChecker, no_parallel bool) string {
 	g.a = a
-	g.used_fns = used_fns.clone()
-	if tc.a != unsafe { nil } {
-		g.tc = tc
-	} else {
+	g.used_fn_names = []string{}
+	for name, is_used in used_fns {
+		if is_used {
+			g.used_fn_names << name
+		}
+	}
+	g.tc = unsafe { tc }
+	if g.tc.a == unsafe { nil } {
 		g.tc.collect(a)
 	}
 	g.has_builtins = g.tc.has_builtins
@@ -75,6 +80,9 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 	g.line_start = true
 	g.gen_fns_dispatch(no_parallel)
 	fn_code := g.sb.str()
+	unsafe {
+		g.sb.free()
+	}
 	g.sb = orig_sb
 	g.line_start = orig_line_start
 	g.preamble()
@@ -100,26 +108,60 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 		g.writeln('')
 	}
 	g.sb.write_string(fn_code)
-	return g.sb.str()
+	unsafe {
+		const_code.free()
+		fn_code.free()
+	}
+	result := g.sb.str()
+	unsafe {
+		g.sb.free()
+	}
+	return result
+}
+
+// free releases memory owned by the generator after code generation finishes.
+@[unsafe]
+pub fn (mut g FlatGen) free() {
+	unsafe {
+		g.used_fns.free()
+		g.used_fn_names.free()
+		g.str_lit_ids.free()
+		g.global_types.free()
+		g.enum_vals.free()
+		g.defers.free()
+		g.interfaces.free()
+		g.const_vals.free()
+		g.const_modules.free()
+		g.global_modules.free()
+		g.modules.free()
+		g.fn_ptr_types.free()
+		g.fn_decl_param_types.free()
+		g.struct_decl_infos.free()
+		g.struct_decl_short_infos.free()
+		g.runtime_inits.free()
+		g.needed_optional_types.free()
+		g.emitted_fns.free()
+		g.array_method_cache.free()
+	}
 }
 
 fn (mut g FlatGen) collect_gen_info() {
-	for node in g.a.nodes {
+	mut cur_module := ''
+	for node_idx in 0 .. g.a.nodes.len {
+		node := g.a.nodes[node_idx]
 		match node.kind {
 			.file {
-				g.tc.cur_module = ''
+				cur_module = ''
+				g.tc.cur_module = cur_module
 			}
 			.module_decl {
-				g.tc.cur_module = node.value
+				cur_module = node.value
+				g.tc.cur_module = cur_module
 			}
 			.fn_decl {
-				full_name := if g.tc.cur_module.len > 0 && g.tc.cur_module != 'main'
-					&& g.tc.cur_module != 'builtin' {
-					'${g.tc.cur_module}.${node.value}'
-				} else {
-					node.value
-				}
+				full_name := qualify_name_in_module(cur_module, node.value)
 				mut ptypes := []types.Type{}
+				g.tc.cur_module = cur_module
 				for i in 0 .. node.children_count {
 					child := g.a.child_node(&node, i)
 					if child.kind == .param {
@@ -133,15 +175,11 @@ fn (mut g FlatGen) collect_gen_info() {
 				g.register_fn_decl_param_types(node.value, full_name, ptypes)
 			}
 			.struct_decl {
-				full_name := if g.tc.cur_module.len > 0 && g.tc.cur_module != 'main'
-					&& g.tc.cur_module != 'builtin' {
-					'${g.tc.cur_module}.${node.value}'
-				} else {
-					node.value
-				}
-				g.register_struct_decl_info(node.value, full_name, g.tc.cur_module, node)
+				full_name := qualify_name_in_module(cur_module, node.value)
+				g.register_struct_decl_info(node.value, full_name, cur_module, node)
 			}
 			.global_decl {
+				g.tc.cur_module = cur_module
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
 					if f.value.starts_with('C.') {
@@ -151,9 +189,9 @@ fn (mut g FlatGen) collect_gen_info() {
 					if ft is types.Void && f.children_count > 0 {
 						ft = g.tc.resolve_type(g.a.child(f, 0))
 					}
-					qname := g.tc.qualify_name(f.value)
+					qname := qualify_name_in_module(cur_module, f.value)
 					g.global_types[qname] = ft
-					g.global_modules[f.value] = g.tc.cur_module
+					g.global_modules[f.value] = cur_module
 					g.tc.file_scope.insert(f.value, ft)
 					if qname != f.value {
 						g.tc.file_scope.insert(qname, ft)
@@ -163,7 +201,7 @@ fn (mut g FlatGen) collect_gen_info() {
 			.enum_decl {
 				is_flag := node.typ == 'flag'
 				mut val := 0
-				enum_name := g.tc.qualify_name(node.value)
+				enum_name := qualify_name_in_module(cur_module, node.value)
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
 					if f.children_count > 0 {
@@ -189,14 +227,14 @@ fn (mut g FlatGen) collect_gen_info() {
 						methods << f.value
 					}
 				}
-				g.interfaces[g.tc.qualify_name(node.value)] = methods
+				g.interfaces[qualify_name_in_module(cur_module, node.value)] = methods
 			}
 			.const_decl {
 				for i in 0 .. node.children_count {
 					f := g.a.child_node(&node, i)
 					if f.kind == .const_field && f.children_count > 0 {
 						g.const_vals[f.value] = g.a.child(f, 0)
-						g.const_modules[f.value] = g.tc.cur_module
+						g.const_modules[f.value] = cur_module
 					}
 				}
 			}
@@ -237,6 +275,9 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	g.line_start = true
 	g.gen_expr(id)
 	result := g.sb.str()
+	unsafe {
+		g.sb.free()
+	}
 	g.sb = orig
 	g.line_start = orig_line_start
 	return result
@@ -282,6 +323,10 @@ fn array_index_info(t types.Type) (bool, bool, types.Array) {
 		}
 	}
 	return false, false, types.Array{}
+}
+
+fn (g &FlatGen) valid_node_id(id flat.NodeId) bool {
+	return g.a != unsafe { nil } && int(id) >= 0 && int(id) < g.a.nodes.len
 }
 
 fn (g &FlatGen) const_ref_name(name string) string {
@@ -331,7 +376,7 @@ fn (g &FlatGen) const_ref_name_from_node(node flat.Node) string {
 
 fn (mut g FlatGen) const_expr_to_string(id flat.NodeId, seen []string) string {
 	if int(id) < 0 || int(id) >= g.a.nodes.len {
-		return ''
+		return '0'
 	}
 	node := g.a.nodes[int(id)]
 	return match node.kind {
@@ -369,7 +414,8 @@ fn (mut g FlatGen) const_expr_to_string(id flat.NodeId, seen []string) string {
 				return g.expr_to_string(id)
 			}
 			ct := g.tc.c_type(target_type)
-			child := g.const_expr_to_string(g.a.child(&node, 0), seen)
+			child0 := g.const_expr_to_string(g.a.child(&node, 0), seen)
+			child := if child0.trim_space().len == 0 { '0' } else { child0 }
 			'(${ct})(${child})'
 		}
 		.array_literal {
@@ -421,6 +467,7 @@ fn (mut g FlatGen) fixed_array_len_expr(type_name string, fallback int) string {
 
 fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 	if int(id) < 0 {
+		g.write('0')
 		return
 	}
 	node := g.a.nodes[int(id)]
@@ -609,9 +656,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		}
 		.in_expr {
 			// NOTE: range membership, inline-array-literal membership, dynamic- and
-			// fixed-array membership, map membership, and `!in` negation are all
-			// lowered by the transformer (transform.transform_in_expr). The map
-			// path below is retained as a strict legacy fallback.
+			// fixed-array membership, and `!in` negation are lowered by the
+			// transformer (transform.transform_in_expr). Map membership stays as an
+			// in_expr so each backend can lower it directly.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
 			rhs_type := g.tc.resolve_type(rhs_id)
@@ -951,7 +998,9 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 		.assoc {
 			g.gen_assoc_expr(node)
 		}
-		.empty {}
+		.empty {
+			g.write('0')
+		}
 		else {}
 	}
 }

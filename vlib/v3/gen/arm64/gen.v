@@ -24,8 +24,14 @@ struct PendingJmp {
 
 pub fn Gen.new(m &ssa.Module) &Gen {
 	return &Gen{
-		m:     m
-		macho: MachOObject.new()
+		m:             m
+		macho:         MachOObject.new()
+		stack_map:     map[int]int{}
+		alloca_offset: map[int]int{}
+		block_offsets: []int{}
+		pending_jmps:  []PendingJmp{}
+		fn_offsets:    map[string]int{}
+		string_cache:  map[string]int{}
 	}
 }
 
@@ -128,20 +134,19 @@ fn (mut g Gen) gen_func(func_idx int) {
 			if instr.op == .alloca {
 				ptr_type := g.m.type_store.types[val.typ]
 				elem_size := g.m.type_size(ptr_type.elem_type)
-				count := if instr.operands.len > 0 {
+				mut count := 1
+				if instr.operands.len > 0 {
 					count_val := g.m.values[instr.operands[0]]
 					if count_val.kind == .constant {
 						n := parse_arm64_int(count_val.name)
 						if n > 1 {
-							int(n)
+							count = int(n)
 						} else {
-							1
+							count = 1
 						}
 					} else {
-						1
+						count = 1
 					}
-				} else {
-					1
 				}
 				alloc_size := if elem_size > 0 { (elem_size * count + 7) & ~7 } else { 8 }
 				slot_offset = (slot_offset + 15) & ~0xF
@@ -342,10 +347,16 @@ fn (mut g Gen) gen_instr(val_id int) {
 					typ := g.m.type_store.types[val.typ]
 					if typ.kind == .struct_t {
 						if off := g.stack_map[val_id] {
-							n_words := (result_size + 7) / 8
-							for wi in 0 .. n_words {
-								g.emit32(asm_ldr_imm(Reg(8), Reg(ptr_reg), u32(wi)))
-								g.emit_store_fp(8, off + wi * 8)
+							if g.is_string_struct_type(val.typ) {
+								g.emit_load_string_regs_from_ptr(ptr_reg, 8, 10, val.typ)
+								g.emit_store_fp(8, off)
+								g.emit_store_fp(10, off + 8)
+							} else {
+								n_words := (result_size + 7) / 8
+								for wi in 0 .. n_words {
+									g.emit32(asm_ldr_imm(Reg(8), Reg(ptr_reg), u32(wi)))
+									g.emit_store_fp(8, off + wi * 8)
+								}
 							}
 						}
 						return
@@ -500,10 +511,14 @@ fn (mut g Gen) gen_instr(val_id int) {
 					if ret_size > 8 && ret_val.typ > 0 && ret_val.typ < g.m.type_store.types.len
 						&& g.m.type_store.types[ret_val.typ].kind == .struct_t {
 						if off := g.stack_map[ret_id] {
-							n_words := (ret_size + 7) / 8
-							for wi in 0 .. n_words {
-								if wi < 8 {
-									g.emit_load_fp(wi, off + wi * 8)
+							if g.is_string_struct_type(ret_val.typ) {
+								g.emit_load_string_regs_from_fp(off, 0, 1, ret_val.typ)
+							} else {
+								n_words := (ret_size + 7) / 8
+								for wi in 0 .. n_words {
+									if wi < 8 {
+										g.emit_load_fp(wi, off + wi * 8)
+									}
 								}
 							}
 						}
@@ -584,6 +599,34 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 			if arg_size > 8 && arg_type_id > 0 && arg_type_id < g.m.type_store.types.len {
 				typ := g.m.type_store.types[arg_type_id]
 				if typ.kind == .struct_t {
+					if g.is_string_struct_type(arg_type_id) {
+						if arg_reg + 2 <= 8 {
+							if off := g.stack_map[arg_id] {
+								g.emit_load_string_regs_from_fp(off, arg_reg, arg_reg + 1,
+									arg_type_id)
+							} else {
+								src_reg := g.load_val(arg_id, arg_reg)
+								if src_reg != arg_reg {
+									g.emit32(asm_mov_reg(Reg(arg_reg), Reg(src_reg)))
+								}
+								g.emit_mov_imm(arg_reg + 1, 0)
+							}
+							arg_reg += 2
+						} else {
+							if off := g.stack_map[arg_id] {
+								g.emit_load_string_regs_from_fp(off, 8, 10, arg_type_id)
+								g.emit_store_sp(8, stack_off)
+								g.emit_store_sp(10, stack_off + 8)
+							} else {
+								src_reg := g.load_val(arg_id, 8)
+								g.emit_store_sp(src_reg, stack_off)
+								g.emit_mov_imm(10, 0)
+								g.emit_store_sp(10, stack_off + 8)
+							}
+							stack_off += 16
+						}
+						continue
+					}
 					n_words := (arg_size + 7) / 8
 					if arg_reg + n_words <= 8 {
 						if off := g.stack_map[arg_id] {
@@ -650,7 +693,9 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		}
 	}
 
-	if fn_name in g.fn_offsets {
+	is_c_extern := fn_ref.kind == .func_ref && fn_ref.index >= 0 && fn_ref.index < g.m.funcs.len
+		&& g.m.funcs[fn_ref.index].is_c_extern
+	if !is_c_extern && fn_name in g.fn_offsets {
 		target := g.fn_offsets[fn_name]
 		offset := (target - g.macho.text_data.len) / 4
 		g.emit32(asm_bl(i32(offset)))
@@ -674,6 +719,11 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 			typ := g.m.type_store.types[instr.typ]
 			if typ.kind == .struct_t {
 				if off := g.stack_map[val_id] {
+					if g.is_string_struct_type(instr.typ) {
+						g.emit_store_fp(0, off)
+						g.emit_store_fp(1, off + 8)
+						return
+					}
 					n_words := (ret_size + 7) / 8
 					for wi in 0 .. n_words {
 						if wi < 8 {
@@ -984,6 +1034,33 @@ fn (g &Gen) ptr_elem_type(val_id int) ssa.TypeID {
 	return 0
 }
 
+fn (g &Gen) is_string_struct_type(typ_id ssa.TypeID) bool {
+	if typ_id <= 0 || typ_id >= g.m.type_store.types.len {
+		return false
+	}
+	typ := g.m.type_store.types[typ_id]
+	if typ.kind != .struct_t || typ.fields.len != 2 || g.m.type_size(typ_id) != 16 {
+		return false
+	}
+	first := g.m.type_store.types[typ.fields[0]]
+	second := g.m.type_store.types[typ.fields[1]]
+	return first.kind == .ptr_t && second.kind == .int_t && second.width == 32
+}
+
+fn (mut g Gen) emit_load_string_regs_from_ptr(ptr_reg int, data_reg int, len_reg int, typ_id ssa.TypeID) {
+	typ := g.m.type_store.types[typ_id]
+	g.emit_load_typed(data_reg, ptr_reg, typ.fields[0])
+	g.emit32(asm_add_imm(Reg(11), Reg(ptr_reg), 8))
+	g.emit_load_typed(len_reg, 11, typ.fields[1])
+}
+
+fn (mut g Gen) emit_load_string_regs_from_fp(off int, data_reg int, len_reg int, typ_id ssa.TypeID) {
+	typ := g.m.type_store.types[typ_id]
+	g.emit_load_fp(data_reg, off)
+	g.emit_lea_fp(11, off + 8)
+	g.emit_load_typed(len_reg, 11, typ.fields[1])
+}
+
 fn (mut g Gen) emit_store_typed(src_reg int, ptr_reg int, typ ssa.TypeID) {
 	size := g.m.type_size(typ)
 	match size {
@@ -999,7 +1076,7 @@ fn (mut g Gen) emit_load_typed(dst_reg int, ptr_reg int, typ ssa.TypeID) {
 	match size {
 		1 { g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg))) }
 		2 { g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg))) }
-		4 { g.emit32(asm_ldr_w(Reg(dst_reg), Reg(ptr_reg))) }
+		4 { g.emit32(asm_ldrsw(Reg(dst_reg), Reg(ptr_reg))) }
 		else { g.emit32(asm_ldr(Reg(dst_reg), Reg(ptr_reg))) }
 	}
 }

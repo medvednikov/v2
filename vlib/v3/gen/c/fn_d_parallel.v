@@ -144,25 +144,34 @@ fn split_flat_cgen_items(items []FlatFnGenItem, n_jobs int) [][]FlatFnGenItem {
 
 fn (mut g FlatGen) collect_fn_gen_items() []FlatFnGenItem {
 	mut items := []FlatFnGenItem{}
-	for i, node in g.a.nodes {
-		if node.kind == .module_decl {
-			g.tc.cur_module = node.value
+	mut cur_module := ''
+	for i in 0 .. g.a.nodes.len {
+		node := g.a.nodes[i]
+		if node.kind == .file {
+			cur_module = ''
+			g.tc.cur_module = cur_module
 			continue
 		}
+		if node.kind == .module_decl {
+			cur_module = node.value
+			g.tc.cur_module = cur_module
+			continue
+		}
+
 		if node.kind != .fn_decl {
 			continue
 		}
-		if !g.should_emit_fn_node(node, i) {
+		if !g.should_emit_fn_node_in_module(node, i, cur_module) {
 			continue
 		}
-		qfn := g.qualified_fn_name(node.value)
-		if qfn in g.emitted_fns {
+		qfn := qualified_fn_name_in_module(cur_module, node.value)
+		if g.emitted_fn_contains(qfn) {
 			continue
 		}
 		g.emitted_fns[qfn] = true
 		items << FlatFnGenItem{
 			node_id: flat.NodeId(i)
-			module:  g.tc.cur_module
+			module:  cur_module
 			cost:    node.children_count + 1
 		}
 	}
@@ -176,7 +185,7 @@ fn (mut g FlatGen) gen_fn_items(items []FlatFnGenItem) {
 		}
 		g.tc.cur_module = item.module
 		node := g.a.nodes[int(item.node_id)]
-		g.gen_fn(node)
+		g.gen_fn_in_module(node, item.module)
 	}
 }
 
@@ -275,6 +284,7 @@ fn (g &FlatGen) new_parallel_worker(worker_id int) &FlatGen {
 		sb:                      strings.new_builder(64_000)
 		a:                       unsafe { g.a }
 		used_fns:                g.used_fns.clone()
+		used_fn_names:           g.used_fn_names.clone()
 		str_lits:                g.str_lits.clone()
 		str_lit_ids:             g.str_lit_ids.clone()
 		global_types:            g.global_types.clone()

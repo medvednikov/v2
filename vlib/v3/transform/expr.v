@@ -159,7 +159,8 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 
 	is_not_in := node.value == '!in'
 
-	result := if rhs.kind == .range {
+	mut result := id
+	if rhs.kind == .range {
 		// x in low..high  ->  x >= low && x < high
 		if rhs.children_count >= 2 {
 			new_lhs := t.stable_expr_for_reuse(lhs_id)
@@ -170,14 +171,12 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 
 			ge_cmp := t.make_infix(.ge, new_lhs, new_low)
 			lt_cmp := t.make_infix(.lt, new_lhs, new_high)
-			t.make_infix(.logical_and, ge_cmp, lt_cmp)
-		} else {
-			id
+			result = t.make_infix(.logical_and, ge_cmp, lt_cmp)
 		}
 	} else if rhs.kind == .array_literal {
 		// x in [a, b, c]  ->  x == a || x == b || x == c
 		if rhs.children_count == 0 {
-			t.make_bool_literal(false)
+			result = t.make_bool_literal(false)
 		} else {
 			new_lhs := t.stable_expr_for_reuse(lhs_id)
 			is_str := t.is_string_type(lhs_id)
@@ -196,7 +195,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 					or_chain = t.make_infix(.logical_or, or_chain, eq_cmp)
 				}
 			}
-			or_chain
+			result = or_chain
 		}
 	} else {
 		rhs_type := t.node_type(rhs_id)
@@ -206,7 +205,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			new_rhs := t.transform_expr(rhs_id)
 			elem := rhs_type[2..]
 			fn_name := if elem == 'string' { 'array_contains_string' } else { 'array_contains_int' }
-			t.make_call(fn_name, arr2(new_rhs, new_lhs))
+			result = t.make_call(fn_name, arr2(new_rhs, new_lhs))
 		} else if is_fixed_array_type(rhs_type) {
 			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
 			new_lhs := t.transform_expr(lhs_id)
@@ -219,9 +218,22 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 				'fixed_array_contains_int'
 			}
 			len_lit := t.make_int_literal(len_str.int())
-			t.make_call(fn_name, arr3(new_rhs, len_lit, new_lhs))
+			result = t.make_call(fn_name, arr3(new_rhs, len_lit, new_lhs))
 		} else if t.clean_map_type(rhs_type).starts_with('map[') {
-			t.lower_map_membership(lhs_id, rhs_id, rhs_type)
+			new_lhs := t.transform_expr(lhs_id)
+			new_rhs := t.transform_expr(rhs_id)
+			in_start := t.a.children.len
+			t.a.children << new_lhs
+			t.a.children << new_rhs
+			result = t.a.add_node(flat.Node{
+				kind:           .in_expr
+				op:             node.op
+				children_start: in_start
+				children_count: 2
+				pos:            node.pos
+				value:          'in'
+				typ:            node.typ
+			})
 		} else {
 			// Unknown containment is kept as in_expr so the backend can reject or
 			// handle genuinely unresolved cases.
@@ -230,7 +242,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			in_start := t.a.children.len
 			t.a.children << new_lhs
 			t.a.children << new_rhs
-			t.a.add_node(flat.Node{
+			result = t.a.add_node(flat.Node{
 				kind:           .in_expr
 				op:             node.op
 				children_start: in_start
@@ -319,17 +331,6 @@ fn (mut t Transformer) runtime_addr(expr flat.NodeId, typ string) flat.NodeId {
 		return expr
 	}
 	return t.make_prefix(.amp, expr)
-}
-
-fn (mut t Transformer) lower_map_membership(lhs_id flat.NodeId, rhs_id flat.NodeId, rhs_type string) flat.NodeId {
-	map_type := t.clean_map_type(rhs_type)
-	key_type := t.map_key_type(map_type)
-	map_expr := t.stable_expr_for_reuse(rhs_id)
-	key_name := t.new_temp('map_key')
-	key_decl := t.make_decl_assign_typed(key_name, t.transform_expr(lhs_id), key_type)
-	t.pending_stmts << key_decl
-	return t.make_call_typed('map__exists', arr2(t.runtime_addr(map_expr, rhs_type), t.make_prefix(.amp,
-		t.make_ident(key_name))), 'bool')
 }
 
 fn (mut t Transformer) transform_enum_shorthand(id flat.NodeId, node flat.Node, expected_enum string) flat.NodeId {

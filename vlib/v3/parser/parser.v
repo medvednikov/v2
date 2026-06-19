@@ -7,41 +7,53 @@ import v3.pref
 import v3.scanner
 import v3.token
 
+fn C.open(charptr, int, int) int
+fn C.read(int, voidptr, int) int
+fn C.close(int) int
+fn C.malloc(int) &u8
+fn C.free(voidptr)
+
+const max_source_file_size = 8388608
+
 pub struct Parser {
 	prefs &pref.Preferences
 mut:
-	s              &scanner.Scanner
+	s              scanner.Scanner
 	tok            token.Token
 	lit            string
 	prev_tok       token.Token
 	peek_tok       token.Token = .eof
 	peek_lit       string
 	has_peek       bool
-	a              flat.FlatAst
 	cur_file       string
 	cur_module     string
 	pending_flag   bool
 	skip_next_decl bool
+pub mut:
+	a &flat.FlatAst = unsafe { nil }
 }
 
-pub fn Parser.new(prefs &pref.Preferences) Parser {
-	return Parser{
-		prefs: prefs
+pub fn Parser.new(prefs &pref.Preferences) &Parser {
+	return &Parser{
+		prefs: unsafe { prefs }
 		s:     scanner.new_scanner(prefs, .normal)
-		a:     flat.FlatAst.new()
+		a:     &flat.FlatAst{
+			nodes:    []flat.Node{cap: 256}
+			children: []flat.NodeId{cap: 512}
+		}
 	}
 }
 
 pub fn (mut p Parser) parse_file(path string) &flat.FlatAst {
 	p.parse_into(path)
-	return &p.a
+	return p.a
 }
 
 pub fn (mut p Parser) parse_files(paths []string) &flat.FlatAst {
 	for path in paths {
 		p.parse_into(path)
 	}
-	return &p.a
+	return p.a
 }
 
 pub fn (mut p Parser) parse_into(path string) {
@@ -51,8 +63,9 @@ pub fn (mut p Parser) parse_into(path string) {
 		kind:  .file
 		value: path
 	})
-	src := os.read_file(path) or {
-		eprintln('error reading ${path}: ${err}')
+	src := read_source_file_raw(path)
+	if src.len == 0 {
+		eprintln('error reading ${path}')
 		return
 	}
 	mut file_set := token.FileSet.new()
@@ -62,6 +75,10 @@ pub fn (mut p Parser) parse_into(path string) {
 
 	mut ids := []flat.NodeId{}
 	for p.tok != .eof {
+		if p.tok == .semicolon {
+			p.next()
+			continue
+		}
 		if p.tok == .key_module {
 			p.next()
 			p.cur_module = p.lit
@@ -71,6 +88,9 @@ pub fn (mut p Parser) parse_into(path string) {
 			})
 			ids << mod_id
 			p.next()
+			if p.tok == .semicolon || p.lit == '' {
+				p.next()
+			}
 			continue
 		}
 		id := p.top_level_stmt()
@@ -85,6 +105,42 @@ pub fn (mut p Parser) parse_into(path string) {
 		children_start: start
 		children_count: ids.len
 	})
+}
+
+fn read_source_file_raw(path string) string {
+	cpath := cstring_from_vstring(path)
+	fd := C.open(cpath, 0, 0)
+	C.free(cpath)
+	if fd < 0 {
+		return ''
+	}
+	buf := C.malloc(max_source_file_size + 1)
+	mut total := 0
+	for total < max_source_file_size {
+		nread := C.read(fd, unsafe { buf + total }, max_source_file_size - total)
+		if nread <= 0 {
+			break
+		}
+		total += nread
+	}
+	C.close(fd)
+	if total <= 0 {
+		return ''
+	}
+	unsafe {
+		return tos(buf, total)
+	}
+}
+
+fn cstring_from_vstring(s string) &u8 {
+	buf := C.malloc(s.len + 1)
+	unsafe {
+		for i in 0 .. s.len {
+			buf[i] = s[i]
+		}
+		buf[s.len] = 0
+	}
+	return buf
 }
 
 fn vmod_root_for_file(path string) string {
@@ -112,13 +168,16 @@ fn (mut p Parser) next() {
 		p.tok = p.peek_tok
 		p.lit = p.peek_lit
 		p.has_peek = false
+		p.normalize_current_token()
 		return
 	}
 	p.tok = p.s.scan()
 	p.lit = p.s.lit
+	p.normalize_current_token()
 	for p.tok == .comment {
 		p.tok = p.s.scan()
 		p.lit = p.s.lit
+		p.normalize_current_token()
 	}
 }
 
@@ -126,13 +185,196 @@ fn (mut p Parser) peek() token.Token {
 	if !p.has_peek {
 		p.peek_tok = p.s.scan()
 		p.peek_lit = p.s.lit
+		p.normalize_peek_token()
 		for p.peek_tok == .comment {
 			p.peek_tok = p.s.scan()
 			p.peek_lit = p.s.lit
+			p.normalize_peek_token()
 		}
 		p.has_peek = true
 	}
 	return p.peek_tok
+}
+
+fn (mut p Parser) normalize_current_token() {
+	p.tok = normalize_scanned_token(p.tok, p.lit, p.s.src, p.s.pos)
+}
+
+fn (mut p Parser) normalize_peek_token() {
+	p.peek_tok = normalize_scanned_token(p.peek_tok, p.peek_lit, p.s.src, p.s.pos)
+}
+
+fn normalize_scanned_token(tok token.Token, lit string, src string, pos int) token.Token {
+	if tok == .eof || tok == .semicolon {
+		return tok
+	}
+	if lit.len > 0 {
+		if tok == .amp {
+			return .name
+		}
+		return tok
+	}
+	if tok != .unknown {
+		return tok
+	}
+	if pos < 0 || pos >= src.len {
+		return tok
+	}
+	c := src[pos]
+	if c == `.` {
+		if pos + 1 < src.len && src[pos + 1] == `.` {
+			if pos + 2 < src.len && src[pos + 2] == `.` {
+				return .ellipsis
+			}
+			return .dotdot
+		}
+		return .dot
+	}
+	if c == `{` {
+		return .lcbr
+	}
+	if c == `}` {
+		return .rcbr
+	}
+	if c == `(` {
+		return .lpar
+	}
+	if c == `)` {
+		return .rpar
+	}
+	if c == `[` {
+		return .lsbr
+	}
+	if c == `]` {
+		return .rsbr
+	}
+	if c == `,` {
+		return .comma
+	}
+	if c == `;` {
+		return .semicolon
+	}
+	if c == `:` {
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .decl_assign
+		}
+		return .colon
+	}
+	if c == `!` {
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .ne
+		}
+		if pos + 2 < src.len && src[pos + 1] == `i` && src[pos + 2] == `n` {
+			return .not_in
+		}
+		if pos + 2 < src.len && src[pos + 1] == `i` && src[pos + 2] == `s` {
+			return .not_is
+		}
+		return .not
+	}
+	if c == `=` {
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .eq
+		}
+		return .assign
+	}
+	if c == `&` {
+		if pos + 1 < src.len && src[pos + 1] == `&` {
+			return .and
+		}
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .and_assign
+		}
+		return .amp
+	}
+	if c == `|` {
+		if pos + 1 < src.len && src[pos + 1] == `|` {
+			return .logical_or
+		}
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .or_assign
+		}
+		return .pipe
+	}
+	if c == `<` {
+		if pos + 1 < src.len && src[pos + 1] == `<` {
+			if pos + 2 < src.len && src[pos + 2] == `=` {
+				return .left_shift_assign
+			}
+			return .left_shift
+		}
+		if pos + 1 < src.len && src[pos + 1] == `-` {
+			return .arrow
+		}
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .le
+		}
+		return .lt
+	}
+	if c == `>` {
+		if pos + 1 < src.len && src[pos + 1] == `>` {
+			if pos + 2 < src.len && src[pos + 2] == `>` {
+				if pos + 3 < src.len && src[pos + 3] == `=` {
+					return .right_shift_unsigned_assign
+				}
+				return .right_shift_unsigned
+			}
+			if pos + 2 < src.len && src[pos + 2] == `=` {
+				return .right_shift_assign
+			}
+			return .right_shift
+		}
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .ge
+		}
+		return .gt
+	}
+	if c == `+` {
+		if pos + 1 < src.len && src[pos + 1] == `+` {
+			return .inc
+		}
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .plus_assign
+		}
+		return .plus
+	}
+	if c == `-` {
+		if pos + 1 < src.len && src[pos + 1] == `-` {
+			return .dec
+		}
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .minus_assign
+		}
+		return .minus
+	}
+	if c == `*` {
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .mul_assign
+		}
+		return .mul
+	}
+	if c == `/` {
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .div_assign
+		}
+		return .div
+	}
+	if c == `%` {
+		if pos + 1 < src.len && src[pos + 1] == `=` {
+			return .mod_assign
+		}
+		return .mod
+	}
+	if c == `$` {
+		return .dollar
+	}
+	if c == `#` {
+		return .hash
+	}
+	if c == `?` {
+		return .question
+	}
+	return tok
 }
 
 fn (mut p Parser) check(expected token.Token) {
@@ -152,7 +394,7 @@ fn (mut p Parser) expect(expected token.Token) string {
 
 fn (mut p Parser) expect_name() string {
 	name := p.lit
-	if p.tok != .name {
+	if p.tok != .name && p.lit.len == 0 {
 		eprintln('expected name, got ${p.tok} "${p.lit}"')
 	}
 	p.next()
@@ -284,7 +526,7 @@ fn (mut p Parser) fn_decl() flat.NodeId {
 		// operator overload: fn (r Type) + (other Type) RetType { }
 		if p.tok != .name && p.tok != .eof {
 			if p.tok.is_overloadable() {
-				op_name := p.tok.str()
+				op_name := overload_token_name(p.tok)
 				p.next()
 				return p.fn_operator_overload(receiver_name, receiver_type, op_name)
 			}
@@ -1112,7 +1354,7 @@ fn (mut p Parser) skip_attrs() {
 			p.next()
 			mut cond := strings.new_builder(32)
 			for p.tok != .rsbr && p.tok != .eof {
-				tok_str := if p.lit.len > 0 { p.lit } else { p.tok.str() }
+				tok_str := p.comptime_cond_token_text()
 				if cond.len > 0 && tok_str != '?' {
 					cond.write_string(' ')
 				}
@@ -1210,7 +1452,7 @@ fn (mut p Parser) parse_comptime_if() flat.NodeId {
 fn (mut p Parser) parse_comptime_cond() string {
 	mut cond := strings.new_builder(64)
 	for p.tok != .lcbr && p.tok != .eof {
-		tok_str := if p.lit.len > 0 { p.lit } else { p.tok.str() }
+		tok_str := p.comptime_cond_token_text()
 		if cond.len > 0 && tok_str != '?' {
 			cond.write_string(' ')
 		}
@@ -1218,6 +1460,47 @@ fn (mut p Parser) parse_comptime_cond() string {
 		p.next()
 	}
 	return cond.str()
+}
+
+fn (p &Parser) comptime_cond_token_text() string {
+	if p.lit.len > 0 {
+		return p.lit
+	}
+	if p.s.pos >= 0 && p.s.pos < p.s.src.len {
+		c := p.s.src[p.s.pos]
+		if c == `&` && p.s.pos + 1 < p.s.src.len && p.s.src[p.s.pos + 1] == `&` {
+			return '&&'
+		}
+		if c == `|` && p.s.pos + 1 < p.s.src.len && p.s.src[p.s.pos + 1] == `|` {
+			return '||'
+		}
+		if c == `!` {
+			return '!'
+		}
+		if c == `?` {
+			return '?'
+		}
+	}
+	tok := p.tok
+	if tok == .and {
+		return '&&'
+	}
+	if tok == .logical_or {
+		return '||'
+	}
+	if tok == .not {
+		return '!'
+	}
+	if tok == .question {
+		return '?'
+	}
+	if tok == .key_true {
+		return 'true'
+	}
+	if tok == .key_false {
+		return 'false'
+	}
+	return ''
 }
 
 fn (mut p Parser) skip_comptime_else() {
@@ -1280,22 +1563,14 @@ fn eval_comptime_cond(prefs &pref.Preferences, cond string) bool {
 		return !eval_comptime_cond(prefs, c[1..])
 	}
 	if c.contains('&&') {
-		parts := c.split('&&')
-		for part in parts {
-			if !eval_comptime_cond(prefs, part) {
-				return false
-			}
-		}
-		return true
+		left := c.all_before('&&')
+		right := c.all_after('&&')
+		return eval_comptime_cond(prefs, left) && eval_comptime_cond(prefs, right)
 	}
 	if c.contains('||') {
-		parts := c.split('||')
-		for part in parts {
-			if eval_comptime_cond(prefs, part) {
-				return true
-			}
-		}
-		return false
+		left := c.all_before('||')
+		right := c.all_after('||')
+		return eval_comptime_cond(prefs, left) || eval_comptime_cond(prefs, right)
 	}
 	flag := c.trim_space().trim_right('? ')
 	return pref.comptime_flag_value(prefs, flag)
@@ -2314,12 +2589,23 @@ fn (mut p Parser) expr_with_lhs(first flat.NodeId, min_bp token.BindingPower) fl
 	return lhs
 }
 
+fn is_float_number_literal(val string) bool {
+	if val.len > 2 && val[0] == `0` {
+		second := val[1]
+		if second == `x` || second == `X` || second == `b` || second == `B` || second == `o`
+			|| second == `O` {
+			return false
+		}
+	}
+	return val.contains('.') || val.contains('e') || val.contains('E')
+}
+
 fn (mut p Parser) prefix_expr() flat.NodeId {
 	match p.tok {
 		.number {
 			val := p.lit
 			p.next()
-			kind := if val.contains('.') || val.contains('e') || val.contains('E') {
+			kind := if is_float_number_literal(val) {
 				flat.NodeKind.float_literal
 			} else {
 				flat.NodeKind.int_literal
@@ -2350,7 +2636,7 @@ fn (mut p Parser) prefix_expr() flat.NodeId {
 			p.next()
 			return p.a.add(.none_expr)
 		}
-		.name {
+		.name, .key_module {
 			name := p.lit
 			p.next()
 			if name == '@FILE' {
@@ -2653,6 +2939,8 @@ fn (mut p Parser) call_args(fn_expr flat.NodeId) flat.NodeId {
 	mut ids := []flat.NodeId{}
 	ids << fn_expr
 	for p.tok != .rpar && p.tok != .eof {
+		prev_offset := p.s.offset
+		prev_tok := p.tok
 		if p.tok == .key_mut || p.tok == .key_shared {
 			p.next()
 		}
@@ -2719,6 +3007,9 @@ fn (mut p Parser) call_args(fn_expr flat.NodeId) flat.NodeId {
 			}
 		}
 		if p.tok == .comma {
+			p.next()
+		}
+		if p.s.offset == prev_offset && p.tok == prev_tok {
 			p.next()
 		}
 	}
@@ -3513,41 +3804,150 @@ fn is_builtin_type(name string) bool {
 }
 
 fn token_to_op(tok token.Token) flat.Op {
-	return match tok {
-		.plus { flat.Op.plus }
-		.minus { flat.Op.minus }
-		.mul { flat.Op.mul }
-		.div { flat.Op.div }
-		.mod { flat.Op.mod }
-		.eq { flat.Op.eq }
-		.ne { flat.Op.ne }
-		.lt { flat.Op.lt }
-		.gt { flat.Op.gt }
-		.le { flat.Op.le }
-		.ge { flat.Op.ge }
-		.amp { flat.Op.amp }
-		.pipe { flat.Op.pipe }
-		.xor { flat.Op.xor }
-		.left_shift { flat.Op.left_shift }
-		.right_shift { flat.Op.right_shift }
-		.and { flat.Op.logical_and }
-		.logical_or { flat.Op.logical_or }
-		.not { flat.Op.not }
-		.bit_not { flat.Op.bit_not }
-		.assign { flat.Op.assign }
-		.plus_assign { flat.Op.plus_assign }
-		.minus_assign { flat.Op.minus_assign }
-		.mul_assign { flat.Op.mul_assign }
-		.div_assign { flat.Op.div_assign }
-		.mod_assign { flat.Op.mod_assign }
-		.and_assign { flat.Op.amp_assign }
-		.or_assign { flat.Op.pipe_assign }
-		.xor_assign { flat.Op.xor_assign }
-		.left_shift_assign { flat.Op.left_shift_assign }
-		.right_shift_assign { flat.Op.right_shift_assign }
-		.inc { flat.Op.inc }
-		.dec { flat.Op.dec }
-		.decl_assign { flat.Op.assign }
-		else { flat.Op.none }
+	if tok == .plus {
+		return flat.Op.plus
 	}
+	if tok == .minus {
+		return flat.Op.minus
+	}
+	if tok == .mul {
+		return flat.Op.mul
+	}
+	if tok == .div {
+		return flat.Op.div
+	}
+	if tok == .mod {
+		return flat.Op.mod
+	}
+	if tok == .eq {
+		return flat.Op.eq
+	}
+	if tok == .ne {
+		return flat.Op.ne
+	}
+	if tok == .lt {
+		return flat.Op.lt
+	}
+	if tok == .gt {
+		return flat.Op.gt
+	}
+	if tok == .le {
+		return flat.Op.le
+	}
+	if tok == .ge {
+		return flat.Op.ge
+	}
+	if tok == .amp {
+		return flat.Op.amp
+	}
+	if tok == .pipe {
+		return flat.Op.pipe
+	}
+	if tok == .xor {
+		return flat.Op.xor
+	}
+	if tok == .left_shift {
+		return flat.Op.left_shift
+	}
+	if tok == .right_shift {
+		return flat.Op.right_shift
+	}
+	if tok == .and {
+		return flat.Op.logical_and
+	}
+	if tok == .logical_or {
+		return flat.Op.logical_or
+	}
+	if tok == .not {
+		return flat.Op.not
+	}
+	if tok == .bit_not {
+		return flat.Op.bit_not
+	}
+	if tok == .assign {
+		return flat.Op.assign
+	}
+	if tok == .plus_assign {
+		return flat.Op.plus_assign
+	}
+	if tok == .minus_assign {
+		return flat.Op.minus_assign
+	}
+	if tok == .mul_assign {
+		return flat.Op.mul_assign
+	}
+	if tok == .div_assign {
+		return flat.Op.div_assign
+	}
+	if tok == .mod_assign {
+		return flat.Op.mod_assign
+	}
+	if tok == .and_assign {
+		return flat.Op.amp_assign
+	}
+	if tok == .or_assign {
+		return flat.Op.pipe_assign
+	}
+	if tok == .xor_assign {
+		return flat.Op.xor_assign
+	}
+	if tok == .left_shift_assign {
+		return flat.Op.left_shift_assign
+	}
+	if tok == .right_shift_assign {
+		return flat.Op.right_shift_assign
+	}
+	if tok == .inc {
+		return flat.Op.inc
+	}
+	if tok == .dec {
+		return flat.Op.dec
+	}
+	if tok == .decl_assign {
+		return flat.Op.assign
+	}
+	return flat.Op.none
+}
+
+fn overload_token_name(tok token.Token) string {
+	if tok == .plus {
+		return '+'
+	}
+	if tok == .minus {
+		return '-'
+	}
+	if tok == .mul {
+		return '*'
+	}
+	if tok == .div {
+		return '/'
+	}
+	if tok == .mod {
+		return '%'
+	}
+	if tok == .eq {
+		return '=='
+	}
+	if tok == .ne {
+		return '!='
+	}
+	if tok == .lt {
+		return '<'
+	}
+	if tok == .gt {
+		return '>'
+	}
+	if tok == .le {
+		return '<='
+	}
+	if tok == .ge {
+		return '>='
+	}
+	if tok == .pipe {
+		return '|'
+	}
+	if tok == .xor {
+		return '^'
+	}
+	return ''
 }

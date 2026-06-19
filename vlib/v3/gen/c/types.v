@@ -46,17 +46,46 @@ fn (mut g FlatGen) optional_typedefs() {
 }
 
 fn (mut g FlatGen) enum_decls() {
-	for name, _ in g.tc.enum_names {
-		cn := c_name(name)
-		g.writeln('typedef enum {')
-		for ekey, eval in g.enum_vals {
-			if ekey.starts_with('${name}.') {
-				member := ekey[name.len + 1..]
-				g.writeln('\t${cn}__${member} = ${eval},')
+	mut cur_module := ''
+	for node in g.a.nodes {
+		match node.kind {
+			.file {
+				cur_module = ''
 			}
+			.module_decl {
+				cur_module = node.value
+			}
+			.enum_decl {
+				name := if cur_module.len > 0 && cur_module != 'main' && cur_module != 'builtin' {
+					'${cur_module}.${node.value}'
+				} else {
+					node.value
+				}
+				cn := c_name(name)
+				g.writeln('typedef enum {')
+				is_flag := node.typ == 'flag'
+				mut val := 0
+				for i in 0 .. node.children_count {
+					f := g.a.child_node(&node, i)
+					if f.children_count > 0 {
+						ev := g.a.child_node(f, 0)
+						if ev.kind == .int_literal {
+							val = ev.value.int()
+						}
+					}
+					if is_flag {
+						g.writeln('\t${cn}__${f.value} = ${1 << val},')
+						val++
+					} else {
+						g.writeln('\t${cn}__${f.value} = ${val},')
+						val++
+					}
+				}
+				g.writeln('} ${cn};')
+				g.writeln('')
+			}
+			else {}
 		}
-		g.writeln('} ${cn};')
-		g.writeln('')
 	}
 }
 

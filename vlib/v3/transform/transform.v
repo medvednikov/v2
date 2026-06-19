@@ -76,6 +76,21 @@ pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 	t.transform_all()
 }
 
+@[unsafe]
+fn (mut t Transformer) free() {
+	unsafe {
+		t.structs.free()
+		t.globals.free()
+		t.sum_types.free()
+		t.fn_ret_types.free()
+		t.fn_param_types.free()
+		t.enum_types.free()
+		t.var_types.free()
+		t.pending_stmts.free()
+		t.smartcast_stack.free()
+	}
+}
+
 // --- type collection ---
 
 fn (mut t Transformer) collect_types() {
@@ -188,7 +203,8 @@ fn (mut t Transformer) collect_types() {
 // --- main transform pass ---
 
 fn (mut t Transformer) transform_all() {
-	for i, node in t.a.nodes {
+	for i in 0 .. t.a.nodes.len {
+		node := t.a.nodes[i]
 		if node.kind == .file {
 			t.cur_file = node.value
 		}
@@ -196,7 +212,7 @@ fn (mut t Transformer) transform_all() {
 			t.cur_module = node.value
 		}
 		if node.kind == .fn_decl {
-			t.transform_fn_body(i, node)
+			t.transform_fn_body(i)
 		} else if node.kind == .const_decl {
 			t.transform_const_decl(node)
 		}
@@ -226,7 +242,8 @@ fn (mut t Transformer) transform_const_decl(node flat.Node) {
 	}
 }
 
-fn (mut t Transformer) transform_fn_body(fn_idx int, fn_node flat.Node) {
+fn (mut t Transformer) transform_fn_body(fn_idx int) {
+	fn_node := t.a.nodes[fn_idx]
 	t.cur_fn_name = fn_node.value
 	t.cur_fn_ret_type = t.normalize_type_alias(fn_node.typ)
 	t.var_types = map[string]string{}

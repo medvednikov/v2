@@ -7,6 +7,12 @@ module arm64
 import os
 import time
 
+fn C.open(charptr, int, int) int
+fn C.write(int, voidptr, int) int
+fn C.close(int) int
+fn C.chmod(charptr, int) int
+fn C.rename(charptr, charptr) int
+
 // Mach-O executable constants
 const mh_execute = 2
 const lc_load_dylinker = 0xe
@@ -32,6 +38,7 @@ const cs_hashtype_sha256 = u8(2)
 const cs_hash_size = 32 // SHA256 = 32 bytes
 const cs_page_size_arm64 = 16384 // Code signing page size for ARM64 macOS
 const cs_page_shift_arm64 = 14 // log2(16384)
+const o_wronly_creat_trunc = 0x601 // O_WRONLY | O_CREAT | O_TRUNC on Darwin
 
 // ARM64 page size on macOS
 const page_size = 0x4000 // 16KB
@@ -181,7 +188,13 @@ mut:
 pub fn Linker.new(macho &MachOObject) &Linker {
 	return unsafe {
 		&Linker{
-			macho: macho
+			macho:        macho
+			frameworks:   []string{}
+			buf:          []u8{}
+			extern_syms:  []string{}
+			sym_to_got:   map[string]int{}
+			dylibs:       []string{}
+			sym_to_dylib: map[string]int{}
 		}
 	}
 }
@@ -320,17 +333,21 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 	l.data_vmaddr = base_addr + u64(l.text_size)
 
 	// GOT offset within data section
-	l.got_offset = l.macho.data_data.len
+	mut got_offset := l.macho.data_data.len
 	// Align GOT to 8 bytes
-	for l.got_offset % 8 != 0 {
-		l.got_offset++
+	for got_offset % 8 != 0 {
+		got_offset++
 	}
+	l.got_offset = got_offset
 
-	data_content_size := l.got_offset + l.got_size
+	data_content_size := got_offset + l.got_size
 	l.data_size = (data_content_size + page_size - 1) & ~(page_size - 1)
 	if l.data_size == 0 {
 		l.data_size = page_size
 	}
+
+	bind_info := l.generate_bind_info(got_offset)
+	bind_size := bind_info.len
 
 	// Write header
 	l.write_header(n_load_cmds, load_cmds_size)
@@ -344,8 +361,6 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 
 	// Bind info position (in LINKEDIT)
 	bind_off := l.data_fileoff + l.data_size
-	bind_info := l.generate_bind_info()
-	bind_size := bind_info.len
 
 	// Build symbol table for internal function names (visible in objdump -d)
 	mut symtab_data := []u8{}
@@ -468,7 +483,7 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 	l.buf << l.macho.data_data
 
 	// Pad to GOT offset and write GOT (initially zeros, dyld will fill)
-	l.pad_to(l.data_fileoff + l.got_offset)
+	l.pad_to(l.data_fileoff + got_offset)
 	l.write_zeros(l.extern_syms.len * 8)
 
 	// Pad data segment
@@ -505,17 +520,37 @@ pub fn (mut l Linker) link(output_path string, entry_name string) {
 	t = time.now()
 
 	tmp_output_path := '${output_path}.tmp.${os.getpid()}'
-	os.rm(tmp_output_path) or {}
-	os.write_file_array(tmp_output_path, l.buf) or { panic('failed to write output file') }
-	os.chmod(tmp_output_path, 0o755) or {}
-	os.rename(tmp_output_path, output_path) or { panic('failed to rename output file') }
+	if !write_file_array_raw(tmp_output_path, l.buf) {
+		panic('failed to write output file')
+	}
+	if C.chmod(tmp_output_path.str, 0o755) != 0 {
+		panic('failed to chmod output file')
+	}
+	if C.rename(tmp_output_path.str, output_path.str) != 0 {
+		panic('failed to rename output file')
+	}
 
 	println('  file write: ${time.since(t)}')
 	println('  TOTAL linker: ${time.since(t_total)}')
 }
 
+fn write_file_array_raw(path string, data []u8) bool {
+	fd := C.open(path.str, o_wronly_creat_trunc, 0o755)
+	if fd < 0 {
+		return false
+	}
+	if data.len > 0 {
+		written := C.write(fd, data.data, data.len)
+		if written != data.len {
+			C.close(fd)
+			return false
+		}
+	}
+	return C.close(fd) == 0
+}
+
 fn (mut l Linker) write_header(ncmds int, cmdsize int) {
-	write_u32_le(mut l.buf, mh_magic_64)
+	write_mh_magic_64(mut l.buf)
 	write_u32_le(mut l.buf, u32(cpu_type_arm64))
 	write_u32_le(mut l.buf, u32(cpu_subtype_arm64_all))
 	write_u32_le(mut l.buf, mh_execute)
@@ -760,7 +795,7 @@ fn (mut l Linker) write_code_signature_cmd(dataoff int, datasize int) {
 	write_u32_le(mut l.buf, u32(datasize))
 }
 
-fn (l Linker) estimate_signature_size(code_limit int, ident string) int {
+fn (l &Linker) estimate_signature_size(code_limit int, ident string) int {
 	// Calculate pages using ARM64 16KB page size
 	n_pages := (code_limit + cs_page_size_arm64 - 1) / cs_page_size_arm64
 
@@ -781,7 +816,7 @@ fn (l Linker) estimate_signature_size(code_limit int, ident string) int {
 	return 12 + 24 + cd_size_aligned + req_size + cms_size
 }
 
-fn (l Linker) generate_code_signature(ident string) []u8 {
+fn (l &Linker) generate_code_signature(ident string) []u8 {
 	mut sig := []u8{}
 
 	// Calculate sizes using ARM64 16KB pages
@@ -868,7 +903,9 @@ fn (l Linker) generate_code_signature(ident string) []u8 {
 	write_u64_be(mut sig, 1) // execSegFlags (CS_EXECSEG_MAIN_BINARY = 1)
 
 	// Write identifier (null-terminated)
-	sig << ident_bytes
+	for i in 0 .. ident_bytes.len {
+		sig << ident_bytes[i]
+	}
 	sig << 0
 
 	// Write special slot hashes (slots -2, -1 in that order)
@@ -897,7 +934,9 @@ fn (l Linker) generate_code_signature(ident string) []u8 {
 	// Hash all pages sequentially. V's `spawn` is not supported on the native
 	// ARM64 backend, so we avoid threads here for self-hosting compatibility.
 	sha256_hash_pages(data_ptr, mut all_hashes, 0, n_pages, code_limit)
-	sig << all_hashes
+	for i in 0 .. all_hashes.len {
+		sig << all_hashes[i]
+	}
 
 	// Pad CodeDirectory to alignment
 	for sig.len < cd_blob_offset + cd_size_aligned {
@@ -905,7 +944,9 @@ fn (l Linker) generate_code_signature(ident string) []u8 {
 	}
 
 	// Write Requirements blob
-	sig << req_blob
+	for i in 0 .. req_blob.len {
+		sig << req_blob[i]
+	}
 
 	// Write empty CMS signature blob (for ad-hoc signing)
 	write_u32_be(mut sig, csmagic_blobwrapper)
@@ -926,13 +967,14 @@ fn (mut l Linker) find_entry_offset(entry_name string) int {
 	return l.code_start // Default to start of code section
 }
 
-fn (mut l Linker) generate_bind_info() []u8 {
+fn (mut l Linker) generate_bind_info(got_offset int) []u8 {
 	mut info := []u8{}
 
 	// Data segment index (segment 2: __PAGEZERO=0, __TEXT=1, __DATA=2)
 	data_seg_idx := u8(2)
 
-	for i, sym_name in l.extern_syms {
+	mut got_entry_offset := got_offset
+	for sym_name in l.extern_syms {
 		// Internal runtime callback names can appear as unresolved function refs in
 		// bootstrap builds. Bind them as weak imports so dyld does not abort load
 		// when they are absent from libSystem; unresolved weak symbols become NULL.
@@ -958,18 +1000,38 @@ fn (mut l Linker) generate_bind_info() []u8 {
 		info << (bind_opcode_set_type_imm | bind_type_pointer)
 
 		// Set segment and offset
-		got_entry_offset := l.got_offset + (i * 8)
 		info << (bind_opcode_set_segment_and_offset_uleb | data_seg_idx)
-		info << l.encode_uleb128(u64(got_entry_offset))
+		info << l.encode_uleb128_int(got_entry_offset)
 
 		// Do bind
 		info << bind_opcode_do_bind
+		got_entry_offset += 8
 	}
 
 	// Done
 	info << bind_opcode_done
 
 	return info
+}
+
+fn (l Linker) encode_uleb128_int(val int) []u8 {
+	mut result := []u8{}
+	if val < 0x80 {
+		result << u8(val)
+		return result
+	}
+	if val < 0x4000 {
+		result << (u8(val & 0x7f) | 0x80)
+		result << u8((val >> 7) & 0x7f)
+		return result
+	}
+	if val < 0x200000 {
+		result << (u8(val & 0x7f) | 0x80)
+		result << (u8((val >> 7) & 0x7f) | 0x80)
+		result << u8((val >> 14) & 0x7f)
+		return result
+	}
+	return l.encode_uleb128(u64(u32(val)))
 }
 
 fn (l Linker) encode_uleb128(val u64) []u8 {
@@ -1172,9 +1234,14 @@ fn (mut l Linker) write_text_with_relocations() {
 fn (mut l Linker) write_stubs() {
 	// Generate stub for each external symbol
 	// Each stub: ADRP x16, GOT@PAGE; LDR x16, [x16, GOT@PAGEOFF]; BR x16
-	for i, _ in l.extern_syms {
-		got_entry_addr := l.data_vmaddr + u64(l.got_offset) + u64(i * 8)
-		stub_addr := l.text_vmaddr + u64(l.stubs_offset) + u64(i * 12)
+	mut got_entry_offset := l.macho.data_data.len
+	for got_entry_offset % 8 != 0 {
+		got_entry_offset++
+	}
+	mut stub_offset := l.stubs_offset
+	for _ in l.extern_syms {
+		got_entry_addr := l.data_vmaddr + u64(u32(got_entry_offset))
+		stub_addr := l.text_vmaddr + u64(stub_offset)
 
 		// ADRP x16, got_entry@PAGE
 		got_page := i64(got_entry_addr) & ~0xFFF
@@ -1192,6 +1259,8 @@ fn (mut l Linker) write_stubs() {
 
 		// BR x16
 		write_u32_le(mut l.buf, 0xD61F0200)
+		got_entry_offset += 8
+		stub_offset += 12
 	}
 }
 

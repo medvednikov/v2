@@ -67,36 +67,139 @@ pub const byteptr_ = Pointer{
 	})
 }
 
+// is_builtin_type_name reports whether name is one of V's builtin type names.
 pub fn is_builtin_type_name(name string) bool {
 	return name == 'bool' || name == 'int' || name == 'i8' || name == 'i16' || name == 'i32' || name == 'i64' || name == 'u8' || name == 'byte' || name == 'u16' || name == 'u32' || name == 'u64' || name == 'f32' || name == 'f64' || name == 'string' || name == 'char' || name == 'rune' || name == 'isize' || name == 'usize' || name == 'void' || name == 'voidptr' || name == 'array' || name == 'charptr' || name == 'byteptr' || name == 'nil' || name == 'none'
 }
 
-pub fn builtin_type(name string) ?Type {
-	return match name {
-		'bool' { Type(bool_) }
-		'int' { Type(int_) }
-		'i8' { Type(i8_) }
-		'i16' { Type(i16_) }
-		'i32' { Type(i32_) }
-		'i64' { Type(i64_) }
-		'u8', 'byte' { Type(u8_) }
-		'u16' { Type(u16_) }
-		'u32' { Type(u32_) }
-		'u64' { Type(u64_) }
-		'f32' { Type(f32_) }
-		'f64' { Type(f64_) }
-		'string' { Type(string_) }
-		'char' { Type(char_) }
-		'rune' { Type(rune_) }
-		'isize' { Type(isize_) }
-		'usize' { Type(usize_) }
-		'void' { Type(void_) }
-		'voidptr' { Type(voidptr_) }
-		'array' { Type(Array{elem_type: Type(void_)}) }
-		'charptr' { Type(charptr_) }
-		'byteptr' { Type(byteptr_) }
-		'nil' { Type(nil_) }
-		'none' { Type(none_) }
-		else { return none }
+// builtin_type_value returns the Type for a known builtin type name.
+pub fn builtin_type_value(name string) Type {
+	if name == 'bool' {
+		return Type(Primitive{
+			props: .boolean
+		})
 	}
+	if name == 'int' {
+		return Type(Primitive{
+			props: .integer
+		})
+	}
+	if name == 'i8' {
+		return Type(Primitive{
+			props: .integer
+			size:  8
+		})
+	}
+	if name == 'i16' {
+		return Type(Primitive{
+			props: .integer
+			size:  16
+		})
+	}
+	if name == 'i32' {
+		return Type(Primitive{
+			props: .integer
+			size:  32
+		})
+	}
+	if name == 'i64' {
+		return Type(Primitive{
+			props: .integer
+			size:  64
+		})
+	}
+	if name == 'u8' || name == 'byte' {
+		return Type(Primitive{
+			props: .integer | .unsigned
+			size:  8
+		})
+	}
+	if name == 'u16' {
+		return Type(Primitive{
+			props: .integer | .unsigned
+			size:  16
+		})
+	}
+	if name == 'u32' {
+		return Type(Primitive{
+			props: .integer | .unsigned
+			size:  32
+		})
+	}
+	if name == 'u64' {
+		return Type(Primitive{
+			props: .integer | .unsigned
+			size:  64
+		})
+	}
+	if name == 'f32' {
+		return Type(Primitive{
+			props: .float
+			size:  32
+		})
+	}
+	if name == 'f64' {
+		return Type(Primitive{
+			props: .float
+			size:  64
+		})
+	}
+	if name == 'string' {
+		return Type(String{})
+	}
+	if name == 'char' {
+		return Type(Char{})
+	}
+	if name == 'rune' {
+		return Type(Rune{})
+	}
+	if name == 'isize' {
+		return Type(ISize{})
+	}
+	if name == 'usize' {
+		return Type(USize{})
+	}
+	if name == 'void' {
+		return Type(Void{})
+	}
+	if name == 'voidptr' {
+		return Type(Pointer{
+			base_type: Type(Void{})
+		})
+	}
+	if name == 'array' {
+		return Type(Array{
+			elem_type: Type(Void{})
+		})
+	}
+	if name == 'charptr' {
+		return Type(Pointer{
+			base_type: Type(Char{})
+		})
+	}
+	if name == 'byteptr' {
+		return Type(Pointer{
+			base_type: Type(Primitive{
+				props: .integer | .unsigned
+				size:  8
+			})
+		})
+	}
+	if name == 'nil' {
+		return Type(Nil{})
+	}
+	if name == 'none' {
+		return Type(None{})
+	}
+	return Type(Unknown{
+		reason: 'unknown builtin type'
+	})
+}
+
+// builtin_type returns the Type for a builtin type name, or none otherwise.
+pub fn builtin_type(name string) ?Type {
+	if is_builtin_type_name(name) {
+		return builtin_type_value(name)
+	}
+	return none
 }

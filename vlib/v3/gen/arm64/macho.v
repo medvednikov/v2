@@ -54,7 +54,13 @@ mut:
 
 pub fn MachOObject.new() &MachOObject {
 	mut m := &MachOObject{
-		str_table: [u8(0)]
+		text_data:   []u8{}
+		str_data:    []u8{}
+		data_data:   []u8{}
+		relocs:      []RelocationInfo{}
+		symbols:     []Symbol{}
+		str_table:   [u8(0)]
+		sym_by_name: map[string]int{}
 	}
 	return m
 }
@@ -146,7 +152,7 @@ pub fn (mut m MachOObject) write(path string) {
 	str_size := m.str_table.len
 
 	// 1. Header
-	write_u32_le(mut buf, mh_magic_64)
+	write_mh_magic_64(mut buf)
 	write_u32_le(mut buf, u32(cpu_type_arm64))
 	write_u32_le(mut buf, u32(cpu_subtype_arm64_all))
 	write_u32_le(mut buf, 1) // MH_OBJECT
@@ -256,6 +262,13 @@ fn write_u32_le(mut b []u8, v u32) {
 	b << u8(v >> 8)
 	b << u8(v >> 16)
 	b << u8(v >> 24)
+}
+
+fn write_mh_magic_64(mut b []u8) {
+	b << u8(0xcf)
+	b << u8(0xfa)
+	b << u8(0xed)
+	b << u8(0xfe)
 }
 
 fn write_u64_le(mut b []u8, v u64) {
