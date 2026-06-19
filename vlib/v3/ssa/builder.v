@@ -419,8 +419,11 @@ fn (mut b Builder) ssa_type_from_checker_type(typ types.Type) TypeID {
 	if typ is types.Primitive {
 		return b.resolve_type(primitive_type_name(typ))
 	}
-	if typ is types.Array || typ is types.ArrayFixed {
+	if typ is types.Array {
 		return b.array_type
+	}
+	if typ is types.ArrayFixed {
+		return b.m.type_store.get_ptr(b.ssa_type_from_checker_type(typ.elem_type))
 	}
 	if typ is types.Map {
 		return b.map_type
@@ -565,6 +568,12 @@ fn qualify_type_ref_name(name string, module_name string) string {
 		idx := name.index_u8(`]`)
 		if idx > 0 && idx + 1 < name.len {
 			return name[..idx + 1] + qualify_type_ref_name(name[idx + 1..], module_name)
+		}
+	}
+	if name.contains('[') && name.ends_with(']') {
+		idx := name.index_u8(`[`)
+		if idx > 0 && idx < name.len - 1 {
+			return qualify_type_ref_name(name[..idx], module_name) + name[idx..]
 		}
 	}
 	if name.starts_with('map[') {
@@ -2109,9 +2118,68 @@ fn (mut b Builder) generate_map_delete_body(func_id int) {
 }
 
 fn (mut b Builder) generate_map_clone_body(func_id int) {
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	ptr_map := b.m.type_store.get_ptr(b.map_type)
+	ptr_state := b.m.type_store.get_ptr(b.map_state_type)
 	entry := b.m.add_block(func_id, 'entry')
 	m := b.func_add_argument(func_id, b.map_type, 'm')
-	b.block_instr1(.ret, entry, b.void_type, m)
+	map_slot := b.block_instr0(.alloca, entry, ptr_map)
+	b.block_instr2(.store, entry, b.void_type, m, map_slot)
+	state_field := b.block_struct_field_ptr(entry, map_slot, b.map_type, 0)
+	old_state := b.block_instr1(.load, entry, ptr_state, state_field)
+	zero_state := b.m.get_or_add_const(ptr_state, '0')
+	has_state := b.block_instr2(.ne, entry, b.i1_type, old_state, zero_state)
+	blk_clone := b.m.add_block(func_id, 'map_clone_copy')
+	blk_empty := b.m.add_block(func_id, 'map_clone_empty')
+	b.block_instr3(.br, entry, b.void_type, has_state, ValueID(blk_clone), ValueID(blk_empty))
+
+	one := b.m.get_or_add_const(b.i64_type, '1')
+	state_size := b.m.get_or_add_const(b.i64_type, '48')
+	calloc_ref := b.m.add_value(.func_ref, b.void_type, 'calloc', b.fn_ids['calloc'])
+	new_state_raw := b.block_instr3(.call, blk_clone, ptr_i8, calloc_ref, one, state_size)
+	new_state := b.block_instr1(.bitcast, blk_clone, ptr_state, new_state_raw)
+
+	old_keys_ptr := b.map_state_field_ptr(blk_clone, old_state, 0)
+	old_vals_ptr := b.map_state_field_ptr(blk_clone, old_state, 1)
+	old_cap_ptr := b.map_state_field_ptr(blk_clone, old_state, 2)
+	old_len_ptr := b.map_state_field_ptr(blk_clone, old_state, 3)
+	old_key_size_ptr := b.map_state_field_ptr(blk_clone, old_state, 4)
+	old_val_size_ptr := b.map_state_field_ptr(blk_clone, old_state, 5)
+	old_keys := b.block_instr1(.load, blk_clone, ptr_i8, old_keys_ptr)
+	old_vals := b.block_instr1(.load, blk_clone, ptr_i8, old_vals_ptr)
+	cap := b.block_instr1(.load, blk_clone, b.i64_type, old_cap_ptr)
+	len := b.block_instr1(.load, blk_clone, b.i64_type, old_len_ptr)
+	key_size := b.block_instr1(.load, blk_clone, b.i64_type, old_key_size_ptr)
+	val_size := b.block_instr1(.load, blk_clone, b.i64_type, old_val_size_ptr)
+	new_keys := b.block_instr3(.call, blk_clone, ptr_i8, calloc_ref, cap, key_size)
+	new_vals := b.block_instr3(.call, blk_clone, ptr_i8, calloc_ref, cap, val_size)
+	key_bytes := b.block_instr2(.mul, blk_clone, b.i64_type, len, key_size)
+	val_bytes := b.block_instr2(.mul, blk_clone, b.i64_type, len, val_size)
+	memcpy_ref_keys := b.m.add_value(.func_ref, b.void_type, 'memcpy', b.fn_ids['memcpy'])
+	memcpy_ref_vals := b.m.add_value(.func_ref, b.void_type, 'memcpy', b.fn_ids['memcpy'])
+	b.block_instr4(.call, blk_clone, ptr_i8, memcpy_ref_keys, new_keys, old_keys, key_bytes)
+	b.block_instr4(.call, blk_clone, ptr_i8, memcpy_ref_vals, new_vals, old_vals, val_bytes)
+
+	new_keys_ptr := b.map_state_field_ptr(blk_clone, new_state, 0)
+	new_vals_ptr := b.map_state_field_ptr(blk_clone, new_state, 1)
+	new_cap_ptr := b.map_state_field_ptr(blk_clone, new_state, 2)
+	new_len_ptr := b.map_state_field_ptr(blk_clone, new_state, 3)
+	new_key_size_ptr := b.map_state_field_ptr(blk_clone, new_state, 4)
+	new_val_size_ptr := b.map_state_field_ptr(blk_clone, new_state, 5)
+	b.block_instr2(.store, blk_clone, b.void_type, new_keys, new_keys_ptr)
+	b.block_instr2(.store, blk_clone, b.void_type, new_vals, new_vals_ptr)
+	b.block_instr2(.store, blk_clone, b.void_type, cap, new_cap_ptr)
+	b.block_instr2(.store, blk_clone, b.void_type, len, new_len_ptr)
+	b.block_instr2(.store, blk_clone, b.void_type, key_size, new_key_size_ptr)
+	b.block_instr2(.store, blk_clone, b.void_type, val_size, new_val_size_ptr)
+
+	result_slot := b.block_instr0(.alloca, blk_clone, ptr_map)
+	result_state_field := b.block_struct_field_ptr(blk_clone, result_slot, b.map_type, 0)
+	b.block_instr2(.store, blk_clone, b.void_type, new_state, result_state_field)
+	result := b.block_instr1(.load, blk_clone, b.map_type, result_slot)
+	b.block_instr1(.ret, blk_clone, b.void_type, result)
+
+	b.block_instr1(.ret, blk_empty, b.void_type, m)
 }
 
 fn (mut b Builder) register_u8_runtime_stubs() {
@@ -5563,6 +5631,11 @@ fn (mut b Builder) build_block_expr(node flat.Node) ValueID {
 }
 
 fn (mut b Builder) build_array_literal(node flat.Node) ValueID {
+	if b.is_fixed_array_type_name(node.typ) {
+		mut fixed_node := node
+		fixed_node.value = node.typ
+		return b.build_fixed_array_init(fixed_node)
+	}
 	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
 	ptr_array := b.m.type_store.get_ptr(b.array_type)
 	mut values := []ValueID{}
@@ -5798,27 +5871,48 @@ fn (mut b Builder) build_map_init(node flat.Node) ValueID {
 }
 
 fn (b &Builder) is_fixed_array_type_name(type_name string) bool {
-	if !type_name.starts_with('[') {
-		return false
+	if type_name.starts_with('[') {
+		idx := type_name.index_u8(`]`)
+		return idx > 1 && idx + 1 < type_name.len
 	}
-	idx := type_name.index_u8(`]`)
-	return idx > 1 && idx + 1 < type_name.len
+	if type_name.contains('[') && type_name.ends_with(']') {
+		idx := type_name.index_u8(`[`)
+		return idx > 0 && idx < type_name.len - 1
+	}
+	return false
 }
 
 fn (b &Builder) fixed_array_elem_type_name(type_name string) string {
-	idx := type_name.index_u8(`]`)
-	if idx > 0 && idx + 1 < type_name.len {
-		return type_name[idx + 1..]
+	if type_name.starts_with('[') {
+		idx := type_name.index_u8(`]`)
+		if idx > 0 && idx + 1 < type_name.len {
+			return type_name[idx + 1..]
+		}
+	} else if type_name.contains('[') && type_name.ends_with(']') {
+		idx := type_name.index_u8(`[`)
+		if idx > 0 {
+			return type_name[..idx]
+		}
 	}
 	return 'u8'
 }
 
 fn (b &Builder) fixed_array_len_text(type_name string) string {
-	idx := type_name.index_u8(`]`)
-	if idx <= 1 {
+	mut raw_len := ''
+	if type_name.starts_with('[') {
+		idx := type_name.index_u8(`]`)
+		if idx > 1 {
+			raw_len = type_name[1..idx]
+		}
+	} else if type_name.contains('[') && type_name.ends_with(']') {
+		idx := type_name.index_u8(`[`)
+		if idx > 0 && idx < type_name.len - 1 {
+			raw_len = type_name[idx + 1..type_name.len - 1]
+		}
+	}
+	if raw_len.len == 0 {
 		return '1'
 	}
-	raw_len := type_name[1..idx]
 	clean_len := raw_len.replace('_', '')
 	if b.is_decimal_int_text(clean_len) {
 		return clean_len
@@ -7004,6 +7098,8 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 			if _ := b.vars[fn_node.value] {
 				return b.build_indirect_call(id, node, fn_node_id)
 			}
+		} else if fn_node.kind == .selector && b.is_function_value_expr(fn_node_id) {
+			return b.build_indirect_call(id, node, fn_node_id)
 		}
 		cur_name := if b.cur_func >= 0 && b.cur_func < b.m.funcs.len {
 			b.m.funcs[b.cur_func].name
@@ -7409,6 +7505,11 @@ fn (mut b Builder) build_indirect_call(id flat.NodeId, node flat.Node, callee_id
 		args << b.build_expr(b.a.child(&node, i))
 	}
 	return b.m.add_instr(.call_indirect, b.cur_block, b.call_expr_result_type(id, node), args)
+}
+
+fn (b &Builder) is_function_value_expr(id flat.NodeId) bool {
+	typ := b.checked_expr_type_name(id).trim_space()
+	return typ.starts_with('fn(') || typ.starts_with('fn (')
 }
 
 fn (mut b Builder) call_expr_result_type(id flat.NodeId, node flat.Node) TypeID {
@@ -8801,6 +8902,10 @@ fn (mut b Builder) resolve_type(name string) TypeID {
 		if alias != name {
 			return b.resolve_type(alias)
 		}
+	}
+	if b.is_fixed_array_type_name(name) {
+		elem_type := b.resolve_type(b.fixed_array_elem_type_name(name))
+		return b.m.type_store.get_ptr(elem_type)
 	}
 	if name.starts_with('[]') || name == 'array' || name == 'Array' {
 		return b.array_type

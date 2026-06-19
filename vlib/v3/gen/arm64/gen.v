@@ -660,7 +660,24 @@ fn (mut g Gen) gen_instr(val_id int) {
 					64
 				}
 				if dst_width > 0 && dst_width < 64 {
-					g.emit32(asm_ubfx_lower(Reg(8), Reg(src_reg), u32(dst_width)))
+					if g.is_signed_int_type(val.typ) {
+						match dst_width {
+							8 {
+								g.emit32(asm_sxtb(Reg(8), Reg(src_reg)))
+							}
+							16 {
+								g.emit32(asm_sxth(Reg(8), Reg(src_reg)))
+							}
+							32 {
+								g.emit32(asm_sxtw(Reg(8), Reg(src_reg)))
+							}
+							else {
+								g.emit32(asm_ubfx_lower(Reg(8), Reg(src_reg), u32(dst_width)))
+							}
+						}
+					} else {
+						g.emit32(asm_ubfx_lower(Reg(8), Reg(src_reg), u32(dst_width)))
+					}
 				} else if src_reg != 8 {
 					g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
 				}

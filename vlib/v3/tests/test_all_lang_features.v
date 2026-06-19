@@ -980,6 +980,11 @@ mut:
 	symbols []Symbol117
 }
 
+struct ForField117 {
+	name string
+	typ  MetaType117
+}
+
 struct ConstHolder117 {
 	value int
 }
@@ -1182,7 +1187,7 @@ fn indexed_struct_field117(store TypeStore117, idx int) int {
 }
 
 fn const_holder_value117() int {
-	holder := &zero_const_holder117
+	holder := unsafe { &zero_const_holder117 }
 	return holder.value
 }
 
@@ -1193,6 +1198,33 @@ fn adjust_symbol_values117(mut store SymbolStore117, base int) int {
 		}
 	}
 	return store.symbols[0].value + store.symbols[1].value
+}
+
+fn sum_string_for_in117(values []string) int {
+	mut total := 0
+	for value117 in values {
+		total += value117.len
+	}
+	return total
+}
+
+fn find_field_type117(fields []ForField117, wanted string) string {
+	for field117 in fields {
+		if field117.name == wanted {
+			return meta_name117(field117.typ)
+		}
+	}
+	return 'missing'
+}
+
+fn map_clone_pair117() int {
+	mut original117 := map[string]int{}
+	original117['mode'] = 1
+	mut cloned117 := original117.clone()
+	cloned117['mode'] = 7
+	orig117 := original117['mode'] or { -1 }
+	copy117 := cloned117['mode'] or { -1 }
+	return orig117 * 10 + copy117
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5408,6 +5440,38 @@ fn main() {
 		}]
 	}
 	print_int(adjust_symbol_values117(mut sym_store117, 100)) // 116
+
+	// 117.21 Single-variable for-in over []string preserves element type.
+	print_int(sum_string_for_in117(strings117)) // 9
+
+	// 117.22 For-in over structs with sumtype fields keeps field types.
+	field_types117 := [
+		ForField117{
+			name: 'elem'
+			typ:  MetaType117(MetaArray117{
+				elem: MetaType117(MetaNamed117{
+					name: 'Type'
+				})
+			})
+		},
+	]
+	print_str(find_field_type117(field_types117, 'elem')) // []Type
+
+	// 117.23 Signed truncation keeps negative values negative for comparisons.
+	mut wide_neg117 := i64(0 - 1)
+	if int(wide_neg117) >= 0 {
+		print_int(0)
+	} else {
+		print_int(1) // 1
+	}
+	if int(wide_neg117) < 0 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 117.24 Map clone owns its storage instead of aliasing the original map.
+	print_int(map_clone_pair117()) // 17
 
 	print_str('arm64 self-host regression coverage: ok')
 

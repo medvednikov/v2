@@ -30,7 +30,9 @@ mut:
 	pending_flag   bool
 	skip_next_decl bool
 pub mut:
-	a &flat.FlatAst = unsafe { nil }
+	a              &flat.FlatAst = unsafe { nil }
+	parsed_v_files int
+	parsed_v_lines int
 }
 
 pub fn Parser.new(prefs &pref.Preferences) &Parser {
@@ -67,6 +69,10 @@ pub fn (mut p Parser) parse_into(path string) {
 	if src.len == 0 {
 		eprintln('error reading ${path}')
 		return
+	}
+	if path.ends_with('.v') {
+		p.parsed_v_files++
+		p.parsed_v_lines += count_source_lines(src)
 	}
 	mut file_set := token.FileSet.new()
 	file := file_set.add_file(path, -1, src.len)
@@ -105,6 +111,19 @@ pub fn (mut p Parser) parse_into(path string) {
 		children_start: start
 		children_count: ids.len
 	})
+}
+
+fn count_source_lines(src string) int {
+	if src.len == 0 {
+		return 0
+	}
+	mut lines := 1
+	for i in 0 .. src.len {
+		if src[i] == `\n` && i + 1 < src.len {
+			lines++
+		}
+	}
+	return lines
 }
 
 fn read_source_file_raw(path string) string {
@@ -770,7 +789,13 @@ fn (mut p Parser) parse_param_group() []flat.NodeId {
 fn (mut p Parser) struct_decl() flat.NodeId {
 	is_union := p.tok == .key_union
 	p.next() // skip 'struct' or 'union'
-	name := p.expect(.name)
+	mut name := p.expect(.name)
+	if (name == 'C' || name == 'JS') && p.tok == .dot {
+		for p.tok == .dot {
+			p.next()
+			name += '.' + p.expect_name_or_keyword()
+		}
+	}
 	// generic params — skip
 	if p.tok == .lsbr {
 		p.skip_brackets()

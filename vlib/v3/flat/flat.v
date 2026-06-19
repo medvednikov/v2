@@ -8,7 +8,7 @@ pub const empty_node = NodeId(-1)
 
 const empty_node_value = Node{}
 
-pub enum NodeKind {
+pub enum NodeKind as u8 {
 	empty
 	// expressions
 	int_literal
@@ -93,7 +93,7 @@ pub enum NodeKind {
 	file
 }
 
-pub enum Op {
+pub enum Op as u8 {
 	none
 	plus
 	minus
@@ -136,8 +136,8 @@ pub struct Node {
 pub:
 	kind           NodeKind
 	op             Op
-	children_start int
-	children_count int
+	children_start i32
+	children_count u16
 	pos            token.Pos
 pub mut:
 	value string

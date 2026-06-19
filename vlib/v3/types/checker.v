@@ -275,9 +275,6 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				}
 			}
 			.struct_decl {
-				if node.value.starts_with('C.') {
-					continue
-				}
 				mut fields := []StructField{}
 				for i in 0 .. node.children_count {
 					f := a.child_node(&node, i)
