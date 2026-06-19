@@ -31,6 +31,20 @@ pub:
 	sum_type_name string // the parent sum type name (e.g. "Expr")
 }
 
+pub struct GenericFnInfo {
+pub:
+	node_idx    int
+	type_params []string
+	module_name string
+}
+
+pub struct GenericStructInfo {
+pub:
+	node_idx    int
+	type_params []string
+	module_name string
+}
+
 pub struct Transformer {
 mut:
 	a               &flat.FlatAst      = unsafe { nil }
@@ -48,6 +62,9 @@ mut:
 	temp_counter    int
 	pending_stmts   []flat.NodeId
 	smartcast_stack []SmartcastContext
+	generic_fns     map[string]GenericFnInfo
+	generic_structs map[string]GenericStructInfo
+	instantiated    map[string]bool
 }
 
 pub struct StructInfo {
@@ -77,6 +94,7 @@ pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 		tc: unsafe { tc }
 	}
 	t.collect_types()
+	t.monomorphize_pass()
 	t.transform_all()
 }
 
@@ -116,16 +134,35 @@ fn (t &Transformer) var_type(name string) string {
 
 fn (mut t Transformer) collect_types() {
 	mut cur_mod := ''
-	for node in t.a.nodes {
+	for ni, node in t.a.nodes {
 		match node.kind {
 			.module_decl {
 				cur_mod = node.value
 			}
 			.struct_decl {
+				struct_name := node.value
+				// Skip generic struct declarations — they'll be instantiated
+				if struct_name.contains('[') {
+					type_params := types.extract_type_params(struct_name)
+					if type_params.len > 0 {
+						stripped := types.strip_type_params(struct_name)
+						qname := if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
+							'${cur_mod}.${stripped}'
+						} else {
+							stripped
+						}
+						t.generic_structs[qname] = GenericStructInfo{
+							node_idx:    ni
+							type_params: type_params
+							module_name: cur_mod
+						}
+						continue
+					}
+				}
 				owner_type := if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
-					'${cur_mod}.${node.value}'
+					'${cur_mod}.${struct_name}'
 				} else {
-					node.value
+					struct_name
 				}
 				mut fields := []FieldInfo{}
 				for i in 0 .. node.children_count {
@@ -145,13 +182,13 @@ fn (mut t Transformer) collect_types() {
 					}
 				}
 				info := StructInfo{
-					name:   node.value
+					name:   struct_name
 					module: cur_mod
 					fields: fields
 				}
-				t.structs[node.value] = info
+				t.structs[struct_name] = info
 				if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
-					t.structs['${cur_mod}.${node.value}'] = info
+					t.structs['${cur_mod}.${struct_name}'] = info
 				}
 			}
 			.type_decl {
@@ -188,10 +225,29 @@ fn (mut t Transformer) collect_types() {
 				}
 			}
 			.fn_decl {
+				fn_name := node.value
+				// Skip generic fn declarations — they'll be instantiated
+				if fn_name.contains('[') {
+					type_params := types.extract_type_params(fn_name)
+					if type_params.len > 0 {
+						stripped := types.strip_type_params(fn_name)
+						qname := if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
+							'${cur_mod}.${stripped}'
+						} else {
+							stripped
+						}
+						t.generic_fns[qname] = GenericFnInfo{
+							node_idx:    ni
+							type_params: type_params
+							module_name: cur_mod
+						}
+						continue
+					}
+				}
 				if node.typ.len > 0 {
-					t.fn_ret_types[node.value] = node.typ
+					t.fn_ret_types[fn_name] = node.typ
 					if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
-						t.fn_ret_types['${cur_mod}.${node.value}'] = node.typ
+						t.fn_ret_types['${cur_mod}.${fn_name}'] = node.typ
 					}
 				}
 			}

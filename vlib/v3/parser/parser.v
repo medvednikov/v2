@@ -656,9 +656,10 @@ fn (mut p Parser) fn_operator_overload(receiver_name string, receiver_type strin
 }
 
 fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type string, is_method bool, _ bool) flat.NodeId {
-	// generic params — skip
+	// generic params — preserve in name as name[T, U]
+	mut actual_name := name
 	if p.tok == .lsbr {
-		p.skip_brackets()
+		actual_name += p.parse_generic_type_params()
 	}
 
 	// params
@@ -726,7 +727,7 @@ fn (mut p Parser) fn_decl_body(name string, receiver_name string, receiver_type 
 	start := p.add_children(all_ids)
 	return p.a.add_node(flat.Node{
 		kind:           .fn_decl
-		value:          name
+		value:          actual_name
 		typ:            ret_type
 		children_start: start
 		children_count: flat.child_count(all_ids.len)
@@ -796,9 +797,9 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 			name += '.' + p.expect_name_or_keyword()
 		}
 	}
-	// generic params — skip
+	// generic params — preserve in name as Name[T, U]
 	if p.tok == .lsbr {
-		p.skip_brackets()
+		name += p.parse_generic_type_params()
 	}
 	// implements clause
 	if p.tok == .name && p.lit == 'implements' {
@@ -1175,10 +1176,10 @@ fn (mut p Parser) type_decl() flat.NodeId {
 			p.next()
 		}
 	}
-	name := p.expect_name()
-	// generic params
+	mut name := p.expect_name()
+	// generic params — preserve in name
 	if p.tok == .lsbr {
-		p.skip_brackets()
+		name += p.parse_generic_type_params()
 	}
 	p.expect(.assign)
 	first_type := p.parse_type_name()
@@ -1224,9 +1225,9 @@ fn (mut p Parser) interface_decl() flat.NodeId {
 		p.next()
 		name += '.' + p.expect(.name)
 	}
-	// generic params
+	// generic params — preserve in name
 	if p.tok == .lsbr {
-		p.skip_brackets()
+		name += p.parse_generic_type_params()
 	}
 	p.check(.lcbr)
 	mut ids := []flat.NodeId{}
@@ -1644,6 +1645,34 @@ fn (mut p Parser) skip_brackets() {
 		}
 		p.next()
 	}
+}
+
+// parse_generic_type_params parses `[T]` or `[T, U]` and returns the string
+// including brackets, e.g. `"[T, U]"`. The opening `[` is expected as the
+// current token.
+fn (mut p Parser) parse_generic_type_params() string {
+	if p.tok != .lsbr {
+		return ''
+	}
+	p.next() // skip [
+	mut params := []string{}
+	for p.tok != .rsbr && p.tok != .eof {
+		if p.tok == .name {
+			params << p.lit
+			p.next()
+		} else if p.tok == .comma {
+			p.next()
+		} else {
+			p.next()
+		}
+	}
+	if p.tok == .rsbr {
+		p.next()
+	}
+	if params.len == 0 {
+		return ''
+	}
+	return '[' + params.join(', ') + ']'
 }
 
 // ==================== statements ====================

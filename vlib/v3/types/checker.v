@@ -52,6 +52,20 @@ pub enum TypeErrorKind {
 	unsupported_generic
 }
 
+pub struct GenericFnInfo {
+pub:
+	node_idx    int
+	type_params []string
+	module_name string
+}
+
+pub struct GenericStructInfo {
+pub:
+	node_idx    int
+	type_params []string
+	module_name string
+}
+
 struct CallInfo {
 	name         string
 	params       []Type
@@ -106,6 +120,8 @@ pub mut:
 	cur_fn_ret_type               Type = Type(void_)
 	smartcasts                    map[string]Type
 	int_bits                      int
+	generic_fns                   map[string]GenericFnInfo
+	generic_structs               map[string]GenericStructInfo
 }
 
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
@@ -272,7 +288,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 	}
 	// Pass 2: collect struct fields, function signatures (type aliases now available)
 	tc.cur_module = ''
-	for node in a.nodes {
+	for ni, node in a.nodes {
 		match node.kind {
 			.file {
 				tc.enter_file(node.value)
@@ -281,7 +297,23 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 				tc.enter_module(node.value)
 			}
 			.fn_decl {
-				qname := tc.qualify_fn_name(node.value)
+				fn_name := node.value
+				// Check if this is a generic function (name contains [T] type params)
+				if fn_name.contains('[') {
+					type_params := extract_type_params(fn_name)
+					if type_params.len > 0 {
+						stripped := strip_type_params(fn_name)
+						qname := tc.qualify_fn_name(stripped)
+						tc.generic_fns[qname] = GenericFnInfo{
+							node_idx:    ni
+							type_params: type_params
+							module_name: tc.cur_module
+						}
+						// Don't register generic fns in fn_ret_types
+						continue
+					}
+				}
+				qname := tc.qualify_fn_name(fn_name)
 				ret_type := tc.parse_type(node.typ)
 				mut ptypes := []Type{}
 				mut is_variadic := false
@@ -295,12 +327,28 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 					}
 				}
 				tc.register_fn_signature(qname, ret_type, ptypes, is_variadic)
-				if tc.cur_module in ['', 'main', 'builtin'] && qname != node.value
-					&& node.value !in tc.fn_param_types {
-					tc.register_fn_signature(node.value, ret_type, ptypes, is_variadic)
+				if tc.cur_module in ['', 'main', 'builtin'] && qname != fn_name
+					&& fn_name !in tc.fn_param_types {
+					tc.register_fn_signature(fn_name, ret_type, ptypes, is_variadic)
 				}
 			}
 			.struct_decl {
+				struct_name := node.value
+				// Check if this is a generic struct (name contains [T] type params)
+				if struct_name.contains('[') {
+					type_params := extract_type_params(struct_name)
+					if type_params.len > 0 {
+						stripped := strip_type_params(struct_name)
+						qname := tc.qualify_name(stripped)
+						tc.generic_structs[qname] = GenericStructInfo{
+							node_idx:    ni
+							type_params: type_params
+							module_name: tc.cur_module
+						}
+						// Don't register generic structs in structs map
+						continue
+					}
+				}
 				mut fields := []StructField{}
 				for i in 0 .. node.children_count {
 					f := a.child_node(&node, i)
@@ -312,7 +360,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 						typ:  tc.parse_type(f.typ)
 					}
 				}
-				qname := tc.qualify_name(node.value)
+				qname := tc.qualify_name(struct_name)
 				tc.structs[qname] = fields
 				if node.typ == 'union' {
 					tc.unions[qname] = true
@@ -725,7 +773,8 @@ fn should_cache_expr_type(kind flat.NodeKind, typ Type) bool {
 	}
 	if typ is Array || typ is ArrayFixed || typ is Map || typ is Pointer || typ is FnType
 		|| typ is OptionType || typ is ResultType || typ is Struct || typ is Interface
-		|| typ is Enum || typ is SumType || typ is Alias || typ is MultiReturn {
+		|| typ is Enum || typ is SumType || typ is Alias || typ is MultiReturn
+		|| typ is GenericParam || typ is GenericInstance {
 		return true
 	}
 	return kind !in [.int_literal, .float_literal, .bool_literal, .char_literal, .string_literal,
@@ -938,6 +987,43 @@ fn is_decimal_int_literal(s string) bool {
 
 fn is_bare_generic_param(typ string) bool {
 	return typ.len == 1 && typ[0] >= `A` && typ[0] <= `Z`
+}
+
+// strip_type_params removes the first `[...]` type parameter block from a name.
+// E.g., "id[T]" -> "id", "Box[T].get" -> "Box.get", "Box[T, U]" -> "Box".
+pub fn strip_type_params(name string) string {
+	bracket := name.index_u8(`[`)
+	if bracket <= 0 {
+		return name
+	}
+	bracket_end := find_matching_bracket(name, int(bracket))
+	if bracket_end >= name.len {
+		return name[..bracket]
+	}
+	return name[..bracket] + name[bracket_end + 1..]
+}
+
+// extract_type_params extracts generic type parameter names from a declaration
+// name like "id[T]" or "Box[T, U]". Returns the list of type param names.
+pub fn extract_type_params(name string) []string {
+	bracket := name.index_u8(`[`)
+	if bracket <= 0 {
+		return []string{}
+	}
+	bracket_end := find_matching_bracket(name, int(bracket))
+	if bracket_end <= int(bracket) || bracket_end >= name.len {
+		return []string{}
+	}
+	inner := name[bracket + 1..bracket_end]
+	parts := split_params(inner)
+	mut params := []string{}
+	for p in parts {
+		trimmed := p.trim_space()
+		if trimmed.len > 0 {
+			params << trimmed
+		}
+	}
+	return params
 }
 
 fn (tc &TypeChecker) type_name_known(typ string) bool {
@@ -2002,6 +2088,10 @@ fn (tc &TypeChecker) is_known_call(node flat.Node) bool {
 		}
 		qfn := tc.qualify_fn_name(fn_node.value)
 		if qfn in tc.fn_ret_types || fn_node.value in tc.fn_ret_types {
+			return true
+		}
+		// Check if it's a generic function (not yet monomorphized)
+		if qfn in tc.generic_fns || fn_node.value in tc.generic_fns {
 			return true
 		}
 	}
@@ -3433,13 +3523,27 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 	}
 	if typ.contains('[') && !typ.starts_with('[') {
 		bracket := typ.index_u8(`[`)
-		bracket_end := typ.index_u8(`]`)
-		if bracket_end > bracket {
-			len_text := typ[bracket + 1..bracket_end].trim_space()
-			return Type(ArrayFixed{
-				elem_type: tc.parse_type(typ[..bracket])
-				len:       if is_decimal_int_literal(len_text) { len_text.int() } else { 0 }
-				len_expr:  if is_decimal_int_literal(len_text) { '' } else { len_text }
+		bracket_end := find_matching_bracket(typ, int(bracket))
+		if bracket_end > int(bracket) && bracket_end < typ.len {
+			base_name := typ[..bracket]
+			inner := typ[bracket + 1..bracket_end]
+			len_text := inner.trim_space()
+			if is_decimal_int_literal(len_text) {
+				// Fixed array: Type[N]
+				return Type(ArrayFixed{
+					elem_type: tc.parse_type(base_name)
+					len:       len_text.int()
+				})
+			}
+			// Generic instance: Type[T, U]
+			parts := split_params(inner)
+			mut args := []Type{}
+			for p in parts {
+				args << tc.parse_type(p.trim_space())
+			}
+			return Type(GenericInstance{
+				name: tc.qualify_name(base_name)
+				args: args
 			})
 		}
 	}
@@ -4245,12 +4349,28 @@ fn prim_c_type_from_bits(props Properties, size u8, int_bits int) string {
 			}
 		}
 		return match size {
-			0 { if int_bits == 32 { 'i32' } else { 'i64' } }
-			8 { 'i8' }
-			16 { 'i16' }
-			32 { 'i32' }
-			64 { 'i64' }
-			else { 'i${size}' }
+			0 {
+				if int_bits == 32 {
+					'i32'
+				} else {
+					'i64'
+				}
+			}
+			8 {
+				'i8'
+			}
+			16 {
+				'i16'
+			}
+			32 {
+				'i32'
+			}
+			64 {
+				'i64'
+			}
+			else {
+				'i${size}'
+			}
 		}
 	}
 	if props.has(.float) {
@@ -4358,4 +4478,13 @@ fn c_name(name string) string {
 		return 'v_${n}'
 	}
 	return n
+}
+
+// Public wrappers for functions needed by the transform module.
+pub fn find_matching_bracket_pub(s string, start int) int {
+	return find_matching_bracket(s, start)
+}
+
+pub fn split_params_pub(s string) []string {
+	return split_params(s)
 }

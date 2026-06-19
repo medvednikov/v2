@@ -166,8 +166,8 @@ fn main() {
 	transform.transform(mut a, &pre_tc)
 	b.step('transform')
 
-	// Reuse the pre-transform checker. Transform does not add declarations, so
-	// recollecting all type/index maps only duplicates memory when GC is off.
+	// Recollect after transform — monomorphization may have added declarations
+	pre_tc.collect(a)
 	pre_tc.diagnose_unknown_calls = false
 	pre_tc.reject_unlowered_map_mutation = true
 	pre_tc.annotate_types()
