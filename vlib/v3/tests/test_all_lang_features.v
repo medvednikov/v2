@@ -814,6 +814,65 @@ enum Direction {
 	right
 }
 
+// ===================== MULTI-RETURN FUNCTIONS =====================
+
+fn two_vals() (int, string) {
+	return 42, 'hello'
+}
+
+fn swap_ints(a int, b int) (int, int) {
+	return b, a
+}
+
+fn three_ints(x int) (int, int, int) {
+	return x, x * 2, x * 3
+}
+
+// ===================== STRUCT OPERATORS =====================
+
+fn (a Point) + (b Point) Point {
+	return Point{
+		x: a.x + b.x
+		y: a.y + b.y
+	}
+}
+
+fn (a Point) == (b Point) bool {
+	return a.x == b.x && a.y == b.y
+}
+
+fn (a Point) < (b Point) bool {
+	return a.x + a.y < b.x + b.y
+}
+
+// ===================== RETURN MATCH / IF-EXPR-STRING =====================
+
+fn classify_str(n int) string {
+	return match n {
+		0 { 'zero' }
+		1 { 'one' }
+		2 { 'two' }
+		else { 'other' }
+	}
+}
+
+fn describe_sign(n int) string {
+	return if n > 0 {
+		'positive'
+	} else if n < 0 {
+		'negative'
+	} else {
+		'zero'
+	}
+}
+
+fn return_assoc_point(p Point, new_x int) Point {
+	return Point{
+		...p
+		x: new_x
+	}
+}
+
 // ===================== MAIN TEST FUNCTION =====================
 
 fn try_get_value(ok bool) ?int {
@@ -4272,8 +4331,14 @@ fn main() {
 	print_str('--- 105. Self-Hosting Features ---')
 
 	// 105.1 Multi-smartcast in && chains: both sides smartcast
-	a105 := Animal(Cat{ name: 'Luna', age: 3 })
-	b105 := Animal(Dog{ name: 'Max', tricks: 7 })
+	a105 := Animal(Cat{
+		name: 'Luna'
+		age:  3
+	})
+	b105 := Animal(Dog{
+		name:   'Max'
+		tricks: 7
+	})
 	if a105 is Cat && b105 is Dog {
 		assert a105.name == 'Luna'
 		assert a105.age == 3
@@ -4285,15 +4350,27 @@ fn main() {
 	}
 
 	// 105.2 Multi-smartcast: same type on both sides
-	c105 := Animal(Cat{ name: 'Mimi', age: 2 })
-	d105 := Animal(Cat{ name: 'Neko', age: 9 })
+	c105 := Animal(Cat{
+		name: 'Mimi'
+		age:  2
+	})
+	d105 := Animal(Cat{
+		name: 'Neko'
+		age:  9
+	})
 	if c105 is Cat && d105 is Cat {
 		print_int(c105.age + d105.age) // 11
 	}
 
 	// 105.3 Multi-smartcast: first matches, second doesn't
-	e105 := Animal(Cat{ name: 'Cleo', age: 4 })
-	f105 := Animal(Cat{ name: 'Felix', age: 6 })
+	e105 := Animal(Cat{
+		name: 'Cleo'
+		age:  4
+	})
+	f105 := Animal(Cat{
+		name: 'Felix'
+		age:  6
+	})
 	mut took_else105 := false
 	if e105 is Cat && f105 is Dog {
 		assert false
@@ -4322,8 +4399,14 @@ fn main() {
 	print_int(tag_map105['high'].len) // 2
 
 	// 105.6 Multi-smartcast with field access in expression
-	g105 := Animal(Cat{ name: 'Socks', age: 8 })
-	h105 := Animal(Dog{ name: 'Buddy', tricks: 5 })
+	g105 := Animal(Cat{
+		name: 'Socks'
+		age:  8
+	})
+	h105 := Animal(Dog{
+		name:   'Buddy'
+		tricks: 5
+	})
 	mut desc105 := ''
 	if g105 is Cat && h105 is Dog {
 		desc105 = g105.name + ' and ' + h105.name
@@ -4332,5 +4415,399 @@ fn main() {
 
 	print_str('self-hosting features: ok')
 
-	print_str('=== ALL 105 TESTS PASSED ===')
+	print_str('--- 106. Multi-Return Functions ---')
+
+	// 106.1 Basic multi-return (int, string)
+	a106, b106 := two_vals()
+	assert a106 == 42
+	assert b106 == 'hello'
+	print_int(a106) // 42
+	print_str(b106) // hello
+
+	// 106.2 Multi-return swap
+	c106, d106 := swap_ints(10, 20)
+	assert c106 == 20
+	assert d106 == 10
+	print_int(c106) // 20
+	print_int(d106) // 10
+
+	// 106.3 Three-value multi-return
+	x106, y106, z106 := three_ints(5)
+	assert x106 == 5
+	assert y106 == 10
+	assert z106 == 15
+	print_int(x106 + y106 + z106) // 30
+
+	// 106.4 Multi-return in loop
+	mut sum106 := 0
+	for i in 0 .. 3 {
+		lo, hi := swap_ints(i, i * 10)
+		sum106 += lo + hi
+	}
+	print_int(sum106) // (0+0)+(10+1)+(20+2) = 33
+
+	// 106.5 Multi-return used directly in expression
+	a106b, _ := swap_ints(7, 3)
+	print_int(a106b) // 3
+
+	print_str('multi-return: ok')
+
+	print_str('--- 107. Struct Update Syntax (Assoc) ---')
+
+	// 107.1 Basic struct update
+	p107 := Point{
+		x: 10
+		y: 20
+	}
+	p107b := Point{
+		...p107
+		x: 99
+	}
+	assert p107b.x == 99
+	assert p107b.y == 20
+	print_int(p107b.x) // 99
+	print_int(p107b.y) // 20
+
+	// 107.2 Update y only
+	p107c := Point{
+		...p107
+		y: 55
+	}
+	assert p107c.x == 10
+	assert p107c.y == 55
+	print_int(p107c.x) // 10
+	print_int(p107c.y) // 55
+
+	// 107.3 Update both fields (identity check)
+	p107d := Point{
+		...p107
+		x: 1
+		y: 2
+	}
+	assert p107d.x == 1
+	assert p107d.y == 2
+	print_int(p107d.x + p107d.y) // 3
+
+	// 107.4 Struct update via function return
+	p107e := return_assoc_point(Point{ x: 5, y: 15 }, 42)
+	assert p107e.x == 42
+	assert p107e.y == 15
+	print_int(p107e.x) // 42
+
+	// 107.5 Chained struct updates
+	base107 := Point{
+		x: 100
+		y: 200
+	}
+	step1 := Point{
+		...base107
+		x: 1
+	}
+	step2 := Point{
+		...step1
+		y: 2
+	}
+	assert step2.x == 1
+	assert step2.y == 2
+	print_int(step2.x + step2.y) // 3
+
+	print_str('struct update (assoc): ok')
+
+	print_str('--- 108. Array Push Many ---')
+
+	// 108.1 Basic push_many
+	mut arr108 := [1, 2]
+	arr108b := [3, 4, 5]
+	arr108 << arr108b
+	assert arr108.len == 5
+	assert arr108[3] == 4
+	assert arr108[4] == 5
+	print_int(arr108.len) // 5
+
+	// 108.2 Push empty array
+	mut arr108c := [10, 20]
+	empty108 := []int{}
+	arr108c << empty108
+	assert arr108c.len == 2
+	print_int(arr108c.len) // 2
+
+	// 108.3 Push into empty
+	mut arr108d := []int{}
+	arr108d << [7, 8, 9]
+	assert arr108d.len == 3
+	assert arr108d[0] == 7
+	print_int(arr108d[2]) // 9
+
+	// 108.4 Push many in loop
+	mut arr108e := []int{}
+	for i in 0 .. 3 {
+		arr108e << [i * 10, i * 10 + 1]
+	}
+	assert arr108e.len == 6
+	print_int(arr108e.len) // 6
+	print_int(arr108e[4]) // 20
+
+	// 108.5 Push many strings
+	mut sarr108 := []string{}
+	sarr108 << 'first'
+	sarr108 << ['second', 'third']
+	assert sarr108.len == 3
+	print_str(sarr108[2]) // third
+
+	print_str('array push_many: ok')
+
+	print_str('--- 109. String Comparison Operators ---')
+
+	// 109.1 String less-than
+	assert 'apple' < 'banana'
+	if 'apple' < 'banana' {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 109.2 String greater-than
+	assert 'z' > 'a'
+	if 'zoo' > 'abc' {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 109.3 String less-equal
+	assert 'abc' <= 'abd'
+	assert 'abc' <= 'abc'
+	if 'abc' <= 'abc' {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 109.4 String greater-equal
+	assert 'xyz' >= 'xyz'
+	assert 'b' >= 'a'
+	if 'hello' >= 'hello' {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 109.5 String comparison in sorting logic
+	s109a := 'cat'
+	s109b := 'dog'
+	smaller109 := if s109a < s109b { s109a } else { s109b }
+	assert smaller109 == 'cat'
+	print_str(smaller109) // cat
+
+	print_str('string comparison: ok')
+
+	print_str('--- 110. Struct Operator Overloading ---')
+
+	// 110.1 Struct addition
+	pa110 := Point{
+		x: 1
+		y: 2
+	}
+	pb110 := Point{
+		x: 3
+		y: 4
+	}
+	pc110 := pa110 + pb110
+	assert pc110.x == 4
+	assert pc110.y == 6
+	print_int(pc110.x) // 4
+	print_int(pc110.y) // 6
+
+	// 110.2 Struct equality
+	assert pc110 == Point{
+		x: 4
+		y: 6
+	}
+	assert pa110 != pb110
+	if pa110 == Point{
+		x: 1
+		y: 2
+	} {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 110.3 Struct less-than
+	assert pa110 < pb110
+	if pa110 < pb110 {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 110.4 Chained struct addition
+	pd110 := pa110 + pb110 + Point{
+		x: 10
+		y: 20
+	}
+	assert pd110.x == 14
+	assert pd110.y == 26
+	print_int(pd110.x) // 14
+
+	// 110.5 Struct ops in loop
+	mut acc110 := Point{
+		x: 0
+		y: 0
+	}
+	for i in 1 .. 4 {
+		acc110 = acc110 + Point{
+			x: i
+			y: i * 2
+		}
+	}
+	assert acc110.x == 6
+	assert acc110.y == 12
+	print_int(acc110.x + acc110.y) // 18
+
+	print_str('struct operators: ok')
+
+	print_str('--- 111. Return Match / Match as Expression ---')
+
+	// 111.1 Return match with string
+	assert classify_str(0) == 'zero'
+	assert classify_str(1) == 'one'
+	assert classify_str(2) == 'two'
+	assert classify_str(99) == 'other'
+	print_str(classify_str(1)) // one
+
+	// 111.2 Match as expression value (string)
+	v111 := 3
+	label111 := match v111 {
+		1 { 'one' }
+		2 { 'two' }
+		3 { 'three' }
+		else { 'unknown' }
+	}
+
+	assert label111 == 'three'
+	print_str(label111) // three
+
+	// 111.3 Match expression with int
+	score111 := 85
+	grade111 := match true {
+		score111 >= 90 { 'A' }
+		score111 >= 80 { 'B' }
+		score111 >= 70 { 'C' }
+		else { 'F' }
+	}
+
+	assert grade111 == 'B'
+	print_str(grade111) // B
+
+	// 111.4 Match expression in function call
+	print_str(classify_str(0)) // zero
+
+	// 111.5 Nested match expression
+	outer111 := 1
+	inner111 := 2
+	r111 := match outer111 {
+		1 {
+			match inner111 {
+				2 { 'one-two' }
+				else { 'one-other' }
+			}
+		}
+		else {
+			'other'
+		}
+	}
+
+	assert r111 == 'one-two'
+	print_str(r111) // one-two
+
+	print_str('match expression: ok')
+
+	print_str('--- 112. If Expression Returning String ---')
+
+	// 112.1 Basic if-expr string
+	s112a := if true { 'yes' } else { 'no' }
+	assert s112a == 'yes'
+	print_str(s112a) // yes
+
+	// 112.2 If-expr string with condition
+	val112 := 42
+	s112b := if val112 > 20 { 'big' } else { 'small' }
+	assert s112b == 'big'
+	print_str(s112b) // big
+
+	// 112.3 Return if-expr string via function
+	assert describe_sign(5) == 'positive'
+	assert describe_sign(-3) == 'negative'
+	assert describe_sign(0) == 'zero'
+	print_str(describe_sign(7)) // positive
+
+	// 112.4 If-expr string used in concatenation
+	prefix112 := 'Result: '
+	s112c := prefix112 + if true { 'pass' } else { 'fail' }
+	print_str(s112c) // Result: pass
+
+	// 112.5 If-expr string in loop
+	mut results112 := []string{}
+	for i in 0 .. 3 {
+		results112 << if i % 2 == 0 { 'even' } else { 'odd' }
+	}
+	assert results112[0] == 'even'
+	assert results112[1] == 'odd'
+	assert results112[2] == 'even'
+	print_str(results112[1]) // odd
+
+	print_str('if expr string: ok')
+
+	print_str('--- 113. @FN Comptime ---')
+
+	// 113.1 @FN returns current function name
+	fn_name113 := @FN
+	assert fn_name113.len > 0
+	print_str(fn_name113) // main
+
+	// 113.2 @FILE still works
+	file113 := @FILE
+	assert file113.contains('test.v')
+	print_str('@FN and @FILE: ok')
+
+	print_str('--- 114. String in Expressions ---')
+
+	// 114.1 String equality in variable
+	eq114 := 'hello' == 'hello'
+	assert eq114
+	neq114 := 'hello' != 'world'
+	assert neq114
+	if eq114 && neq114 {
+		print_int(1) // 1
+	}
+
+	// 114.2 String comparison result used in match
+	cmp114 := 'abc' < 'def'
+	r114 := if cmp114 { 'less' } else { 'not less' }
+	assert r114 == 'less'
+	print_str(r114) // less
+
+	// 114.3 String method results in conditions
+	s114 := 'hello world'
+	if s114.starts_with('hello') && s114.ends_with('world') && s114.contains(' ') {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
+
+	// 114.4 String concatenation with if-expr
+	greeting114 := 'Hello' + ', ' + 'World'
+	assert greeting114 == 'Hello, World'
+	print_str(greeting114) // Hello, World
+
+	// 114.5 String length comparison
+	short114 := 'ab'
+	long114 := 'abcde'
+	assert short114.len < long114.len
+	print_int(long114.len - short114.len) // 3
+
+	print_str('string expressions: ok')
+
+	print_str('=== ALL 114 TESTS PASSED ===')
 }
