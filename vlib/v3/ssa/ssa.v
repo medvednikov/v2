@@ -315,10 +315,20 @@ pub fn (mut m Module) get_or_add_const(typ TypeID, name string) ValueID {
 }
 
 pub fn (m &Module) type_size(typ_id TypeID) int {
-	return m.type_size_inner(typ_id, 0)
+	mut active := []TypeID{}
+	return m.type_size_inner(typ_id, 0, mut active)
 }
 
-fn (m &Module) type_size_inner(typ_id TypeID, depth int) int {
+fn type_is_active(typ_id TypeID, active []TypeID) bool {
+	for seen in active {
+		if seen == typ_id {
+			return true
+		}
+	}
+	return false
+}
+
+fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 0
 	}
@@ -341,19 +351,24 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int) int {
 	if typ.fields.len > 256 {
 		return 8
 	}
+	if type_is_active(typ_id, active) {
+		return 8
+	}
+	active << typ_id
 	mut offset := 0
 	mut max_align := 1
 	for i in 0 .. typ.fields.len {
 		field_typ := typ.fields[i]
-		align := m.type_align_inner(field_typ, depth + 1)
+		align := m.type_align_inner(field_typ, depth + 1, mut active)
 		if align > max_align {
 			max_align = align
 		}
 		if align > 1 && offset % align != 0 {
 			offset = (offset + align - 1) & ~(align - 1)
 		}
-		offset += m.type_size_inner(field_typ, depth + 1)
+		offset += m.type_size_inner(field_typ, depth + 1, mut active)
 	}
+	active.delete_last()
 	total := if max_align > 1 && offset % max_align != 0 {
 		(offset + max_align - 1) & ~(max_align - 1)
 	} else {
@@ -366,10 +381,11 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int) int {
 }
 
 pub fn (m &Module) type_align(typ_id TypeID) int {
-	return m.type_align_inner(typ_id, 0)
+	mut active := []TypeID{}
+	return m.type_align_inner(typ_id, 0, mut active)
 }
 
-fn (m &Module) type_align_inner(typ_id TypeID, depth int) int {
+fn (m &Module) type_align_inner(typ_id TypeID, depth int, mut active []TypeID) int {
 	if typ_id <= 0 || typ_id >= m.type_store.types.len {
 		return 1
 	}
@@ -394,20 +410,25 @@ fn (m &Module) type_align_inner(typ_id TypeID, depth int) int {
 		if typ.fields.len > 256 {
 			return 8
 		}
+		if type_is_active(typ_id, active) {
+			return 8
+		}
+		active << typ_id
 		mut max_align := 1
 		for i in 0 .. typ.fields.len {
 			field_typ := typ.fields[i]
-			a := m.type_align_inner(field_typ, depth + 1)
+			a := m.type_align_inner(field_typ, depth + 1, mut active)
 			if a > max_align {
 				max_align = a
 			}
 		}
+		active.delete_last()
 		return max_align
 	}
 	if typ.params.len > 0 || typ.ret_type > 0 {
 		return 8
 	}
-	size := m.type_size_inner(typ_id, depth + 1)
+	size := m.type_size_inner(typ_id, depth + 1, mut active)
 	if size >= 8 {
 		return 8
 	}
