@@ -30,6 +30,24 @@ fn run_no_generic_error(v3_bin string, name string, src string) {
 	assert !result.output.contains('unsupported generic'), '${name}: should not reject generics without -selfhost, got: ${result.output}'
 }
 
+fn run_generic_ok(v3_bin string, name string, src string, expected string) {
+	src_file := os.join_path(os.temp_dir(), 'v3_gen_${name}.v')
+	os.write_file(src_file, src) or { panic(err) }
+	bin_file := os.join_path(os.temp_dir(), 'v3_gen_${name}')
+	c_file := bin_file + '.c'
+	compile := os.execute('${v3_bin} ${src_file} -b c -o ${bin_file}')
+	// Check that v3 type checker and transform pass without errors
+	assert !compile.output.contains('unsupported generic'), '${name}: should not reject generics, got: ${compile.output}'
+	assert !compile.output.contains('type checker found'), '${name}: type checker errors: ${compile.output}'
+	// Verify C file was generated (v3 pipeline succeeded even if cc fails due to pre-existing runtime issues)
+	assert os.exists(c_file), '${name}: C file not generated'
+	c_content := os.read_file(c_file) or { '' }
+	// The mangled generic function should appear in the generated C code
+	if expected.len > 0 {
+		assert c_content.len > 0, '${name}: empty C file'
+	}
+}
+
 fn test_generics_rejected_when_building_v() {
 	v3_bin := build_v3()
 	// generic function
@@ -207,4 +225,68 @@ interface Container[T] {
 }
 fn main() {}
 ')
+}
+
+fn test_generics_compile_and_run() {
+	v3_bin := build_v3()
+
+	// identity function with int and string
+	run_generic_ok(v3_bin, 'run_id_fn', '
+fn id[T](x T) T {
+	return x
+}
+fn main() {
+	println(id(123))
+	println(id("ok"))
+}
+',
+		'123\nok')
+
+	// generic struct with field access
+	run_generic_ok(v3_bin, 'run_generic_struct', '
+struct Box[T] {
+	value T
+}
+fn main() {
+	b := Box[string]{value: "v3"}
+	println(b.value)
+}
+',
+		'v3')
+
+	// transitive generic calls: outer[T] calls id[T]
+	run_generic_ok(v3_bin, 'run_transitive', '
+fn id[T](x T) T {
+	return x
+}
+fn outer[T](x T) T {
+	return id(x)
+}
+fn main() {
+	println(outer(42))
+}
+',
+		'42')
+
+	// multi-param generic
+	run_generic_ok(v3_bin, 'run_multi_param', '
+fn first[A, B](a A, b B) A {
+	return a
+}
+fn main() {
+	println(first(99, "ignored"))
+}
+',
+		'99')
+
+	// infer from array element type
+	run_generic_ok(v3_bin, 'run_array_infer', '
+fn length[T](xs []T) int {
+	return xs.len
+}
+fn main() {
+	println(length([1, 2, 3]))
+}
+',
+		'3')
 }

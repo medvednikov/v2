@@ -94,6 +94,28 @@ pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 		tc: unsafe { tc }
 	}
 	t.collect_types()
+	// Consume generic declaration maps from TypeChecker instead of
+	// rediscovering them — single source of truth.
+	if !isnil(tc) {
+		for k, v in tc.generic_fns {
+			if k !in t.generic_fns {
+				t.generic_fns[k] = GenericFnInfo{
+					node_idx:    v.node_idx
+					type_params: v.type_params
+					module_name: v.module_name
+				}
+			}
+		}
+		for k, v in tc.generic_structs {
+			if k !in t.generic_structs {
+				t.generic_structs[k] = GenericStructInfo{
+					node_idx:    v.node_idx
+					type_params: v.type_params
+					module_name: v.module_name
+				}
+			}
+		}
+	}
 	t.monomorphize_pass()
 	t.transform_all()
 }

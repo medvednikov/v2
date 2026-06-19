@@ -14,199 +14,78 @@ fn (mut t Transformer) is_generic_struct(name string) bool {
 }
 
 // monomorphize_pass is the top-level generic monomorphization pass.
-// It scans call sites and struct inits for generic instantiations,
-// clones and specializes the generic definitions, rewrites call sites
-// to reference the monomorphized specializations, and removes the
-// original generic definitions.
+// Uses a worklist: scan, instantiate, then rescan cloned declarations
+// to discover transitive generic uses, repeating until no new
+// instantiations are found.
 fn (mut t Transformer) monomorphize_pass() {
 	if t.generic_fns.len == 0 && t.generic_structs.len == 0 {
 		return
 	}
 
-	// Phase 1: Scan for all generic instantiation sites and collect
-	// the unique (generic_name, concrete_type_args) pairs.
-	mut fn_instances := map[string][]string{} // mangled_name -> type_args
-	mut struct_instances := map[string][]string{} // mangled_name -> type_args
-	mut fn_instance_keys := map[string]string{} // mangled_name -> generic_fn_key
-	mut struct_instance_keys := map[string]string{} // mangled_name -> generic_struct_key
-	// Also track which call nodes need rewriting: node_idx -> mangled_name
+	// Track all call/struct-init sites that need rewriting (node_idx -> mangled_name)
 	mut call_rewrites := map[int]string{}
 	mut struct_init_rewrites := map[int]string{}
 
-	for ni, node in t.a.nodes {
-		if node.kind == .call && node.children_count > 0 {
-			fn_node := t.a.child_node(&node, 0)
-			if fn_node.kind == .ident {
-				call_name := fn_node.value
-				// Check for explicit generic call: fn_name[int](args)
-				// The parser would have produced the call with the ident containing
-				// the base name and the type args in a Type[...] pattern.
-				// Actually, in V, `id[int](1)` — the parser sees `id` as an ident,
-				// then `[int]` as an index expression, then `(1)` as a call.
-				// But looking at the test: `id[int](1)` — this is parsed differently.
-				// The parser's `parse_type_name()` handles `Name[T]` for types.
-				// For calls, the parser sees `id` then `[int]` then `(1)`.
-				// Let's check if the call's first child might have a typ containing the info.
+	// Worklist loop: keep scanning until no new instantiations are found.
+	// scan_start tracks where to begin scanning on each iteration (new clones
+	// are appended past the previous end).
+	mut scan_start := 0
+	for round := 0; round < 64; round++ {
+		mut fn_instances := map[string][]string{}
+		mut struct_instances := map[string][]string{}
+		mut fn_instance_keys := map[string]string{}
+		mut struct_instance_keys := map[string]string{}
+		scan_end := t.a.nodes.len
 
-				// Actually, for explicit generic calls like `id[int](1)`, the parser
-				// may not handle this in its call expression parsing. The call might
-				// instead be parsed as `id` (ident) `[int]` (index) `(1)` (call).
-				// Or the parser might handle it specially.
-				// Let's handle the simpler approach: look at the ident and check
-				// against our generic_fns map.
-
-				if info := t.generic_fns[call_name] {
-					// Need to infer type args from the call arguments
-					type_args := t.infer_fn_type_args(node, info)
-					if type_args.len == info.type_params.len {
-						mangled := mangle_name(call_name, info.type_params, type_args)
-						fn_instances[mangled] = type_args
-						fn_instance_keys[mangled] = call_name
-						call_rewrites[ni] = mangled
-					}
-				}
-				// Also check qualified name
-				if t.tc != unsafe { nil } {
-					qname := t.qualify_call_name(call_name)
-					if qname != call_name {
-						if info := t.generic_fns[qname] {
-							type_args := t.infer_fn_type_args(node, info)
-							if type_args.len == info.type_params.len {
-								mangled := mangle_name(qname, info.type_params, type_args)
-								fn_instances[mangled] = type_args
-								fn_instance_keys[mangled] = qname
-								call_rewrites[ni] = mangled
-							}
-						}
-					}
-				}
+		for ni in scan_start .. scan_end {
+			node := t.a.nodes[ni]
+			if node.kind == .call && node.children_count > 0 {
+				t.scan_call_for_generics(ni, node, mut fn_instances, mut fn_instance_keys, mut
+					call_rewrites)
+			}
+			if node.kind == .struct_init {
+				t.scan_struct_init_for_generics(ni, node, mut struct_instances, mut
+					struct_instance_keys, mut struct_init_rewrites)
+			}
+			if node.kind == .decl_assign {
+				t.scan_decl_for_generic_structs(node, mut struct_instances, mut
+					struct_instance_keys)
 			}
 		}
 
-		// Check struct inits with generic types like Box[int]{...}
-		if node.kind == .struct_init {
-			struct_name := node.value
-			if struct_name.contains('[') && !struct_name.starts_with('[') {
-				bracket := struct_name.index_u8(`[`)
-				bracket_end := types.find_matching_bracket_pub(struct_name, int(bracket))
-				if bracket_end > int(bracket) {
-					base_name := struct_name[..bracket]
-					inner := struct_name[bracket + 1..bracket_end]
-					// Check if this is a generic struct instantiation
-					qbase := t.qualify_struct_name(base_name)
-					lookup := if qbase in t.generic_structs {
-						qbase
-					} else if base_name in t.generic_structs {
-						base_name
-					} else {
-						''
-					}
-					if lookup.len > 0 {
-						if info := t.generic_structs[lookup] {
-							parts := types.split_params_pub(inner)
-							mut type_args := []string{}
-							for p in parts {
-								type_args << p.trim_space()
-							}
-							if type_args.len == info.type_params.len {
-								mangled := mangle_name(lookup, info.type_params, type_args)
-								struct_instances[mangled] = type_args
-								struct_instance_keys[mangled] = lookup
-								struct_init_rewrites[ni] = mangled
-							}
-						}
-					}
-				}
-			}
+		if fn_instances.len == 0 && struct_instances.len == 0 {
+			break
 		}
 
-		// Also check decl_assign RHS for struct inits with generic types
-		if node.kind == .decl_assign && node.typ.contains('[') && !node.typ.starts_with('[')
-			&& !node.typ.starts_with('[]') && !node.typ.starts_with('map[') {
-			bracket := node.typ.index_u8(`[`)
-			bracket_end := types.find_matching_bracket_pub(node.typ, int(bracket))
-			if bracket_end > int(bracket) {
-				base_name := node.typ[..bracket]
-				inner := node.typ[bracket + 1..bracket_end]
-				qbase := t.qualify_struct_name(base_name)
-				lookup := if qbase in t.generic_structs {
-					qbase
-				} else if base_name in t.generic_structs {
-					base_name
-				} else {
-					''
-				}
-				if lookup.len > 0 {
-					if info := t.generic_structs[lookup] {
-						parts := types.split_params_pub(inner)
-						mut type_args := []string{}
-						for p in parts {
-							type_args << p.trim_space()
-						}
-						if type_args.len == info.type_params.len {
-							mangled := mangle_name(lookup, info.type_params, type_args)
-							struct_instances[mangled] = type_args
-							struct_instance_keys[mangled] = lookup
-						}
-					}
-				}
-			}
+		// Find module context for appended clones: insert a module_decl marker
+		// before each batch of cloned declarations so codegen/markused attributes
+		// them to the correct module.
+		for mangled, type_args in struct_instances {
+			generic_key := struct_instance_keys[mangled]
+			info := t.generic_structs[generic_key] or { continue }
+			t.insert_module_marker(info.module_name)
+			t.instantiate_struct(mangled, generic_key, info, type_args)
 		}
+		for mangled, type_args in fn_instances {
+			generic_key := fn_instance_keys[mangled]
+			info := t.generic_fns[generic_key] or { continue }
+			t.insert_module_marker(info.module_name)
+			t.instantiate_fn(mangled, generic_key, info, type_args)
+		}
+
+		scan_start = scan_end
 	}
 
-	// Phase 2: Clone and specialize each generic instantiation.
-
-	// Process struct instances first (functions may reference them)
-	for mangled, type_args in struct_instances {
-		generic_key := struct_instance_keys[mangled]
-		info := t.generic_structs[generic_key] or { continue }
-		t.instantiate_struct(mangled, generic_key, info, type_args)
-	}
-
-	// Process function instances
-	for mangled, type_args in fn_instances {
-		generic_key := fn_instance_keys[mangled]
-		info := t.generic_fns[generic_key] or { continue }
-		t.instantiate_fn(mangled, generic_key, info, type_args)
-	}
-
-	// Phase 3: Rewrite call sites to use mangled names
+	// Rewrite call sites to use mangled names
 	for ni, mangled in call_rewrites {
-		node := t.a.nodes[ni]
-		if node.kind == .call && node.children_count > 0 {
-			fn_child_id := t.a.child(&node, 0)
-			if int(fn_child_id) >= 0 {
-				fn_child := t.a.nodes[int(fn_child_id)]
-				if fn_child.kind == .ident {
-					// Get just the short name for the mangled result
-					short_mangled := if mangled.contains('.') {
-						mangled.all_after_last('.')
-					} else {
-						mangled
-					}
-					t.a.nodes[int(fn_child_id)] = flat.Node{
-						kind:           fn_child.kind
-						op:             fn_child.op
-						children_start: fn_child.children_start
-						children_count: fn_child.children_count
-						pos:            fn_child.pos
-						value:          short_mangled
-						typ:            fn_child.typ
-					}
-				}
-			}
-		}
+		t.rewrite_call_site(ni, mangled)
 	}
 
 	// Rewrite struct init sites
 	for ni, mangled in struct_init_rewrites {
 		node := t.a.nodes[ni]
 		if node.kind == .struct_init {
-			short_mangled := if mangled.contains('.') {
-				mangled.all_after_last('.')
-			} else {
-				mangled
-			}
+			short_mangled := short_name(mangled)
 			t.a.nodes[ni] = flat.Node{
 				kind:           node.kind
 				op:             node.op
@@ -219,7 +98,7 @@ fn (mut t Transformer) monomorphize_pass() {
 		}
 	}
 
-	// Phase 4: Mark original generic declarations as empty
+	// Mark original generic declarations as empty
 	for _, info in t.generic_fns {
 		if info.node_idx >= 0 && info.node_idx < t.a.nodes.len {
 			t.a.nodes[info.node_idx] = flat.Node{
@@ -236,9 +115,213 @@ fn (mut t Transformer) monomorphize_pass() {
 	}
 }
 
+// scan_call_for_generics checks a call node for generic function usage,
+// handling both inferred calls (ident child) and explicit generic calls
+// where the parser produces an index node like id[int](args).
+fn (mut t Transformer) scan_call_for_generics(ni int, node flat.Node, mut fn_instances map[string][]string, mut fn_instance_keys map[string]string, mut call_rewrites map[int]string) {
+	fn_node := t.a.child_node(&node, 0)
+
+	if fn_node.kind == .ident {
+		call_name := fn_node.value
+		t.try_match_generic_fn(ni, node, call_name, mut fn_instances, mut fn_instance_keys, mut
+			call_rewrites)
+		// Also check qualified name
+		if t.tc != unsafe { nil } {
+			qname := t.qualify_call_name(call_name)
+			if qname != call_name {
+				t.try_match_generic_fn(ni, node, qname, mut fn_instances, mut fn_instance_keys, mut
+					call_rewrites)
+			}
+		}
+		return
+	}
+
+	// Handle explicit generic calls: id[int](args)
+	// The parser produces: call -> [index -> [ident("id"), ident("int")], arg1, ...]
+	if fn_node.kind == .index && fn_node.children_count >= 2 {
+		base := t.a.child_node(fn_node, 0)
+		if base.kind == .ident {
+			call_name := base.value
+			// Look up the generic fn
+			lookup := t.resolve_generic_fn_key(call_name)
+			if lookup.len > 0 {
+				if info := t.generic_fns[lookup] {
+					// Extract explicit type args from the index children
+					mut type_args := []string{}
+					for ci in 1 .. fn_node.children_count {
+						arg_node := t.a.child_node(fn_node, ci)
+						if arg_node.kind == .ident {
+							type_args << arg_node.value
+						} else if arg_node.value.len > 0 {
+							type_args << arg_node.value
+						} else if arg_node.typ.len > 0 {
+							type_args << arg_node.typ
+						}
+					}
+					if type_args.len == info.type_params.len {
+						mangled := mangle_name(lookup, info.type_params, type_args)
+						fn_instances[mangled] = type_args
+						fn_instance_keys[mangled] = lookup
+						call_rewrites[ni] = mangled
+					}
+				}
+			}
+		}
+	}
+}
+
+fn (mut t Transformer) try_match_generic_fn(ni int, node flat.Node, call_name string, mut fn_instances map[string][]string, mut fn_instance_keys map[string]string, mut call_rewrites map[int]string) {
+	if info := t.generic_fns[call_name] {
+		type_args := t.infer_fn_type_args(node, info)
+		if type_args.len == info.type_params.len {
+			mangled := mangle_name(call_name, info.type_params, type_args)
+			fn_instances[mangled] = type_args
+			fn_instance_keys[mangled] = call_name
+			call_rewrites[ni] = mangled
+		}
+	}
+}
+
+fn (mut t Transformer) scan_struct_init_for_generics(ni int, node flat.Node, mut struct_instances map[string][]string, mut struct_instance_keys map[string]string, mut struct_init_rewrites map[int]string) {
+	struct_name := node.value
+	if !struct_name.contains('[') || struct_name.starts_with('[') {
+		return
+	}
+	bracket := struct_name.index_u8(`[`)
+	bracket_end := types.find_matching_bracket_pub(struct_name, int(bracket))
+	if bracket_end <= int(bracket) {
+		return
+	}
+	base_name := struct_name[..bracket]
+	inner := struct_name[bracket + 1..bracket_end]
+	lookup := t.resolve_generic_struct_key(base_name)
+	if lookup.len == 0 {
+		return
+	}
+	if info := t.generic_structs[lookup] {
+		parts := types.split_params_pub(inner)
+		mut type_args := []string{}
+		for p in parts {
+			type_args << p.trim_space()
+		}
+		if type_args.len == info.type_params.len {
+			mangled := mangle_name(lookup, info.type_params, type_args)
+			struct_instances[mangled] = type_args
+			struct_instance_keys[mangled] = lookup
+			struct_init_rewrites[ni] = mangled
+		}
+	}
+}
+
+fn (mut t Transformer) scan_decl_for_generic_structs(node flat.Node, mut struct_instances map[string][]string, mut struct_instance_keys map[string]string) {
+	if !node.typ.contains('[') || node.typ.starts_with('[') || node.typ.starts_with('[]')
+		|| node.typ.starts_with('map[') {
+		return
+	}
+	bracket := node.typ.index_u8(`[`)
+	bracket_end := types.find_matching_bracket_pub(node.typ, int(bracket))
+	if bracket_end <= int(bracket) {
+		return
+	}
+	base_name := node.typ[..bracket]
+	inner := node.typ[bracket + 1..bracket_end]
+	lookup := t.resolve_generic_struct_key(base_name)
+	if lookup.len == 0 {
+		return
+	}
+	if info := t.generic_structs[lookup] {
+		parts := types.split_params_pub(inner)
+		mut type_args := []string{}
+		for p in parts {
+			type_args << p.trim_space()
+		}
+		if type_args.len == info.type_params.len {
+			mangled := mangle_name(lookup, info.type_params, type_args)
+			struct_instances[mangled] = type_args
+			struct_instance_keys[mangled] = lookup
+		}
+	}
+}
+
+fn (mut t Transformer) resolve_generic_fn_key(name string) string {
+	if name in t.generic_fns {
+		return name
+	}
+	if t.tc != unsafe { nil } {
+		qname := t.qualify_call_name(name)
+		if qname in t.generic_fns {
+			return qname
+		}
+	}
+	return ''
+}
+
+fn (mut t Transformer) resolve_generic_struct_key(name string) string {
+	qbase := t.qualify_struct_name(name)
+	if qbase in t.generic_structs {
+		return qbase
+	}
+	if name in t.generic_structs {
+		return name
+	}
+	return ''
+}
+
+// rewrite_call_site rewrites a call node's callee to the mangled concrete name.
+// Handles both simple ident callees and explicit generic index callees.
+fn (mut t Transformer) rewrite_call_site(ni int, mangled string) {
+	node := t.a.nodes[ni]
+	if node.kind != .call || node.children_count == 0 {
+		return
+	}
+	fn_child_id := t.a.child(&node, 0)
+	if int(fn_child_id) < 0 {
+		return
+	}
+	fn_child := t.a.nodes[int(fn_child_id)]
+	sm := short_name(mangled)
+
+	if fn_child.kind == .ident {
+		t.a.nodes[int(fn_child_id)] = flat.Node{
+			kind:           fn_child.kind
+			op:             fn_child.op
+			children_start: fn_child.children_start
+			children_count: fn_child.children_count
+			pos:            fn_child.pos
+			value:          sm
+			typ:            fn_child.typ
+		}
+		return
+	}
+	// Explicit generic call: replace the index node with a plain ident
+	if fn_child.kind == .index {
+		t.a.nodes[int(fn_child_id)] = flat.Node{
+			kind:  .ident
+			pos:   fn_child.pos
+			value: sm
+		}
+	}
+}
+
+// insert_module_marker appends a module_decl node so that subsequent
+// cloned declarations are attributed to the correct module.
+fn (mut t Transformer) insert_module_marker(mod string) {
+	if mod.len == 0 {
+		return
+	}
+	t.a.add_val(.module_decl, mod)
+}
+
+fn short_name(mangled string) string {
+	if mangled.contains('.') {
+		return mangled.all_after_last('.')
+	}
+	return mangled
+}
+
 // instantiate_fn clones a generic function, substituting type parameters
 // with concrete types, and appends the new concrete function to the AST.
-fn (mut t Transformer) instantiate_fn(mangled string, generic_key string, info GenericFnInfo, type_args []string) {
+fn (mut t Transformer) instantiate_fn(mangled string, _ string, info GenericFnInfo, type_args []string) {
 	if mangled in t.instantiated {
 		return
 	}
@@ -299,7 +382,7 @@ fn (mut t Transformer) instantiate_fn(mangled string, generic_key string, info G
 
 // instantiate_struct clones a generic struct, substituting type parameters
 // with concrete types, and appends the new concrete struct to the AST.
-fn (mut t Transformer) instantiate_struct(mangled string, generic_key string, info GenericStructInfo, type_args []string) {
+fn (mut t Transformer) instantiate_struct(mangled string, _ string, info GenericStructInfo, type_args []string) {
 	if mangled in t.instantiated {
 		return
 	}
@@ -542,8 +625,8 @@ fn (mut t Transformer) infer_fn_type_args(call_node flat.Node, info GenericFnInf
 
 // bind_type_params tries to match a parameter type pattern against a concrete
 // argument type and extract bindings for type parameters.
-// E.g., pattern "T" against "int" binds T -> int.
-// E.g., pattern "[]T" against "[]int" binds T -> int.
+// Handles direct params, arrays, pointers, options, results, maps, and
+// generic struct patterns like Box[T] against Box[int].
 fn bind_type_params(pattern string, concrete string, type_params []string, mut bindings map[string]string) {
 	if pattern.len == 0 || concrete.len == 0 {
 		return
@@ -557,25 +640,62 @@ fn bind_type_params(pattern string, concrete string, type_params []string, mut b
 			return
 		}
 	}
-	// Array pattern
+	// Array pattern: []T vs []int
 	if pattern.starts_with('[]') && concrete.starts_with('[]') {
 		bind_type_params(pattern[2..], concrete[2..], type_params, mut bindings)
 		return
 	}
-	// Pointer pattern
+	// Pointer pattern: &T vs &int
 	if pattern.starts_with('&') && concrete.starts_with('&') {
 		bind_type_params(pattern[1..], concrete[1..], type_params, mut bindings)
 		return
 	}
-	// Option pattern
+	// Option pattern: ?T vs ?int
 	if pattern.starts_with('?') && concrete.starts_with('?') {
 		bind_type_params(pattern[1..], concrete[1..], type_params, mut bindings)
 		return
 	}
-	// Result pattern
+	// Result pattern: !T vs !int
 	if pattern.starts_with('!') && concrete.starts_with('!') {
 		bind_type_params(pattern[1..], concrete[1..], type_params, mut bindings)
 		return
+	}
+	// Map pattern: map[K]V vs map[string]int
+	if pattern.starts_with('map[') && concrete.starts_with('map[') {
+		p_bracket := types.find_matching_bracket_pub(pattern, 3)
+		c_bracket := types.find_matching_bracket_pub(concrete, 3)
+		if p_bracket > 3 && c_bracket > 3 {
+			bind_type_params(pattern[4..p_bracket], concrete[4..c_bracket], type_params, mut
+				bindings)
+			if p_bracket + 1 < pattern.len && c_bracket + 1 < concrete.len {
+				bind_type_params(pattern[p_bracket + 1..], concrete[c_bracket + 1..], type_params, mut
+					bindings)
+			}
+		}
+		return
+	}
+	// Generic struct pattern: Box[T] vs Box[int], Pair[A, B] vs Pair[int, string]
+	if pattern.contains('[') && concrete.contains('[') {
+		p_bracket := pattern.index_u8(`[`)
+		c_bracket := concrete.index_u8(`[`)
+		if p_bracket > 0 && c_bracket > 0 {
+			p_base := pattern[..p_bracket]
+			c_base := concrete[..c_bracket]
+			if p_base == c_base {
+				p_end := types.find_matching_bracket_pub(pattern, int(p_bracket))
+				c_end := types.find_matching_bracket_pub(concrete, int(c_bracket))
+				if p_end > int(p_bracket) && c_end > int(c_bracket) {
+					p_params := types.split_params_pub(pattern[p_bracket + 1..p_end])
+					c_params := types.split_params_pub(concrete[c_bracket + 1..c_end])
+					for i, pp in p_params {
+						if i < c_params.len {
+							bind_type_params(pp.trim_space(), c_params[i].trim_space(),
+								type_params, mut bindings)
+						}
+					}
+				}
+			}
+		}
 	}
 }
 

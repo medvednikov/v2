@@ -1675,6 +1675,37 @@ fn (mut p Parser) parse_generic_type_params() string {
 	return '[' + params.join(', ') + ']'
 }
 
+// reconstruct_type_name rebuilds a type name string from a parsed AST node,
+// used to reconstruct generic names like "Box[string]" from index expressions.
+fn (p &Parser) reconstruct_type_name(node &flat.Node) string {
+	if node.kind == .ident {
+		return node.value
+	}
+	if node.kind == .selector && node.children_count >= 1 {
+		base := p.a.child_node(node, 0)
+		return p.reconstruct_type_name(base) + '.' + node.value
+	}
+	if node.kind == .index && node.children_count >= 2 {
+		base := p.a.child_node(node, 0)
+		mut name := p.reconstruct_type_name(base) + '['
+		for i in 1 .. node.children_count {
+			if i > 1 {
+				name += ', '
+			}
+			arg := p.a.child_node(node, i)
+			name += p.reconstruct_type_name(arg)
+		}
+		return name + ']'
+	}
+	if node.kind == .prefix && node.value.len > 0 {
+		return node.value
+	}
+	if node.value.len > 0 {
+		return node.value
+	}
+	return ''
+}
+
 // ==================== statements ====================
 
 fn (mut p Parser) stmt() flat.NodeId {
@@ -2405,6 +2436,7 @@ fn (mut p Parser) expr_with_lhs(first flat.NodeId, min_bp token.BindingPower) fl
 			continue
 		}
 		// module-qualified struct init: module.Type{} or module.Type{field: val, ...}
+		// Also handles generic struct init: Box[string]{...}
 		if p.tok == .lcbr {
 			lhs_node := p.a.nodes[int(lhs)]
 			if lhs_node.kind == .selector && lhs_node.value.len > 0
@@ -2414,6 +2446,26 @@ fn (mut p Parser) expr_with_lhs(first flat.NodeId, min_bp token.BindingPower) fl
 					&& (base.value == 'C' || (lhs_node.value[0] >= `A` && lhs_node.value[0] <= `Z`)) {
 					full_name := '${base.value}.${lhs_node.value}'
 					lhs = p.struct_init(full_name)
+					continue
+				}
+			}
+			// Generic struct init: Name[Type]{...} — parsed as index(ident, type)
+			if lhs_node.kind == .index && lhs_node.children_count >= 2
+				&& (p.peek() == .rcbr || p.peek() == .name || p.peek() == .ellipsis) {
+				base := p.a.child_node(&lhs_node, 0)
+				if base.kind == .ident && base.value.len > 0 && base.value[0] >= `A`
+					&& base.value[0] <= `Z` {
+					// Reconstruct the generic name: Box[string]
+					mut gen_name := base.value + '['
+					for ci in 1 .. lhs_node.children_count {
+						if ci > 1 {
+							gen_name += ', '
+						}
+						arg := p.a.child_node(&lhs_node, ci)
+						gen_name += p.reconstruct_type_name(arg)
+					}
+					gen_name += ']'
+					lhs = p.struct_init(gen_name)
 					continue
 				}
 			}
