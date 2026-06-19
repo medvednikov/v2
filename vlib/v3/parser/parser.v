@@ -11,7 +11,6 @@ fn C.open(charptr, int, int) int
 fn C.read(int, voidptr, int) int
 fn C.close(int) int
 fn C.malloc(int) &u8
-fn C.free(voidptr)
 
 const max_source_file_size = 8388608
 
@@ -110,7 +109,6 @@ pub fn (mut p Parser) parse_into(path string) {
 fn read_source_file_raw(path string) string {
 	cpath := cstring_from_vstring(path)
 	fd := C.open(cpath, 0, 0)
-	C.free(cpath)
 	if fd < 0 {
 		return ''
 	}

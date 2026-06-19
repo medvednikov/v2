@@ -16,17 +16,6 @@ pub fn new_scope(parent &Scope) &Scope {
 	}
 }
 
-// free releases memory owned by the scope's local object table.
-@[unsafe]
-pub fn (s &Scope) free() {
-	if s == unsafe { nil } {
-		return
-	}
-	unsafe {
-		s.objects.free()
-	}
-}
-
 pub fn (s &Scope) lookup(name string) ?Type {
 	if name.len == 0 {
 		return none

@@ -80,9 +80,6 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 	g.line_start = true
 	g.gen_fns_dispatch(no_parallel)
 	fn_code := g.sb.str()
-	unsafe {
-		g.sb.free()
-	}
 	g.sb = orig_sb
 	g.line_start = orig_line_start
 	g.preamble()
@@ -108,41 +105,8 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 		g.writeln('')
 	}
 	g.sb.write_string(fn_code)
-	unsafe {
-		const_code.free()
-		fn_code.free()
-	}
 	result := g.sb.str()
-	unsafe {
-		g.sb.free()
-	}
 	return result
-}
-
-// free releases memory owned by the generator after code generation finishes.
-@[unsafe]
-pub fn (mut g FlatGen) free() {
-	unsafe {
-		g.used_fns.free()
-		g.used_fn_names.free()
-		g.str_lit_ids.free()
-		g.global_types.free()
-		g.enum_vals.free()
-		g.defers.free()
-		g.interfaces.free()
-		g.const_vals.free()
-		g.const_modules.free()
-		g.global_modules.free()
-		g.modules.free()
-		g.fn_ptr_types.free()
-		g.fn_decl_param_types.free()
-		g.struct_decl_infos.free()
-		g.struct_decl_short_infos.free()
-		g.runtime_inits.free()
-		g.needed_optional_types.free()
-		g.emitted_fns.free()
-		g.array_method_cache.free()
-	}
 }
 
 fn (mut g FlatGen) collect_gen_info() {
@@ -275,9 +239,6 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 	g.line_start = true
 	g.gen_expr(id)
 	result := g.sb.str()
-	unsafe {
-		g.sb.free()
-	}
 	g.sb = orig
 	g.line_start = orig_line_start
 	return result
@@ -286,6 +247,22 @@ fn (mut g FlatGen) expr_to_string(id flat.NodeId) string {
 fn (mut g FlatGen) gen_expr_with_expected_type(id flat.NodeId, expected types.Type) {
 	old_expected := g.expected_expr_type
 	g.expected_expr_type = expected
+	actual := g.usable_expr_type(id)
+	if expected !is types.Pointer && expected !is types.Void && actual is types.Pointer
+		&& g.type_names_match(actual.base_type, expected) {
+		node := g.a.nodes[int(id)]
+		needs_paren := node.kind !in [.ident, .selector, .call, .index]
+		g.write('*')
+		if needs_paren {
+			g.write('(')
+		}
+		g.gen_expr(id)
+		if needs_paren {
+			g.write(')')
+		}
+		g.expected_expr_type = old_expected
+		return
+	}
 	g.gen_expr(id)
 	g.expected_expr_type = old_expected
 }
@@ -661,7 +638,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			// in_expr so each backend can lower it directly.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
-			rhs_type := g.tc.resolve_type(rhs_id)
+			rhs_type := g.usable_expr_type(rhs_id)
 			clean_rhs := types.unwrap_pointer(rhs_type)
 			if clean_rhs is types.Map {
 				c_key := g.tc.c_type(clean_rhs.key_type)
@@ -1424,17 +1401,7 @@ fn (g &FlatGen) is_runtime_assignable(id flat.NodeId) bool {
 			true
 		}
 		.call {
-			if node.children_count > 0 {
-				callee_id := g.a.child(&node, 0)
-				if int(callee_id) >= 0 {
-					callee := g.a.nodes[int(callee_id)]
-					callee.kind == .ident || callee.kind == .selector
-				} else {
-					false
-				}
-			} else {
-				false
-			}
+			g.is_runtime_assignable_call(&node)
 		}
 		.ident {
 			true
@@ -1455,6 +1422,18 @@ fn (g &FlatGen) is_runtime_assignable(id flat.NodeId) bool {
 			false
 		}
 	}
+}
+
+fn (g &FlatGen) is_runtime_assignable_call(node &flat.Node) bool {
+	if node.children_count == 0 {
+		return false
+	}
+	callee_id := g.a.child(node, 0)
+	if int(callee_id) < 0 {
+		return false
+	}
+	callee := g.a.nodes[int(callee_id)]
+	return callee.kind == .ident || callee.kind == .selector
 }
 
 fn (g &FlatGen) op_str(op flat.Op) string {

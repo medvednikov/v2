@@ -132,30 +132,6 @@ pub fn (mut tc TypeChecker) pop_scope() {
 	tc.cur_scope = parent
 }
 
-// free releases the large indexes owned by the checker.
-@[unsafe]
-pub fn (mut tc TypeChecker) free() {
-	unsafe {
-		tc.fn_ret_types.free()
-		tc.fn_param_types.free()
-		tc.fn_variadic.free()
-		tc.structs.free()
-		tc.type_aliases.free()
-		tc.sum_types.free()
-		tc.enum_names.free()
-		tc.flag_enums.free()
-		tc.interface_names.free()
-		tc.const_types.free()
-		tc.imports.free()
-		tc.errors.free()
-		tc.resolved_calls.free()
-		tc.expr_types.free()
-		tc.diagnostic_files.free()
-		tc.smartcasts.free()
-		tc.file_scope.free()
-	}
-}
-
 fn (mut tc TypeChecker) record_error(kind TypeErrorKind, msg string, node flat.NodeId) {
 	if !tc.should_diagnose(node) {
 		return
@@ -2705,7 +2681,8 @@ pub fn (tc &TypeChecker) parse_type(typ string) Type {
 			name: typ
 		})
 	}
-	if typ == 'strings.Builder' || (typ == 'Builder' && tc.has_builtins) {
+	if typ == 'strings.Builder'
+		|| (typ == 'Builder' && tc.has_builtins && tc.cur_module == 'strings') {
 		return Type(Alias{
 			name:      typ
 			base_type: tc.parse_type('[]u8')

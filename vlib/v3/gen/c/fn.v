@@ -139,7 +139,8 @@ fn (mut g FlatGen) gen_fn_in_module(node flat.Node, module_name string) {
 	for param_id in params {
 		p := g.a.node(param_id)
 		if p.value.len > 0 {
-			g.tc.cur_scope.insert(p.value, g.tc.parse_type(p.typ))
+			param_type := g.tc.parse_type(p.typ)
+			g.tc.cur_scope.insert(p.value, param_type)
 		}
 	}
 

@@ -76,21 +76,6 @@ pub fn transform(mut a flat.FlatAst, tc &types.TypeChecker) {
 	t.transform_all()
 }
 
-@[unsafe]
-fn (mut t Transformer) free() {
-	unsafe {
-		t.structs.free()
-		t.globals.free()
-		t.sum_types.free()
-		t.fn_ret_types.free()
-		t.fn_param_types.free()
-		t.enum_types.free()
-		t.var_types.free()
-		t.pending_stmts.free()
-		t.smartcast_stack.free()
-	}
-}
-
 // --- type collection ---
 
 fn (mut t Transformer) collect_types() {
