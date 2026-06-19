@@ -233,7 +233,7 @@ fn (mut t Transformer) lower_indexed_for_in(id flat.NodeId, node flat.Node, key_
 	mut prefix := []flat.NodeId{}
 	t.drain_pending(mut prefix)
 	len_expr := if is_fixed_array_type(iter_type) {
-		t.make_int_literal(fixed_array_len(iter_type))
+		t.make_fixed_array_len_expr(iter_type)
 	} else {
 		t.make_selector(container, 'len', 'int')
 	}

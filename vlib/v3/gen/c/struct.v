@@ -112,12 +112,16 @@ fn (mut g FlatGen) gen_struct_default_fields(type_name string, mut set_fields ma
 }
 
 fn (mut g FlatGen) gen_default_value_for_type(typ types.Type) {
+	raw_typ := typ
 	if typ is types.Struct && !typ.name.starts_with('C.') {
-		ct := g.tc.c_type(typ)
+		ct := g.tc.c_type(raw_typ)
 		g.write('(${ct}){')
 		mut set_fields := map[string]bool{}
 		mut has_field := g.gen_struct_default_fields(typ.name, mut set_fields, false)
-		sname := if typ.name in g.tc.structs { typ.name } else { g.tc.qualify_name(typ.name) }
+		mut sname := g.tc.qualify_name(typ.name)
+		if typ.name in g.tc.structs {
+			sname = typ.name
+		}
 		if sname in g.tc.structs {
 			for f in g.tc.structs[sname] {
 				if f.name in set_fields {
@@ -337,10 +341,11 @@ fn (mut g FlatGen) struct_decls() {
 					if f.typ is types.Pointer {
 						continue
 					}
-					ct := if f.typ is types.ArrayFixed {
-						g.tc.c_type(f.typ.elem_type)
+					mut ct := ''
+					if f.typ is types.ArrayFixed {
+						ct = g.tc.c_type(f.typ.elem_type)
 					} else {
-						g.tc.c_type(f.typ)
+						ct = g.tc.c_type(f.typ)
 					}
 					if ct !in emitted && ct != cn && ct in remaining_cnames {
 						can_emit = false
@@ -410,6 +415,26 @@ fn (mut g FlatGen) struct_decls() {
 	}
 }
 
+fn (mut g FlatGen) type_forward_decls() {
+	for name, _ in g.tc.structs {
+		if g.skip_builtin_struct(name) {
+			continue
+		}
+		tag := if name in g.tc.unions { 'union' } else { 'struct' }
+		g.writeln('typedef ${tag} ${c_name(name)} ${c_name(name)};')
+	}
+	for name, _ in g.tc.sum_types {
+		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
+	}
+	for name, _ in g.interfaces {
+		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
+	}
+	if g.has_builtins {
+		g.writeln('typedef array Array;')
+	}
+	g.writeln('')
+}
+
 fn (mut g FlatGen) emit_struct(name string) {
 	if name in g.tc.structs {
 		fields := g.tc.structs[name]
@@ -427,27 +452,38 @@ fn (mut g FlatGen) emit_struct(name string) {
 }
 
 fn (mut g FlatGen) write_struct_field(_struct_name string, f types.StructField) {
-	field_type := if f.typ is types.Alias { f.typ.base_type } else { f.typ }
+	mut field_type := f.typ
+	if f.typ is types.Alias {
+		field_type = f.typ.base_type
+	}
+	raw_field_type := field_type
 	if field_type is types.FnType {
-		ret := if field_type.return_type is types.Void {
-			'void'
-		} else {
-			g.tc.c_type(field_type.return_type)
-		}
-		mut params := []string{}
-		for p in field_type.params {
-			params << g.tc.c_type(p)
-		}
-		params_str := if params.len > 0 { params.join(', ') } else { 'void' }
-		g.writeln('\t${ret} (*${c_name(f.name)})(${params_str});')
+		ct := g.resolve_fn_ptr_type(g.tc.c_type(raw_field_type))
+		g.writeln('\t${ct} ${c_name(f.name)};')
 	} else if f.typ is types.ArrayFixed {
 		c_elem := g.tc.c_type(f.typ.elem_type)
-		g.writeln('\t${c_elem} ${c_name(f.name)}[${f.typ.len}];')
+		len_expr := g.fixed_array_len_value(f.typ)
+		g.writeln('\t${c_elem} ${c_name(f.name)}[${len_expr}];')
 	} else {
 		mut ct := g.tc.c_type(f.typ)
 		if ct.starts_with('fn_ptr:') {
 			ct = g.resolve_fn_ptr_type(ct)
 		}
 		g.writeln('\t${ct} ${c_name(f.name)};')
+	}
+}
+
+fn (mut g FlatGen) preseed_struct_fn_ptr_types() {
+	for _, fields in g.tc.structs {
+		for f in fields {
+			mut field_type := f.typ
+			if f.typ is types.Alias {
+				field_type = f.typ.base_type
+			}
+			raw_field_type := field_type
+			if field_type is types.FnType {
+				g.resolve_fn_ptr_type(g.tc.c_type(raw_field_type))
+			}
+		}
 	}
 }

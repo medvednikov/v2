@@ -210,11 +210,10 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
 			new_lhs := t.transform_expr(lhs_id)
 			new_rhs := t.transform_expr(rhs_id)
-			elem := rhs_type.all_before('[')
-			len_str := rhs_type.all_after('[').all_before(']')
+			elem := fixed_array_elem_type(rhs_type)
 			fn_name := fixed_array_contains_fn_name(elem)
-			len_lit := t.make_int_literal(len_str.int())
-			result = t.make_call(fn_name, arr3(new_rhs, len_lit, new_lhs))
+			len_expr := t.make_fixed_array_len_expr(rhs_type)
+			result = t.make_call(fn_name, arr3(new_rhs, len_expr, new_lhs))
 		} else if t.clean_map_type(rhs_type).starts_with('map[') {
 			new_lhs := t.transform_expr(lhs_id)
 			new_rhs := t.transform_expr(rhs_id)
@@ -328,7 +327,7 @@ fn (mut t Transformer) transform_fixed_array_len(_id flat.NodeId, node flat.Node
 	if !is_fixed_array_type(base_type) {
 		return none
 	}
-	return t.make_int_literal(fixed_array_len(base_type))
+	return t.make_fixed_array_len_expr(base_type)
 }
 
 fn (t &Transformer) clean_map_type(typ string) string {
@@ -516,7 +515,11 @@ fn is_fixed_array_type(s string) bool {
 }
 
 fn fixed_array_len(s string) int {
-	return s.all_after('[').all_before(']').int()
+	return fixed_array_len_text(s).int()
+}
+
+fn fixed_array_len_text(s string) string {
+	return s.all_after('[').all_before(']').trim_space()
 }
 
 fn fixed_array_elem_type(s string) string {
@@ -524,6 +527,31 @@ fn fixed_array_elem_type(s string) string {
 		return s.all_after(']')
 	}
 	return s.all_before('[')
+}
+
+fn is_decimal_text(s string) bool {
+	if s.len == 0 {
+		return false
+	}
+	for ch in s {
+		if ch < `0` || ch > `9` {
+			return false
+		}
+	}
+	return true
+}
+
+fn (mut t Transformer) make_fixed_array_len_expr(s string) flat.NodeId {
+	len_text := fixed_array_len_text(s)
+	if is_decimal_text(len_text) {
+		return t.make_int_literal(len_text.int())
+	}
+	if len_text.contains('.') {
+		base := len_text.all_before_last('.')
+		field := len_text.all_after_last('.')
+		return t.make_selector(t.make_ident(base), field, 'int')
+	}
+	return t.make_ident(len_text)
 }
 
 const c_reserved_words = ['auto', 'break', 'case', 'char', 'const', 'continue', 'copy', 'default',

@@ -910,9 +910,15 @@ struct Defaults116 {
 	count int    = 42
 }
 
-type MetaType117 = MetaNamed117 | MetaArray117 | MetaMap117
+type MetaType117 = MetaNamed117 | MetaIface117 | MetaArray117 | MetaMap117
+
+type CastLeak117 = CastNamed117 | CastOther117
 
 struct MetaNamed117 {
+	name string
+}
+
+struct MetaIface117 {
 	name string
 }
 
@@ -929,6 +935,35 @@ struct Registry117 {
 	prefix string
 mut:
 	items map[string]MetaType117
+}
+
+struct Stack117 {
+mut:
+	values []int
+}
+
+struct CastNamed117 {
+	name string
+}
+
+struct CastOther117 {
+	id int
+}
+
+enum Marker117 {
+	off
+	on
+}
+
+fn smartcast_name117(t CastLeak117) string {
+	if t is CastNamed117 {
+		return t.name
+	}
+	return 'other'
+}
+
+fn (t Marker117) is_on() bool {
+	return t == .on
 }
 
 fn (r &Registry117) qualify(name string) string {
@@ -951,6 +986,33 @@ fn meta_name117(t MetaType117) string {
 	return 'unknown'
 }
 
+fn meta_array_elem117(t MetaType117) MetaType117 {
+	if t is MetaArray117 {
+		return t.elem
+	}
+	return MetaType117(MetaNamed117{
+		name: 'none'
+	})
+}
+
+fn meta_iface_name117(t MetaType117) string {
+	if t is MetaIface117 {
+		return t.name
+	}
+	return 'not-interface'
+}
+
+fn meta_iface_passthrough117(v MetaIface117) string {
+	return v.name
+}
+
+fn meta_iface_call117(t MetaType117) string {
+	if t is MetaIface117 {
+		return meta_iface_passthrough117(t)
+	}
+	return 'not-interface'
+}
+
 fn maybe_strings117(ok bool) ?[]string {
 	if ok {
 		mut values := []string{}
@@ -959,6 +1021,14 @@ fn maybe_strings117(ok bool) ?[]string {
 		return values
 	}
 	return none
+}
+
+fn trim_last117(mut values []int) {
+	values.delete_last()
+}
+
+fn trim_stack117(mut stack Stack117) {
+	stack.values.delete_last()
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5027,14 +5097,71 @@ fn main() {
 	} else {
 		print_str('missing')
 	}
+	print_str(meta_name117(meta_array_elem117(MetaType117(MetaArray117{
+		elem: MetaType117(MetaNamed117{
+			name: 'Type'
+		})
+	})))) // Type
 
-	// 117.2 Option-returned array can be unwrapped with `or` and then iterated.
+	// 117.2 Smartcasted sumtype selector uses the active variant when fields share names.
+	print_str(meta_iface_name117(MetaType117(MetaIface117{
+		name: 'Writer'
+	}))) // Writer
+	print_str(meta_iface_call117(MetaType117(MetaIface117{
+		name: 'Reader'
+	}))) // Reader
+
+	// 117.3 Option-returned array can be unwrapped with `or` and then iterated.
 	strings117 := maybe_strings117(true) or { []string{} }
 	mut strings_len117 := 0
 	for item117 in strings117 {
 		strings_len117 += item117.len
 	}
 	print_int(strings_len117) // 9
+
+	// 117.4 Dynamic array index method lowers to the SSA array lookup helper.
+	print_int(strings117.index('arm64')) // 1
+	print_int(strings117.index('missing')) // -1
+
+	// 117.5 strings.Builder.write lowers its internal push_many call.
+	mut bytes117 := []u8{}
+	bytes117 << 83
+	bytes117 << 83
+	bytes117 << 65
+	mut builder117 := strings.new_builder(8)
+	written117 := builder117.write(bytes117) or { -1 }
+	print_int(written117) // 3
+	print_str(builder117.str()) // SSA
+
+	// 117.6 delete_last works through a mut dynamic-array parameter.
+	mut trim_values117 := []int{}
+	trim_values117 << 10
+	trim_values117 << 20
+	trim_values117 << 30
+	trim_last117(mut trim_values117)
+	print_int(trim_values117.len) // 2
+	print_int(trim_values117.last()) // 20
+
+	// 117.7 delete_last works on a dynamic-array field selector.
+	mut stack117 := Stack117{
+		values: []int{}
+	}
+	stack117.values << 4
+	stack117.values << 5
+	stack117.values << 6
+	trim_stack117(mut stack117)
+	print_int(stack117.values.len) // 2
+	print_int(stack117.values.last()) // 5
+
+	// 117.8 Smartcasts do not leak to later functions with the same variable name.
+	print_str(smartcast_name117(CastLeak117(CastNamed117{
+		name: 'scoped'
+	}))) // scoped
+	if Marker117.on.is_on() {
+		print_int(1) // 1
+	} else {
+		print_int(0)
+	}
 
 	print_str('arm64 self-host regression coverage: ok')
 

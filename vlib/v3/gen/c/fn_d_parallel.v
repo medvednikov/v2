@@ -252,7 +252,7 @@ fn (g &FlatGen) parallel_base_type_text(typ string) string {
 
 fn (mut g FlatGen) preseed_parallel_fn_ptr_type(typ types.Type) {
 	if typ is types.FnType {
-		g.resolve_fn_ptr_type(g.tc.c_type(typ))
+		g.resolve_fn_ptr_type(g.fn_ptr_type_key(typ))
 		for param in typ.params {
 			g.preseed_parallel_fn_ptr_type(param)
 		}
@@ -277,6 +277,18 @@ fn (mut g FlatGen) preseed_parallel_fn_ptr_type(typ types.Type) {
 			g.preseed_parallel_fn_ptr_type(item)
 		}
 	}
+}
+
+fn (mut g FlatGen) fn_ptr_type_key(typ types.FnType) string {
+	ret := if typ.return_type is types.Void { 'void' } else { g.tc.c_type(typ.return_type) }
+	if typ.params.len == 0 {
+		return 'fn_ptr:${ret}|void'
+	}
+	mut params := []string{}
+	for param in typ.params {
+		params << g.tc.c_type(param)
+	}
+	return 'fn_ptr:${ret}|${params.join(', ')}'
 }
 
 fn (g &FlatGen) new_parallel_worker(worker_id int) &FlatGen {
@@ -318,31 +330,38 @@ fn (g &FlatGen) clone_parallel_type_checker() types.TypeChecker {
 	mut fs := types.new_scope(unsafe { nil })
 	fs.objects = g.tc.file_scope.objects.clone()
 	return types.TypeChecker{
-		a:                      unsafe { g.tc.a }
-		fn_ret_types:           g.tc.fn_ret_types.clone()
-		fn_param_types:         g.tc.fn_param_types.clone()
-		fn_variadic:            g.tc.fn_variadic.clone()
-		structs:                g.tc.structs.clone()
-		unions:                 g.tc.unions.clone()
-		type_aliases:           g.tc.type_aliases.clone()
-		sum_types:              g.tc.sum_types.clone()
-		enum_names:             g.tc.enum_names.clone()
-		flag_enums:             g.tc.flag_enums.clone()
-		interface_names:        g.tc.interface_names.clone()
-		const_types:            g.tc.const_types.clone()
-		imports:                g.tc.imports.clone()
-		file_scope:             fs
-		cur_scope:              fs
-		has_builtins:           g.tc.has_builtins
-		cur_module:             g.tc.cur_module
-		cur_file:               g.tc.cur_file
-		errors:                 g.tc.errors.clone()
-		resolved_calls:         g.tc.resolved_calls.clone()
-		expr_types:             g.tc.expr_types.clone()
-		diagnose_unknown_calls: g.tc.diagnose_unknown_calls
-		diagnostic_files:       g.tc.diagnostic_files.clone()
-		cur_fn_ret_type:        g.tc.cur_fn_ret_type
-		smartcasts:             g.tc.smartcasts.clone()
+		a:                             unsafe { g.tc.a }
+		fn_ret_types:                  g.tc.fn_ret_types.clone()
+		fn_param_types:                g.tc.fn_param_types.clone()
+		fn_variadic:                   g.tc.fn_variadic.clone()
+		structs:                       g.tc.structs.clone()
+		unions:                        g.tc.unions.clone()
+		type_aliases:                  g.tc.type_aliases.clone()
+		sum_types:                     g.tc.sum_types.clone()
+		enum_names:                    g.tc.enum_names.clone()
+		flag_enums:                    g.tc.flag_enums.clone()
+		interface_names:               g.tc.interface_names.clone()
+		interface_fields:              g.tc.interface_fields.clone()
+		interface_embeds:              g.tc.interface_embeds.clone()
+		const_types:                   g.tc.const_types.clone()
+		const_exprs:                   g.tc.const_exprs.clone()
+		const_modules:                 g.tc.const_modules.clone()
+		imports:                       g.tc.imports.clone()
+		file_imports:                  g.tc.file_imports.clone()
+		file_modules:                  g.tc.file_modules.clone()
+		file_scope:                    fs
+		cur_scope:                     fs
+		has_builtins:                  g.tc.has_builtins
+		cur_module:                    g.tc.cur_module
+		cur_file:                      g.tc.cur_file
+		errors:                        g.tc.errors.clone()
+		resolved_calls:                g.tc.resolved_calls.clone()
+		expr_types:                    g.tc.expr_types.clone()
+		diagnose_unknown_calls:        g.tc.diagnose_unknown_calls
+		reject_unlowered_map_mutation: g.tc.reject_unlowered_map_mutation
+		diagnostic_files:              g.tc.diagnostic_files.clone()
+		cur_fn_ret_type:               g.tc.cur_fn_ret_type
+		smartcasts:                    g.tc.smartcasts.clone()
 	}
 }
 

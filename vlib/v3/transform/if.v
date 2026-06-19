@@ -149,13 +149,13 @@ fn (mut t Transformer) build_if_value_chain(if_id flat.NodeId, target_name strin
 	has_else := if_node.children_count >= 3
 
 	all_is := t.extract_all_is_exprs(cond_id)
-	for info in all_is {
-		t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
-	}
 	new_cond := t.transform_expr(cond_id)
 	mut result := []flat.NodeId{}
 	t.drain_pending(mut result)
 
+	for info in all_is {
+		t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
+	}
 	then_block := t.if_value_branch_block(then_id, target_name, target_type)
 	for _ in all_is {
 		t.pop_smartcast()
@@ -250,11 +250,9 @@ fn (mut t Transformer) if_value_branch_block(branch_id flat.NodeId, target_name 
 	return t.make_block(result)
 }
 
-// transform_is_condition transforms an `x is Type` condition node.
-// For sum types this will eventually become a tag comparison; for now the
-// C gen already handles is_expr directly, so we pass through unchanged.
-// The important side-effect is pushing a smartcast context so the
-// then-branch can see x narrowed to the variant type.
+// transform_is_condition transforms an `x is Type` condition node. For sum
+// types this will eventually become a tag comparison; for now the C gen already
+// handles is_expr directly, so we pass through unchanged.
 fn (mut t Transformer) transform_is_condition(cond_id flat.NodeId) flat.NodeId {
 	if int(cond_id) < 0 {
 		return cond_id
@@ -267,24 +265,9 @@ fn (mut t Transformer) transform_is_condition(cond_id flat.NodeId) flat.NodeId {
 	if cond.children_count < 1 {
 		return cond_id
 	}
-	expr_id := t.a.child(&cond, 0)
-	expr_node := t.a.nodes[int(expr_id)]
 	variant_name := cond.value
 	if variant_name.len == 0 {
 		return cond_id
-	}
-	// Determine the expression name for smartcast tracking.
-	expr_name := if expr_node.kind == .ident {
-		expr_node.value
-	} else {
-		''
-	}
-	if expr_name.len > 0 {
-		// Find which sum type this variant belongs to.
-		sum_type_name := t.find_sum_type_for_variant(variant_name)
-		if sum_type_name.len > 0 {
-			t.push_smartcast(expr_name, variant_name, sum_type_name)
-		}
 	}
 	// The node itself passes through -- C gen handles is_expr.
 	return cond_id
@@ -306,32 +289,32 @@ fn (mut t Transformer) transform_and_chain_smartcasts(cond_id flat.NodeId) flat.
 	}
 	cond := t.a.nodes[int(cond_id)]
 	if cond.kind != .infix || cond.op != .logical_and {
-		// Not an && chain -- check if it is a bare is_expr.
-		return t.transform_is_condition(cond_id)
+		// Not an && chain -- preserve bare smartcast checks and fully transform
+		// ordinary conditions.
+		if cond.kind == .is_expr {
+			return t.transform_is_condition(cond_id)
+		}
+		return t.transform_expr(cond_id)
 	}
 	if cond.children_count < 2 {
 		return cond_id
 	}
-	// Left side of the &&.
 	lhs_id := t.a.child(&cond, 0)
+	rhs_id := t.a.child(&cond, 1)
 	lhs := t.a.nodes[int(lhs_id)]
-	// If the left side is an is_expr, push smartcast before processing RHS.
-	if lhs.kind == .is_expr && lhs.children_count >= 1 {
-		lhs_expr_id := t.a.child(&lhs, 0)
-		ek := t.expr_key(lhs_expr_id)
-		if ek.len > 0 && lhs.value.len > 0 {
-			sum_type_name := t.find_sum_type_for_variant(lhs.value)
-			if sum_type_name.len > 0 {
-				t.push_smartcast(ek, lhs.value, sum_type_name)
-			}
-		}
-	} else if lhs.kind == .infix && lhs.op == .logical_and {
-		// Recurse into nested && on the left.
-		t.transform_and_chain_smartcasts(lhs_id)
+	new_lhs := t.transform_and_chain_smartcasts(lhs_id)
+	lhs_smartcasts := t.extract_all_is_exprs(lhs_id)
+	for info in lhs_smartcasts {
+		t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
 	}
-	// Right side -- future: transform under accumulated smartcasts.
-	// For now, pass through.
-	return cond_id
+	new_rhs := t.transform_expr(rhs_id)
+	for _ in lhs_smartcasts {
+		t.pop_smartcast()
+	}
+	if lhs.kind == .is_expr && new_lhs == lhs_id && new_rhs == rhs_id {
+		return cond_id
+	}
+	return t.make_infix(.logical_and, new_lhs, new_rhs)
 }
 
 // transform_if_branches_with_smartcast is the main if-expr handler that
@@ -348,14 +331,23 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 	else_id := if has_else { t.a.child(&node, 2) } else { flat.empty_node }
 
 	all_is := t.extract_all_is_exprs(cond_id)
-	for info in all_is {
-		t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
-	}
-	new_cond_id := t.transform_expr(cond_id)
+	new_cond_id := t.transform_and_chain_smartcasts(cond_id)
 	cond_pending := t.pending_stmts.clone()
 	t.pending_stmts.clear()
+	cond := t.a.nodes[int(cond_id)]
+	direct_ident_is := if cond.kind == .is_expr && cond.children_count > 0 {
+		expr := t.a.child_node(&cond, 0)
+		expr.kind == .ident
+	} else {
+		false
+	}
 
 	// Transform then-block children under the smartcast context.
+	if !direct_ident_is {
+		for info in all_is {
+			t.push_smartcast(info.expr_name, info.variant_name, info.sum_type_name)
+		}
+	}
 	then_node := t.a.nodes[int(then_id)]
 	mut new_then_id := then_id
 	if then_node.kind == .block {
@@ -372,8 +364,10 @@ fn (mut t Transformer) transform_if_branches_with_smartcast(id flat.NodeId, node
 		})
 	}
 
-	for _ in all_is {
-		t.pop_smartcast()
+	if !direct_ident_is {
+		for _ in all_is {
+			t.pop_smartcast()
+		}
 	}
 
 	// Transform else-block (no smartcast -- the is_expr was false here).

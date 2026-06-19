@@ -85,6 +85,7 @@ pub struct ArrayFixed {
 pub:
 	elem_type Type
 	len       int
+	len_expr  string
 }
 
 pub struct Map {
@@ -213,79 +214,72 @@ pub fn (t Type) name() string {
 		return prim_name_from(t.props, t.size)
 	}
 	if t is Array {
-		elem_name := t.elem_type.name()
-		debug_check_string('Type.Array.elem', elem_name)
-		return '[]${elem_name}'
+		return '[]${nested_type_name(t.elem_type)}'
 	}
 	if t is ArrayFixed {
-		elem_name := t.elem_type.name()
-		debug_check_string('Type.ArrayFixed.elem', elem_name)
-		return '${elem_name}[${t.len}]'
+		mut len_text := t.len.str()
+		if t.len_expr.len > 0 {
+			len_text = t.len_expr
+		}
+		return '${nested_type_name(t.elem_type)}[${len_text}]'
 	}
 	if t is Map {
-		key_name := t.key_type.name()
-		val_name := t.value_type.name()
-		debug_check_string('Type.Map.key', key_name)
-		debug_check_string('Type.Map.val', val_name)
-		return 'map[${key_name}]${val_name}'
+		return 'map[${nested_type_name(t.key_type)}]${nested_type_name(t.value_type)}'
 	}
 	if t is Pointer {
-		base_name := t.base_type.name()
-		debug_check_string('Type.Pointer.base', base_name)
-		return '&${base_name}'
+		return '&${nested_type_name(t.base_type)}'
 	}
 	if t is FnType {
 		mut s := 'fn('
-		for i, p in t.params {
+		for i in 0 .. t.params.len {
 			if i > 0 {
 				s += ', '
 			}
-			s += p.name()
+			s += nested_type_name(fn_type_param_type(t, i))
 		}
 		s += ')'
 		if t.return_type !is Void {
-			s += ' ${t.return_type.name()}'
+			s += ' ${nested_type_name(t.return_type)}'
 		}
 		return s
 	}
 	if t is OptionType {
-		base_name := t.base_type.name()
-		debug_check_string('Type.Option.base', base_name)
-		return '?${base_name}'
+		return '?${nested_type_name(t.base_type)}'
 	}
 	if t is ResultType {
-		base_name := t.base_type.name()
-		debug_check_string('Type.Result.base', base_name)
-		return '!${base_name}'
+		return '!${nested_type_name(t.base_type)}'
 	}
 	if t is Struct {
-		debug_check_string('Type.Struct.name', t.name)
 		return t.name
 	}
 	if t is Interface {
-		debug_check_string('Type.Interface.name', t.name)
 		return t.name
 	}
 	if t is Enum {
-		debug_check_string('Type.Enum.name', t.name)
 		return t.name
 	}
 	if t is SumType {
-		debug_check_string('Type.SumType.name', t.name)
 		return t.name
 	}
 	if t is Alias {
-		debug_check_string('Type.Alias.name', t.name)
 		return t.name
 	}
 	if t is MultiReturn {
 		mut parts := []string{}
-		for ty in t.types {
-			parts << ty.name()
+		for i in 0 .. t.types.len {
+			parts << nested_type_name(t.types[i])
 		}
 		return '(${parts.join(', ')})'
 	}
 	return ''
+}
+
+fn nested_type_name(t Type) string {
+	return t.name()
+}
+
+fn fn_type_param_type(f FnType, idx int) Type {
+	return f.params[idx]
 }
 
 fn prim_name_from(props Properties, size u8) string {

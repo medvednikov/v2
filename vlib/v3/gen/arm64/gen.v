@@ -274,12 +274,86 @@ fn (mut g Gen) emit_zero_aggregate(ptr_reg int, typ_id ssa.TypeID, max_size int)
 
 fn (g &Gen) aggregate_store_size(ptr_id int, typ_id ssa.TypeID) int {
 	mut size := g.m.type_size(typ_id)
+	if slot_size := g.stack_slot_size(ptr_id) {
+		if slot_size > 0 && slot_size < size {
+			size = slot_size
+		}
+		return size
+	}
 	if remaining := g.stack_alloca_remaining(ptr_id) {
 		if remaining > 0 && remaining < size {
 			size = remaining
 		}
 	}
 	return size
+}
+
+fn (g &Gen) aggregate_load_size(ptr_id int, typ_id ssa.TypeID) int {
+	return g.aggregate_store_size(ptr_id, typ_id)
+}
+
+fn (g &Gen) stack_slot_size(ptr_id int) ?int {
+	mut cur := ptr_id
+	mut slot_size := 0
+	for _ in 0 .. 8 {
+		if cur <= 0 || cur >= g.m.values.len {
+			return none
+		}
+		val := g.m.values[cur]
+		if val.kind != .instruction {
+			return none
+		}
+		instr := g.m.instrs[val.index]
+		match instr.op {
+			.alloca {
+				if slot_size > 0 {
+					return slot_size
+				}
+				return g.alloca_size[cur]
+			}
+			.get_element_ptr {
+				if instr.operands.len < 2 {
+					return none
+				}
+				if slot_size == 0 {
+					base_id := int(instr.operands[0])
+					base_type := g.ptr_elem_type(base_id)
+					if base_type > 0 && base_type < g.m.type_store.types.len {
+						base := g.m.type_store.types[base_type]
+						if base.kind == .struct_t {
+							off_id := instr.operands[1]
+							if off_id > 0 && off_id < g.m.values.len {
+								off_val := g.m.values[off_id]
+								if off_val.kind == .constant {
+									field_off := int(parse_arm64_int(off_val.name))
+									for fi in 0 .. base.fields.len {
+										if g.m.struct_field_offset(base_type, fi) == field_off {
+											field_size := g.m.struct_field_size(base_type, fi)
+											if field_size > 0 {
+												slot_size = field_size
+											}
+											break
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				cur = int(instr.operands[0])
+			}
+			.bitcast {
+				if instr.operands.len == 0 {
+					return none
+				}
+				cur = int(instr.operands[0])
+			}
+			else {
+				return none
+			}
+		}
+	}
+	return none
 }
 
 fn (g &Gen) stack_alloca_remaining(ptr_id int) ?int {
@@ -415,14 +489,34 @@ fn (mut g Gen) gen_instr(val_id int) {
 					if typ.kind == .struct_t {
 						if off := g.stack_map[val_id] {
 							if g.is_string_struct_type(val.typ) {
-								g.emit_load_string_regs_from_ptr(ptr_reg, 8, 10, val.typ)
-								g.emit_store_fp(8, off)
-								g.emit_store_fp(10, off + 8)
+								copy_size := g.aggregate_load_size(ptr_id, val.typ)
+								if copy_size > 0 {
+									g.emit32(asm_ldr(Reg(8), Reg(ptr_reg)))
+									g.emit_store_fp(8, off)
+								} else {
+									g.emit_mov_imm(8, 0)
+									g.emit_store_fp(8, off)
+								}
+								if copy_size > 8 {
+									g.emit32(asm_ldr_imm(Reg(10), Reg(ptr_reg), 1))
+									g.emit_store_fp(10, off + 8)
+								} else {
+									g.emit_mov_imm(10, 0)
+									g.emit_store_fp(10, off + 8)
+								}
 							} else {
-								n_words := (result_size + 7) / 8
-								for wi in 0 .. n_words {
+								copy_size := g.aggregate_load_size(ptr_id, val.typ)
+								copy_words := (copy_size + 7) / 8
+								total_words := (result_size + 7) / 8
+								for wi in 0 .. copy_words {
 									g.emit32(asm_ldr_imm(Reg(8), Reg(ptr_reg), u32(wi)))
 									g.emit_store_fp(8, off + wi * 8)
+								}
+								if copy_words < total_words {
+									g.emit_mov_imm(8, 0)
+									for wi in copy_words .. total_words {
+										g.emit_store_fp(8, off + wi * 8)
+									}
 								}
 							}
 						}

@@ -106,9 +106,9 @@ fn (mut g FlatGen) gen_for_in(node flat.Node) {
 				g.writeln('u8 ${elem_var} = ((u8*)${container_str}.str)[${idx_var}];')
 				g.tc.cur_scope.insert(elem_var, types.Type(types.u8_))
 			} else if container_type is types.ArrayFixed {
-				af := container_type as types.ArrayFixed
+				af := container_type
 				c_elem := g.tc.c_type(af.elem_type)
-				arr_len := '${af.len}'
+				arr_len := g.fixed_array_len_value(af)
 				g.writeln('for (int ${idx_var} = 0; ${idx_var} < ${arr_len}; ${idx_var}++) {')
 				g.indent++
 				g.write('${c_elem} ${elem_var} = ')

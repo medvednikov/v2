@@ -5,22 +5,26 @@ import v3.types
 
 fn array_like_type(t types.Type) ?types.Array {
 	if t is types.Array {
-		arr := t as types.Array
-		return arr
+		return t
 	}
-	if t is types.Alias && t.base_type is types.Array {
-		return t.base_type as types.Array
+	if t is types.Alias {
+		base := t.base_type
+		if base is types.Array {
+			return base
+		}
 	}
 	return none
 }
 
 fn array_fixed_type(t types.Type) ?types.ArrayFixed {
 	if t is types.ArrayFixed {
-		arr := t as types.ArrayFixed
-		return arr
+		return t
 	}
-	if t is types.Alias && t.base_type is types.ArrayFixed {
-		return t.base_type as types.ArrayFixed
+	if t is types.Alias {
+		base := t.base_type
+		if base is types.ArrayFixed {
+			return base
+		}
 	}
 	return none
 }
@@ -64,7 +68,8 @@ fn (mut g FlatGen) gen_array_push_many_stmt(lhs_id flat.NodeId, rhs_id flat.Node
 		g.gen_expr_lvalue(lhs_id)
 		g.write(', ')
 		g.gen_fixed_array_data_arg(rhs_id, rhs_fixed)
-		g.writeln(', ${rhs_fixed.len});')
+		len_expr := g.fixed_array_len_value(rhs_fixed)
+		g.writeln(', ${len_expr});')
 		return
 	}
 	g.write('array_push_many(${amp}')
@@ -295,25 +300,32 @@ fn (mut g FlatGen) gen_index_assign(node flat.Node) {
 			g.writeln('});')
 			return
 		}
-		if base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Void {
-			g.write('((u8*)')
-			g.gen_expr(base_id)
-			g.write(')[')
-			g.gen_expr(g.a.child(&lhs, 1))
-			g.write('] = ')
-			g.gen_expr(g.a.child(&node, 1))
-			g.writeln(';')
-			return
-		}
-		if base_type is types.Array
-			|| (base_type is types.Pointer && (base_type as types.Pointer).base_type is types.Array) {
-			arr_type := if base_type is types.Array {
-				base_type as types.Array
-			} else if base_type is types.Pointer {
-				(base_type as types.Pointer).base_type as types.Array
-			} else {
-				types.Array{}
+		if base_type is types.Pointer {
+			ptr_type := base_type
+			if ptr_type.base_type is types.Void {
+				g.write('((u8*)')
+				g.gen_expr(base_id)
+				g.write(')[')
+				g.gen_expr(g.a.child(&lhs, 1))
+				g.write('] = ')
+				g.gen_expr(g.a.child(&node, 1))
+				g.writeln(';')
+				return
 			}
+		}
+		mut arr_type := types.Array{}
+		mut is_array_base := false
+		if base_type is types.Array {
+			arr_type = base_type
+			is_array_base = true
+		} else if base_type is types.Pointer {
+			ptr_type := base_type
+			if ptr_type.base_type is types.Array {
+				arr_type = ptr_type.base_type as types.Array
+				is_array_base = true
+			}
+		}
+		if is_array_base {
 			c_elem := g.tc.c_type(arr_type.elem_type)
 			g.write('array_set(')
 			if base_type is types.Pointer {

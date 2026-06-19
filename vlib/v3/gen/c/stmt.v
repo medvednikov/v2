@@ -127,12 +127,11 @@ fn (mut g FlatGen) gen_node(id flat.NodeId) {
 							g.gen_expr(ret_id)
 							g.writeln(';')
 						} else {
-							expr_value_type := if expr_type is types.OptionType {
-								expr_type.base_type
+							mut expr_value_type := expr_type
+							if expr_type is types.OptionType {
+								expr_value_type = expr_type.base_type
 							} else if expr_type is types.ResultType {
-								expr_type.base_type
-							} else {
-								expr_type
+								expr_value_type = expr_type.base_type
 							}
 							base_ct := g.tc.c_type(base)
 							expr_ct := g.tc.c_type(expr_value_type)
@@ -371,7 +370,8 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 		} else if rhs.kind == .or_expr {
 			g.gen_decl_or_expr(lhs, rhs)
 		} else if rhs.kind == .array_init {
-			init_type := g.tc.parse_type(rhs.value)
+			raw_init_type := g.tc.parse_type(rhs.value)
+			init_type := raw_init_type
 			if init_type is types.ArrayFixed {
 				c_elem := g.tc.c_type(init_type.elem_type)
 				lhs_str := g.decl_lhs_str(lhs_id)
@@ -382,7 +382,7 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 					g.writeln('${c_elem} ${lhs_str}[${len_expr}] = {0};')
 				}
 				if lhs.kind == .ident {
-					g.tc.cur_scope.insert(lhs.value, init_type)
+					g.tc.cur_scope.insert(lhs.value, raw_init_type)
 				}
 			} else {
 				c_elem := g.tc.c_type(init_type)
@@ -477,6 +477,10 @@ fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
 	g.gen_expr(rhs_id)
 	g.writeln(';')
 	num_lhs := node.children_count - 1
+	mut multi_types := []types.Type{}
+	if rhs_type is types.MultiReturn {
+		multi_types = rhs_type.types.clone()
+	}
 	for j in 0 .. num_lhs {
 		lhs_idx := if j == 0 { 0 } else { j + 1 }
 		lhs_id := g.a.child(&node, lhs_idx)
@@ -484,18 +488,16 @@ fn (mut g FlatGen) gen_multi_return_decl(node flat.Node) {
 		if lhs.kind == .ident && lhs.value == '_' {
 			continue
 		}
-		field_type := if rhs_type is types.MultiReturn
-			&& j < (rhs_type as types.MultiReturn).types.len {
-			g.tc.c_type((rhs_type as types.MultiReturn).types[j])
+		field_type := if j < multi_types.len {
+			g.tc.c_type(multi_types[j])
 		} else {
 			'int'
 		}
 		lhs_name := c_name(lhs.value)
 		g.writeln('${field_type} ${lhs_name} = ${tmp}.arg${j};')
 		if lhs.kind == .ident {
-			inner := if rhs_type is types.MultiReturn
-				&& j < (rhs_type as types.MultiReturn).types.len {
-				(rhs_type as types.MultiReturn).types[j]
+			inner := if j < multi_types.len {
+				multi_types[j]
 			} else {
 				types.Type(types.int_)
 			}
@@ -666,7 +668,7 @@ fn (mut g FlatGen) gen_decl_or_expr(lhs flat.Node, or_node flat.Node) {
 		base_type := g.tc.resolve_type(g.a.child(&expr_node, 0))
 		clean := types.unwrap_pointer(base_type)
 		if clean is types.Map {
-			g.gen_decl_or_map_index(lhs, expr_node, clean as types.Map, or_body)
+			g.gen_decl_or_map_index(lhs, expr_node, clean, or_body)
 			return
 		}
 	}
@@ -781,7 +783,7 @@ fn (mut g FlatGen) gen_or_expr(node flat.Node) {
 		base_type := g.tc.resolve_type(g.a.child(&expr_node, 0))
 		clean := types.unwrap_pointer(base_type)
 		if clean is types.Map {
-			g.gen_or_map_index(expr_node, clean as types.Map, or_body)
+			g.gen_or_map_index(expr_node, clean, or_body)
 			return
 		}
 	}

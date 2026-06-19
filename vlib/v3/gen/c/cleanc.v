@@ -73,6 +73,7 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 	}
 	g.has_builtins = g.tc.has_builtins
 	g.collect_gen_info()
+	g.preseed_struct_fn_ptr_types()
 	const_code := g.precompute_consts()
 	orig_sb := g.sb
 	orig_line_start := g.line_start
@@ -85,12 +86,13 @@ pub fn (mut g FlatGen) gen_with_used_options(a &flat.FlatAst, used_fns map[strin
 	g.preamble()
 	g.enum_decls()
 	g.type_alias_decls()
+	g.type_forward_decls()
+	g.fn_ptr_typedefs()
 	g.struct_decls()
 	g.builtin_compat_decls()
 	g.optional_typedefs()
 	g.multi_return_typedefs()
 	g.global_decls()
-	g.fn_ptr_typedefs()
 	g.forward_decls()
 	g.register_interface_strings()
 	g.string_literals()
@@ -129,10 +131,11 @@ fn (mut g FlatGen) collect_gen_info() {
 				for i in 0 .. node.children_count {
 					child := g.a.child_node(&node, i)
 					if child.kind == .param {
-						pt := g.tc.parse_type(child.typ)
-						ptypes << pt
+						raw_pt := g.tc.parse_type(child.typ)
+						pt := raw_pt
+						ptypes << raw_pt
 						if pt is types.FnType {
-							g.resolve_fn_ptr_type(g.tc.c_type(pt))
+							g.resolve_fn_ptr_type(g.tc.c_type(raw_pt))
 						}
 					}
 				}
@@ -296,17 +299,24 @@ fn (mut g FlatGen) optional_none_type(id flat.NodeId) types.Type {
 
 fn array_index_info(t types.Type) (bool, bool, types.Array) {
 	if t is types.Array {
-		return true, false, t as types.Array
+		return true, false, t
 	}
-	if t is types.Alias && t.base_type is types.Array {
-		return true, false, t.base_type as types.Array
+	if t is types.Alias {
+		base := t.base_type
+		if base is types.Array {
+			return true, false, base
+		}
 	}
 	if t is types.Pointer {
-		if t.base_type is types.Array {
-			return true, true, t.base_type as types.Array
+		base := t.base_type
+		if base is types.Array {
+			return true, true, base
 		}
-		if t.base_type is types.Alias && (t.base_type as types.Alias).base_type is types.Array {
-			return true, true, (t.base_type as types.Alias).base_type as types.Array
+		if base is types.Alias {
+			alias_base := base.base_type
+			if alias_base is types.Array {
+				return true, true, alias_base
+			}
 		}
 	}
 	return false, false, types.Array{}
@@ -430,14 +440,29 @@ fn (g &FlatGen) const_ident_c_name(name string) string {
 }
 
 fn (mut g FlatGen) fixed_array_len_expr(type_name string, fallback int) string {
-	if !type_name.starts_with('[') {
+	mut raw_len := ''
+	if type_name.starts_with('[') {
+		idx := type_name.index_u8(`]`)
+		if idx > 1 {
+			raw_len = type_name[1..idx]
+		}
+	} else if type_name.contains('[') && type_name.ends_with(']') {
+		idx := type_name.index_u8(`[`)
+		if idx >= 0 && idx < type_name.len - 1 {
+			raw_len = type_name[idx + 1..type_name.len - 1]
+		}
+	}
+	return g.fixed_array_len_raw(raw_len, fallback)
+}
+
+fn (mut g FlatGen) fixed_array_len_value(arr types.ArrayFixed) string {
+	return g.fixed_array_len_raw(arr.len_expr, arr.len)
+}
+
+fn (mut g FlatGen) fixed_array_len_raw(raw_len string, fallback int) string {
+	if raw_len.len == 0 {
 		return '${fallback}'
 	}
-	idx := type_name.index_u8(`]`)
-	if idx <= 1 {
-		return '${fallback}'
-	}
-	raw_len := type_name[1..idx]
 	clean_len := raw_len.replace('_', '')
 	if clean_len.len > 0 && clean_len[0] >= `0` && clean_len[0] <= `9` {
 		return clean_len
@@ -648,6 +673,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			// in_expr so each backend can lower it directly.
 			lhs_id := g.a.child(&node, 0)
 			rhs_id := g.a.child(&node, 1)
+			rhs := g.a.nodes[int(rhs_id)]
 			rhs_type := g.usable_expr_type(rhs_id)
 			clean_rhs := types.unwrap_pointer(rhs_type)
 			if clean_rhs is types.Map {
@@ -662,8 +688,48 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 				g.write(', &(${c_key}[]){')
 				g.gen_expr(lhs_id)
 				g.write('})')
+			} else if rhs.kind == .array_literal {
+				if rhs.children_count == 0 {
+					g.write('false')
+				} else {
+					lhs_type := g.usable_expr_type(lhs_id)
+					g.write('(')
+					for i in 0 .. rhs.children_count {
+						if i > 0 {
+							g.write(' || ')
+						}
+						elem_id := g.a.child(&rhs, i)
+						elem_type := g.usable_expr_type(elem_id)
+						if lhs_type is types.String || elem_type is types.String {
+							g.write('string__eq(')
+							g.gen_expr(lhs_id)
+							g.write(', ')
+							g.gen_expr(elem_id)
+							g.write(')')
+						} else {
+							g.gen_expr(lhs_id)
+							g.write(' == ')
+							g.gen_expr(elem_id)
+						}
+					}
+					g.write(')')
+				}
+			} else if clean_rhs is types.Array {
+				fn_name := array_membership_fn_name(clean_rhs.elem_type, false)
+				g.write('${fn_name}(')
+				g.gen_expr(rhs_id)
+				g.write(', ')
+				g.gen_expr(lhs_id)
+				g.write(')')
+			} else if clean_rhs is types.ArrayFixed {
+				fn_name := array_membership_fn_name(clean_rhs.elem_type, true)
+				len_expr := g.fixed_array_len_value(clean_rhs)
+				g.write('${fn_name}(')
+				g.gen_expr(rhs_id)
+				g.write(', ${len_expr}, ')
+				g.gen_expr(lhs_id)
+				g.write(')')
 			} else {
-				rhs := g.a.nodes[int(rhs_id)]
 				panic('internal error: non-map membership reached C backend after transform: rhs=${rhs_type.name()} kind=${rhs.kind} value=${rhs.value}')
 			}
 		}
@@ -697,7 +763,7 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			} else if node.value == 'len' && base.kind == .ident {
 				base_type := g.tc.resolve_type(base_id)
 				if base_type is types.ArrayFixed {
-					g.write('${(base_type as types.ArrayFixed).len}')
+					g.write(g.fixed_array_len_value(base_type))
 				} else {
 					raw_type := g.tc.cur_scope.lookup(base.value) or { base_type }
 					g.gen_expr(base_id)
@@ -800,13 +866,20 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 					g.write('.str[')
 					g.gen_expr(g.a.child(&node, 1))
 					g.write(']')
-				} else if base_type is types.Pointer
-					&& (base_type as types.Pointer).base_type is types.Void {
-					g.write('((u8*)')
-					g.gen_expr(base_id)
-					g.write(')[')
-					g.gen_expr(g.a.child(&node, 1))
-					g.write(']')
+				} else if base_type is types.Pointer {
+					ptr_type := base_type
+					if ptr_type.base_type is types.Void {
+						g.write('((u8*)')
+						g.gen_expr(base_id)
+						g.write(')[')
+						g.gen_expr(g.a.child(&node, 1))
+						g.write(']')
+					} else {
+						g.gen_expr(base_id)
+						g.write('[')
+						g.gen_expr(g.a.child(&node, 1))
+						g.write(']')
+					}
 				} else {
 					g.gen_expr(base_id)
 					g.write('[')
@@ -816,9 +889,10 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 			}
 		}
 		.array_init {
-			init_type := g.tc.parse_type(node.value)
+			raw_init_type := g.tc.parse_type(node.value)
+			init_type := raw_init_type
 			if init_type is types.ArrayFixed {
-				ct := g.tc.c_type(init_type)
+				ct := g.tc.c_type(raw_init_type)
 				g.write('(${ct}){0}')
 			} else {
 				c_elem := g.tc.c_type(init_type)
@@ -992,33 +1066,75 @@ fn (mut g FlatGen) gen_expr(id flat.NodeId) {
 	}
 }
 
-fn (mut g FlatGen) gen_string_infix_fallback(node flat.Node, _lhs_id flat.NodeId, _rhs_id flat.NodeId) bool {
+fn (mut g FlatGen) gen_string_infix_fallback(node flat.Node, lhs_id flat.NodeId, rhs_id flat.NodeId) bool {
 	match node.op {
 		.plus {
-			panic('internal error: string plus reached C backend after transform')
+			g.write('string__plus(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
 		}
 		.eq {
-			panic('internal error: string equality reached C backend after transform')
+			g.write('string__eq(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
 		}
 		.ne {
-			panic('internal error: string inequality reached C backend after transform')
+			g.write('!string__eq(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
 		}
 		.lt {
-			panic('internal error: string comparison reached C backend after transform')
+			g.write('string__lt(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
 		}
 		.gt {
-			panic('internal error: string comparison reached C backend after transform')
+			g.write('string__lt(')
+			g.gen_expr(rhs_id)
+			g.write(', ')
+			g.gen_expr(lhs_id)
+			g.write(')')
 		}
 		.le {
-			panic('internal error: string comparison reached C backend after transform')
+			g.write('!string__lt(')
+			g.gen_expr(rhs_id)
+			g.write(', ')
+			g.gen_expr(lhs_id)
+			g.write(')')
 		}
 		.ge {
-			panic('internal error: string comparison reached C backend after transform')
+			g.write('!string__lt(')
+			g.gen_expr(lhs_id)
+			g.write(', ')
+			g.gen_expr(rhs_id)
+			g.write(')')
 		}
 		else {
 			return false
 		}
 	}
+
+	return true
+}
+
+fn array_membership_fn_name(elem_type types.Type, fixed bool) string {
+	prefix := if fixed { 'fixed_array_contains_' } else { 'array_contains_' }
+	elem_name := elem_type.name()
+	suffix := match elem_name {
+		'string' { 'string' }
+		'u8', 'byte' { 'u8' }
+		else { 'int' }
+	}
+
+	return prefix + suffix
 }
 
 fn (g &FlatGen) is_module_qualified_enum(base flat.Node) bool {
@@ -1180,7 +1296,8 @@ fn (mut g FlatGen) global_decls() {
 	for name, typ in g.global_types {
 		if typ is types.ArrayFixed {
 			c_elem := g.tc.c_type(typ.elem_type)
-			g.writeln('${c_elem} ${c_name(name)}[${typ.len}];')
+			len_expr := g.fixed_array_len_value(typ)
+			g.writeln('${c_elem} ${c_name(name)}[${len_expr}];')
 			continue
 		}
 		ct := g.tc.c_type(typ)
@@ -1253,16 +1370,16 @@ fn (mut g FlatGen) emit_const(name string, val_id flat.NodeId) {
 	}
 	v_type := g.tc.resolve_type(val_id)
 	ct := g.tc.c_type(v_type)
-	qname := if name in g.const_modules && g.const_modules[name].len > 0
-		&& g.const_modules[name] != 'main' && g.const_modules[name] != 'builtin' {
-		c_name('${g.const_modules[name]}.${name}')
-	} else {
-		c_name(name)
+	mut qname := c_name(name)
+	if name in g.const_modules && g.const_modules[name].len > 0 && g.const_modules[name] != 'main'
+		&& g.const_modules[name] != 'builtin' {
+		qname = c_name('${g.const_modules[name]}.${name}')
 	}
 	if !g.is_const_expr(val_id) {
 		if v_type is types.ArrayFixed && val_node.kind == .array_literal {
 			c_elem := g.tc.c_type(v_type.elem_type)
-			g.writeln('${c_elem} ${qname}[${v_type.len}];')
+			len_expr := g.fixed_array_len_value(v_type)
+			g.writeln('${c_elem} ${qname}[${len_expr}];')
 			for ci in 0 .. val_node.children_count {
 				elem_id := g.a.child(&val_node, ci)
 				tmp2 := g.sb

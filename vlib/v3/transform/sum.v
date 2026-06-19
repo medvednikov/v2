@@ -117,12 +117,14 @@ fn (mut t Transformer) transform_as_expr(id flat.NodeId, node flat.Node) flat.No
 	qv := t.resolve_variant(clean_type, node.value)
 	field := t.sum_field_name(qv)
 	new_expr := t.transform_expr(expr_id)
-	field_sel := t.make_selector_op(new_expr, field, qv, if expr_type.starts_with('&') {
+	use_ptr := t.variant_references_sum(qv, clean_type)
+	field_typ := if use_ptr { '&${qv}' } else { qv }
+	field_sel := t.make_selector_op(new_expr, field, field_typ, if expr_type.starts_with('&') {
 		.arrow
 	} else {
 		.dot
 	})
-	if t.variant_references_sum(qv, clean_type) {
+	if use_ptr {
 		return t.make_prefix(.mul, field_sel)
 	}
 	return field_sel

@@ -48,9 +48,10 @@ fn (mut g FlatGen) smartcast_is_expr(cond &flat.Node) {
 	expr_node := g.a.nodes[int(expr_id)]
 	if expr_node.kind == .ident {
 		sum_type := g.tc.resolve_type(expr_id)
-		mut clean_sum := types.unwrap_pointer(sum_type)
-		if clean_sum is types.Alias {
-			clean_sum = clean_sum.base_type
+		clean_sum0 := types.unwrap_pointer(sum_type)
+		mut clean_sum := clean_sum0
+		if clean_sum0 is types.Alias {
+			clean_sum = clean_sum0.base_type
 		}
 		if clean_sum is types.SumType {
 			variant_name := g.resolve_variant(clean_sum.name, cond.value)

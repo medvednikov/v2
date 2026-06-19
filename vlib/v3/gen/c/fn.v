@@ -361,15 +361,15 @@ fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 							return
 						}
 						if clean_type is types.ArrayFixed && fn_node.value == 'bytestr' {
-							af := clean_type as types.ArrayFixed
 							g.write('u8__vstring_with_len((u8*)')
 							g.gen_expr(g.a.child(fn_node, 0))
-							g.write(', ${af.len})')
+							len_expr := g.fixed_array_len_value(clean_type)
+							g.write(', ${len_expr})')
 							return
 						}
 						if clean_type is types.Map {
 							if fn_node.value == 'delete' {
-								g.gen_map_delete(node, fn_node, clean_type as types.Map)
+								g.gen_map_delete(node, fn_node, clean_type)
 								return
 							} else if fn_node.value == 'clone' {
 								g.write('map__clone(&')
@@ -438,10 +438,9 @@ fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 							}
 						}
 						if !is_method {
-							struct_name := if clean_type is types.Struct {
-								clean_type.name
-							} else {
-								clean_type.name()
+							mut struct_name := clean_type.name()
+							if clean_type is types.Struct {
+								struct_name = clean_type.name
 							}
 							method_name = '${struct_name}.${fn_node.value}'
 							if method_name !in g.tc.fn_param_types {
@@ -506,15 +505,15 @@ fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 						return
 					}
 					if clean_type is types.ArrayFixed && fn_node.value == 'bytestr' {
-						af := clean_type as types.ArrayFixed
 						g.write('u8__vstring_with_len((u8*)')
 						g.gen_expr(g.a.child(fn_node, 0))
-						g.write(', ${af.len})')
+						len_expr := g.fixed_array_len_value(clean_type)
+						g.write(', ${len_expr})')
 						return
 					}
 					if clean_type is types.Map {
 						if fn_node.value == 'delete' {
-							g.gen_map_delete(node, fn_node, clean_type as types.Map)
+							g.gen_map_delete(node, fn_node, clean_type)
 							return
 						} else if fn_node.value == 'clone' {
 							g.write('map__clone(&')
@@ -617,10 +616,9 @@ fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 						}
 					}
 					if !is_method {
-						struct_name := if clean_type is types.Struct {
-							clean_type.name
-						} else {
-							clean_type.name()
+						mut struct_name := clean_type.name()
+						if clean_type is types.Struct {
+							struct_name = clean_type.name
 						}
 						method_name = '${struct_name}.${fn_node.value}'
 						if method_name !in g.tc.fn_param_types {
@@ -947,10 +945,11 @@ fn (mut g FlatGen) gen_arg_for_expected_type(arg_id flat.NodeId, expected types.
 }
 
 fn (mut g FlatGen) gen_optional_arg(arg_id flat.NodeId, expected types.Type) bool {
-	base_type := if expected is types.OptionType {
-		expected.base_type
+	mut base_type := types.Type(types.void_)
+	if expected is types.OptionType {
+		base_type = expected.base_type
 	} else if expected is types.ResultType {
-		expected.base_type
+		base_type = expected.base_type
 	} else {
 		return false
 	}
@@ -979,9 +978,10 @@ fn (g &FlatGen) fn_field_type(base_type types.Type, field_name string) ?types.Fn
 }
 
 fn (g &FlatGen) field_type(base_type types.Type, field_name string) ?types.Type {
-	mut clean := types.unwrap_pointer(base_type)
-	if clean is types.Alias {
-		clean = clean.base_type
+	clean0 := types.unwrap_pointer(base_type)
+	mut clean := clean0
+	if clean0 is types.Alias {
+		clean = clean0.base_type
 	}
 	mut struct_name := ''
 	if clean is types.Struct {
@@ -1007,8 +1007,7 @@ fn (g &FlatGen) field_type(base_type types.Type, field_name string) ?types.Type 
 
 fn fn_type_from(t types.Type) ?types.FnType {
 	if t is types.FnType {
-		fn_type := t as types.FnType
-		return fn_type
+		return t
 	}
 	if t is types.Alias {
 		return fn_type_from(t.base_type)
@@ -1261,15 +1260,20 @@ fn (g &FlatGen) find_alias_method(target string, method string) ?string {
 }
 
 fn (mut g FlatGen) gen_sum_variant_arg(arg_id flat.NodeId, expected types.Type) bool {
-	mut actual := types.unwrap_pointer(g.tc.resolve_type(arg_id))
-	if actual is types.Alias {
-		actual = actual.base_type
+	actual0 := types.unwrap_pointer(g.tc.resolve_type(arg_id))
+	mut actual := actual0
+	if actual0 is types.Alias {
+		actual = actual0.base_type
 	}
-	mut expected_type := expected
-	if expected_type is types.Alias {
-		expected_type = expected_type.base_type
+	expected0 := expected
+	mut expected_type := expected0
+	if expected0 is types.Alias {
+		expected_type = expected0.base_type
 	}
-	if actual !is types.SumType || expected_type is types.SumType {
+	if expected_type is types.SumType {
+		return false
+	}
+	if actual !is types.SumType {
 		return false
 	}
 	sum_type := actual as types.SumType
@@ -1392,8 +1396,9 @@ fn (mut g FlatGen) fn_ptr_typedefs() {
 fn (mut g FlatGen) multi_return_typedefs() {
 	mut emitted := map[string]bool{}
 	for _, ret in g.tc.fn_ret_types {
+		raw_ret := ret
 		if ret is types.MultiReturn {
-			name := g.tc.c_type(ret)
+			name := g.tc.c_type(raw_ret)
 			if name in emitted {
 				continue
 			}

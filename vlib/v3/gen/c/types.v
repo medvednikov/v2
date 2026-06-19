@@ -3,10 +3,11 @@ module c
 import v3.types
 
 fn (mut g FlatGen) optional_type_name(t types.Type) string {
-	base_type := if t is types.OptionType {
-		t.base_type
+	mut base_type := types.Type(types.void_)
+	if t is types.OptionType {
+		base_type = t.base_type
 	} else if t is types.ResultType {
-		t.base_type
+		base_type = t.base_type
 	} else {
 		return g.tc.c_type(t)
 	}

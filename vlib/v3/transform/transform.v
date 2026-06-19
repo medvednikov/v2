@@ -123,6 +123,11 @@ fn (mut t Transformer) collect_types() {
 				cur_mod = node.value
 			}
 			.struct_decl {
+				owner_type := if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
+					'${cur_mod}.${node.value}'
+				} else {
+					node.value
+				}
 				mut fields := []FieldInfo{}
 				for i in 0 .. node.children_count {
 					f := t.a.child_node(&node, i)
@@ -136,7 +141,7 @@ fn (mut t Transformer) collect_types() {
 					}
 					fields << FieldInfo{
 						name:         f.value
-						typ:          f.typ
+						typ:          t.normalize_field_type(f.typ, owner_type)
 						default_expr: default_expr
 					}
 				}
@@ -173,6 +178,9 @@ fn (mut t Transformer) collect_types() {
 					}
 				}
 				t.enum_types[node.value] = field_names
+				if cur_mod.len > 0 && cur_mod != 'main' && cur_mod != 'builtin' {
+					t.enum_types['${cur_mod}.${node.value}'] = field_names
+				}
 			}
 			.global_decl {
 				for i in 0 .. node.children_count {
@@ -269,6 +277,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int) {
 	t.cur_fn_name = fn_node.value
 	t.cur_fn_ret_type = t.normalize_type_alias(fn_node.typ)
 	t.reset_var_types()
+	t.smartcast_stack.clear()
 	// Collect param types
 	for i in 0 .. fn_node.children_count {
 		child_id := t.a.children[fn_node.children_start + i]
@@ -323,6 +332,7 @@ fn (mut t Transformer) transform_fn_body(fn_idx int) {
 		value:          fn_node.value
 		typ:            fn_node.typ
 	}
+	t.smartcast_stack.clear()
 }
 
 // --- statement list driver ---
@@ -1090,24 +1100,32 @@ fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) f
 		return fixed_len
 	}
 	base_id := t.a.child(&node, 0)
-	new_base := t.transform_expr(base_id)
 	sc_key := t.expr_key(base_id)
 	if sc_key.len > 0 {
 		if sc := t.find_smartcast(sc_key) {
+			base_node := t.a.nodes[int(base_id)]
+			new_base := if base_node.kind == .ident {
+				t.make_ident(base_node.value)
+			} else {
+				t.transform_expr(base_id)
+			}
 			qv := t.qualify_variant(sc.variant_name, sc.sum_type_name)
 			field_name := t.sum_field_name(qv)
-			use_arrow := t.variant_references_sum(sc.variant_name, sc.sum_type_name)
+			use_arrow := t.variant_references_sum(qv, sc.sum_type_name)
+			variant_typ := if use_arrow { '&${qv}' } else { qv }
 			variant_sel_start := t.a.children.len
 			t.a.children << new_base
 			variant_sel := t.a.add_node(flat.Node{
 				kind:           .selector
 				op:             node.op
 				value:          field_name
+				typ:            variant_typ
 				children_start: variant_sel_start
 				children_count: 1
 			})
 			sel_start := t.a.children.len
 			t.a.children << variant_sel
+			sel_typ := if node.typ.len > 0 { node.typ } else { t.resolve_selector_type(node) }
 			return t.a.add_node(flat.Node{
 				kind:           .selector
 				op:             if use_arrow { flat.Op.arrow } else { flat.Op.dot }
@@ -1115,10 +1133,11 @@ fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) f
 				children_count: 1
 				pos:            node.pos
 				value:          node.value
-				typ:            node.typ
+				typ:            sel_typ
 			})
 		}
 	}
+	new_base := t.transform_expr(base_id)
 	mut new_children := []flat.NodeId{cap: node.children_count}
 	new_children << new_base
 	for i in 1 .. node.children_count {
@@ -1129,6 +1148,7 @@ fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) f
 	for nc in new_children {
 		t.a.children << nc
 	}
+	sel_typ := if node.typ.len > 0 { node.typ } else { t.resolve_selector_type(node) }
 	return t.a.add_node(flat.Node{
 		kind:           .selector
 		op:             node.op
@@ -1136,7 +1156,7 @@ fn (mut t Transformer) transform_selector_expr(id flat.NodeId, node flat.Node) f
 		children_count: node.children_count
 		pos:            node.pos
 		value:          node.value
-		typ:            node.typ
+		typ:            sel_typ
 	})
 }
 
@@ -1303,6 +1323,18 @@ fn (mut t Transformer) transform_ident_expr(id flat.NodeId, node flat.Node) flat
 			return t.make_string_literal(t.vmod_root())
 		}
 		else {
+			if sc := t.find_smartcast(node.value) {
+				qv := t.resolve_variant(sc.sum_type_name, sc.variant_name)
+				field := t.sum_field_name(qv)
+				base := t.make_ident(node.value)
+				use_ptr := t.variant_references_sum(qv, sc.sum_type_name)
+				field_typ := if use_ptr { '&${qv}' } else { qv }
+				field_sel := t.make_selector_op(base, field, field_typ, .dot)
+				if use_ptr {
+					return t.make_prefix(.mul, field_sel)
+				}
+				return field_sel
+			}
 			return id
 		}
 	}
@@ -1639,6 +1671,9 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 		.map_init {
 			return node.value
 		}
+		.selector {
+			return t.resolve_selector_type(node)
+		}
 		.string_literal, .string_interp {
 			return 'string'
 		}
@@ -1892,7 +1927,7 @@ fn (mut t Transformer) match_cond_value(match_expr_id flat.NodeId, cond_val_id f
 	if cond_val.kind == .enum_val {
 		return t.transform_enum_shorthand(cond_val_id, cond_val, t.node_type(match_expr_id))
 	}
-	return cond_val_id
+	return t.transform_expr(cond_val_id)
 }
 
 fn (mut t Transformer) build_match_cond(match_expr_id flat.NodeId, branch flat.Node) flat.NodeId {
