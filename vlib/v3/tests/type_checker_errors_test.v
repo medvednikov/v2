@@ -70,4 +70,10 @@ fn test_type_checker_reports_core_semantic_errors() {
 	map_array_append_out := run_good(v3_bin, 'map_array_append_lowering',
 		"fn main() {\n\tmut m := map[string][]int{}\n\tm['a'] << 1\n\tm['a'] << 2\n\tprintln(int_str(m['a'].len))\n}\n")
 	assert map_array_append_out == '2'
+	assoc_selector_out := run_good(v3_bin, 'assoc_selector_type',
+		'struct Point {\n\tx int\n\ty int\n}\n\nfn main() {\n\tp := Point{\n\t\tx: 10\n\t\ty: 20\n\t}\n\tq := Point{\n\t\t...p\n\t\tx: 99\n\t}\n\tprintln(int_str(q.x + q.y))\n}\n')
+	assert assoc_selector_out == '119'
+	array_literal_push_many_out := run_good(v3_bin, 'array_literal_push_many',
+		'fn main() {\n\tmut xs := [1, 2]\n\tys := [3, 4]\n\txs << ys\n\txs << [5, 6]\n\tprintln(int_str(xs.len))\n}\n')
+	assert array_literal_push_many_out == '6'
 }

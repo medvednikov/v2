@@ -2080,6 +2080,11 @@ fn (tc &TypeChecker) selector_type(_id flat.NodeId, node flat.Node) ?Type {
 			}
 		}
 	}
+	if clean is MultiReturn {
+		if typ := multi_return_selector_type(clean, node.value) {
+			return typ
+		}
+	}
 	if clean_name == 'IError' || clean_name.ends_with('.IError') {
 		if node.value == 'message' {
 			return Type(String{})
@@ -2119,6 +2124,18 @@ fn (tc &TypeChecker) selector_type(_id flat.NodeId, node flat.Node) ?Type {
 		}
 	}
 	return none
+}
+
+fn multi_return_selector_type(typ MultiReturn, field string) ?Type {
+	if !field.starts_with('arg') || field.len <= 3 {
+		return none
+	}
+	idx_str := field[3..]
+	idx := idx_str.int()
+	if idx_str != idx.str() || idx < 0 || idx >= typ.types.len {
+		return none
+	}
+	return typ.types[idx]
 }
 
 fn (tc &TypeChecker) lowered_sum_selector_type(sum SumType, field string) ?Type {
@@ -2385,6 +2402,12 @@ fn (tc &TypeChecker) type_compatible(actual Type, expected Type) bool {
 				return true
 			}
 		}
+		if expected.props.has(.integer) && actual.is_integer() {
+			return true
+		}
+	}
+	if actual is Primitive && actual.props.has(.integer) && expected.is_integer() {
+		return true
 	}
 	if expected is String {
 		return actual is String
@@ -3198,6 +3221,18 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 		.struct_init {
 			return tc.parse_type(node.value)
 		}
+		.assoc {
+			if node.value.len > 0 {
+				return tc.parse_type(node.value)
+			}
+			if node.children_count > 0 {
+				return tc.resolve_type(tc.a.child(&node, 0))
+			}
+			return unknown_type('missing assoc base')
+		}
+		.sizeof_expr {
+			return Type(USize{})
+		}
 		.cast_expr {
 			return tc.parse_type(node.value)
 		}
@@ -3240,6 +3275,11 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 							return f.typ
 						}
 					}
+				}
+			}
+			if clean is MultiReturn {
+				if typ := multi_return_selector_type(clean, node.value) {
+					return typ
 				}
 			}
 			if clean is SumType {

@@ -698,7 +698,15 @@ fn (mut t Transformer) transform_decl_assign_stmt(id flat.NodeId, node flat.Node
 	if node.children_count == 2 {
 		lhs := t.a.child_node(&node, 0)
 		if lhs.kind == .ident && lhs.value.len > 0 {
-			typ := t.infer_decl_type(node)
+			mut typ := t.infer_decl_type(node)
+			if node.typ.len == 0 {
+				rhs_id := t.a.child(&node, 1)
+				rhs := t.a.nodes[int(rhs_id)]
+				if rhs.kind == .array_literal && is_fixed_array_type(typ) {
+					typ = '[]${fixed_array_elem_type(typ)}'
+					t.a.nodes[int(rhs_id)].typ = typ
+				}
+			}
 			if typ.len > 0 {
 				t.set_var_type(lhs.value, typ)
 				inferred_typ = typ
@@ -1614,12 +1622,15 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 		}
 		.infix {
 			if node.children_count >= 2 {
+				if node.op in [.eq, .ne, .lt, .gt, .le, .ge, .logical_and, .logical_or] {
+					return 'bool'
+				}
 				lhs_type := t.resolve_expr_type(t.a.child(&node, 0))
-				if lhs_type == 'string' {
+				if node.op == .plus && lhs_type == 'string' {
 					return 'string'
 				}
 				rhs_type := t.resolve_expr_type(t.a.child(&node, 1))
-				if rhs_type == 'string' {
+				if node.op == .plus && rhs_type == 'string' {
 					return 'string'
 				}
 			}
@@ -1975,7 +1986,13 @@ fn (mut t Transformer) lower_array_appends() {
 			if lhs_type.starts_with('[]') {
 				rhs_id := t.a.child(&node, 1)
 				rhs_type := t.lvalue_type(rhs_id)
-				val := if rhs_type.starts_with('[]') { 'push_many' } else { 'push' }
+				elem_type := lhs_type[2..]
+				rhs_node := t.a.nodes[int(rhs_id)]
+				val := if array_append_rhs_is_push_many(rhs_type, elem_type, rhs_node) {
+					'push_many'
+				} else {
+					'push'
+				}
 				t.a.nodes[i] = flat.Node{
 					kind:           node.kind
 					op:             node.op
@@ -2066,7 +2083,9 @@ fn (mut t Transformer) annotate_left_shift(node_id flat.NodeId) {
 	}
 	rhs_id := t.a.child(&node, 1)
 	rhs_type := t.lvalue_type(rhs_id)
-	if rhs_type.starts_with('[]') {
+	elem_type := lhs_type[2..]
+	rhs_node := t.a.nodes[int(rhs_id)]
+	if array_append_rhs_is_push_many(rhs_type, elem_type, rhs_node) {
 		t.a.nodes[int(node_id)] = flat.Node{
 			kind:           .infix
 			op:             .left_shift
@@ -2103,7 +2122,13 @@ fn (mut t Transformer) annotate_left_shift_assign(node_id flat.NodeId) {
 	}
 	rhs_id := t.a.child(&node, 1)
 	rhs_type := t.lvalue_type(rhs_id)
-	val := if rhs_type.starts_with('[]') { 'push_many' } else { 'push' }
+	elem_type := lhs_type[2..]
+	rhs_node := t.a.nodes[int(rhs_id)]
+	val := if array_append_rhs_is_push_many(rhs_type, elem_type, rhs_node) {
+		'push_many'
+	} else {
+		'push'
+	}
 	t.a.nodes[int(node_id)] = flat.Node{
 		kind:           node.kind
 		op:             node.op
