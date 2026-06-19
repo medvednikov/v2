@@ -4269,5 +4269,68 @@ fn main() {
 	print_int(id104.next()) // 42
 	print_str('review regression lowering: ok')
 
-	print_str('=== ALL 104 TESTS PASSED ===')
+	print_str('--- 105. Self-Hosting Features ---')
+
+	// 105.1 Multi-smartcast in && chains: both sides smartcast
+	a105 := Animal(Cat{ name: 'Luna', age: 3 })
+	b105 := Animal(Dog{ name: 'Max', tricks: 7 })
+	if a105 is Cat && b105 is Dog {
+		assert a105.name == 'Luna'
+		assert a105.age == 3
+		assert b105.name == 'Max'
+		assert b105.tricks == 7
+		print_int(a105.age + b105.tricks) // 10
+	} else {
+		assert false
+	}
+
+	// 105.2 Multi-smartcast: same type on both sides
+	c105 := Animal(Cat{ name: 'Mimi', age: 2 })
+	d105 := Animal(Cat{ name: 'Neko', age: 9 })
+	if c105 is Cat && d105 is Cat {
+		print_int(c105.age + d105.age) // 11
+	}
+
+	// 105.3 Multi-smartcast: first matches, second doesn't
+	e105 := Animal(Cat{ name: 'Cleo', age: 4 })
+	f105 := Animal(Cat{ name: 'Felix', age: 6 })
+	mut took_else105 := false
+	if e105 is Cat && f105 is Dog {
+		assert false
+	} else {
+		took_else105 = true
+	}
+	assert took_else105
+
+	// 105.4 Map value append via << (map[key] << value) with type inference
+	mut suffix_map105 := map[string][]string{}
+	suffix_map105['greet'] << 'hello'
+	suffix_map105['greet'] << 'hi'
+	suffix_map105['part'] << 'world'
+	print_int(suffix_map105['greet'].len) // 2
+	print_int(suffix_map105['part'].len) // 1
+	print_str(suffix_map105['greet'][0]) // hello
+	print_str(suffix_map105['part'][0]) // world
+
+	// 105.5 Map value append in a loop (mirrors markused suffix_map pattern)
+	mut tag_map105 := map[string][]int{}
+	for i in 0 .. 5 {
+		key := if i < 3 { 'low' } else { 'high' }
+		tag_map105[key] << i
+	}
+	print_int(tag_map105['low'].len) // 3
+	print_int(tag_map105['high'].len) // 2
+
+	// 105.6 Multi-smartcast with field access in expression
+	g105 := Animal(Cat{ name: 'Socks', age: 8 })
+	h105 := Animal(Dog{ name: 'Buddy', tricks: 5 })
+	mut desc105 := ''
+	if g105 is Cat && h105 is Dog {
+		desc105 = g105.name + ' and ' + h105.name
+	}
+	print_str(desc105) // Socks and Buddy
+
+	print_str('self-hosting features: ok')
+
+	print_str('=== ALL 105 TESTS PASSED ===')
 }
