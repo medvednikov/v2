@@ -21,8 +21,9 @@ fn dead_code_elimination(mut m ssa.Module) {
 						dead_instrs[val_id] = true
 						continue
 					}
-					has_side_effects := instr.op in [.store, .call, .call_indirect, .ret, .br,
-						.jmp, .unreachable]
+					has_side_effects := instr.op in [.store, .call, .call_indirect, .call_sret,
+						.ret, .br, .jmp, .switch_, .unreachable, .assign, .fence, .cmpxchg,
+						.atomicrmw, .go_call, .spawn_call]
 					if !has_side_effects && val.uses.len == 0 {
 						dead_instrs[val_id] = true
 					}
@@ -77,7 +78,8 @@ fn find_dead_stores(m &ssa.Module, func ssa.Function) map[int]bool {
 			if val.kind != .instruction {
 				continue
 			}
-			if m.instrs[val.index].op == .alloca {
+			op := m.instrs[val.index].op
+			if op == .alloca || op == .heap_alloc {
 				allocas[val_id] = true
 			}
 		}

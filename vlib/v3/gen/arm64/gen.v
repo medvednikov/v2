@@ -793,6 +793,12 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.emit32(asm_udf())
 		}
 		.phi {}
+		.assign {
+			// Phi-elimination copy: assign dest, src  ->  dest_slot = src.
+			if instr.operands.len >= 2 {
+				g.emit_phi_copy_value(instr.operands[1], instr.operands[0])
+			}
+		}
 		.struct_init {}
 		else {}
 	}

@@ -92,9 +92,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 			}
 			if qname != node.value && qname.contains('.') {
 				short := qname.all_after_last('.')
-				if short != node.value.all_after_last('.') {
-					add_suffix_candidate(mut suffix_map, short, qname)
-				}
+				add_suffix_candidate(mut suffix_map, short, qname)
 			}
 		}
 	}
@@ -145,6 +143,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 	collector := CallCollector{
 		a:            a
 		tc:           tc
+		fn_decls:     fn_decls
 		struct_decls: struct_decls
 		const_decls:  const_decls
 	}
@@ -203,7 +202,7 @@ pub fn mark_used(a &flat.FlatAst, tc &types.TypeChecker) map[string]bool {
 					}
 				}
 			}
-			if !found_direct {
+			if !found_direct || !callee.contains('.') {
 				short := callee.all_after_last('.')
 				if suffix_candidates := suffix_map[short] {
 					for candidate in suffix_candidates {
@@ -314,6 +313,7 @@ struct ConstDeclInfo {
 struct CallCollector {
 	a            &flat.FlatAst      = unsafe { nil }
 	tc           &types.TypeChecker = unsafe { nil }
+	fn_decls     map[string]FnDeclInfo
 	struct_decls map[string]StructDeclInfo
 	const_decls  map[string]ConstDeclInfo
 }
@@ -344,11 +344,16 @@ fn is_auto_root_fn(name string) bool {
 fn enqueue_detected_runtime_helpers(a &flat.FlatAst, tc &types.TypeChecker, mut used map[string]bool, mut queue []string) {
 	mut needs_optional_helpers := false
 	mut needs_string_interp_helpers := false
-	for i, node in a.nodes {
+	for node in a.nodes {
 		match node.kind {
 			.fn_decl {
 				ret_type := tc.parse_type(node.typ)
 				if ret_type is types.OptionType || ret_type is types.ResultType {
+					needs_optional_helpers = true
+				}
+			}
+			.param, .field_decl, .field_init, .const_field {
+				if type_string_needs_optional_helpers(node.typ) {
 					needs_optional_helpers = true
 				}
 			}
@@ -369,12 +374,6 @@ fn enqueue_detected_runtime_helpers(a &flat.FlatAst, tc &types.TypeChecker, mut 
 			}
 			else {}
 		}
-
-		if expr_type := tc.expr_type(flat.NodeId(i)) {
-			if expr_type is types.OptionType || expr_type is types.ResultType {
-				needs_optional_helpers = true
-			}
-		}
 	}
 	if needs_optional_helpers {
 		for helper in ['IError.str', 'error', 'error_with_code'] {
@@ -387,6 +386,10 @@ fn enqueue_detected_runtime_helpers(a &flat.FlatAst, tc &types.TypeChecker, mut 
 			enqueue(helper, mut used, mut queue)
 		}
 	}
+}
+
+fn type_string_needs_optional_helpers(typ string) bool {
+	return typ.len > 0 && (typ[0] == `?` || typ[0] == `!`)
 }
 
 fn qualify_fn(mod string, name string) string {
@@ -425,7 +428,7 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 				c.collect_fn_value_selector(child_id, child, cur_module, imports, mut calls)
 			}
 			.call {
-				if resolved := c.tc.resolved_calls[int(child_id)] {
+				if resolved := c.tc.resolved_call_name(child_id) {
 					calls << resolved
 				}
 				if child.children_count > 0 {
@@ -558,7 +561,8 @@ fn (c &CallCollector) collect_calls(node &flat.Node, cur_module string, imports 
 }
 
 fn (c &CallCollector) collect_fn_value_ident(id flat.NodeId, name string, cur_module string, imports map[string]string, mut calls []string) {
-	if name.len == 0 || !c.node_is_fn_value(id) {
+	if name.len == 0 || !c.name_may_reference_fn(name, cur_module, imports)
+		|| !c.node_is_fn_value(id) {
 		return
 	}
 	c.add_fn_value_candidates(name, cur_module, imports, mut calls)
@@ -566,7 +570,7 @@ fn (c &CallCollector) collect_fn_value_ident(id flat.NodeId, name string, cur_mo
 }
 
 fn (c &CallCollector) collect_fn_value_selector(id flat.NodeId, node &flat.Node, cur_module string, imports map[string]string, mut calls []string) {
-	if !c.node_is_fn_value(id) || node.children_count == 0 {
+	if node.children_count == 0 {
 		return
 	}
 	base := c.a.child_node(node, 0)
@@ -574,6 +578,9 @@ fn (c &CallCollector) collect_fn_value_selector(id flat.NodeId, node &flat.Node,
 		return
 	}
 	name := '${base.value}.${node.value}'
+	if !c.name_may_reference_fn(name, cur_module, imports) || !c.node_is_fn_value(id) {
+		return
+	}
 	c.add_fn_value_candidates(name, cur_module, imports, mut calls)
 	c.add_const_alias_candidates(name, cur_module, imports, mut calls)
 	if base.value in imports {
@@ -582,6 +589,15 @@ fn (c &CallCollector) collect_fn_value_selector(id flat.NodeId, node &flat.Node,
 		c.add_fn_value_candidates(resolved_name, cur_module, imports, mut calls)
 		c.add_const_alias_candidates(resolved_name, cur_module, imports, mut calls)
 	}
+}
+
+fn (c &CallCollector) name_may_reference_fn(name string, cur_module string, imports map[string]string) bool {
+	for candidate in c.const_ref_candidates(name, cur_module, imports) {
+		if candidate in c.fn_decls || candidate in c.const_decls {
+			return true
+		}
+	}
+	return false
 }
 
 fn (c &CallCollector) node_is_fn_value(id flat.NodeId) bool {
@@ -682,6 +698,10 @@ fn resolve_type_name(t types.Type) string {
 	} else if t is types.Struct {
 		return t.name
 	} else if t is types.Interface {
+		return t.name
+	} else if t is types.SumType {
+		return t.name
+	} else if t is types.Enum {
 		return t.name
 	} else if t is types.String {
 		return 'string'

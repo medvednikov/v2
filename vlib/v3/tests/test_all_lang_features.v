@@ -919,6 +919,10 @@ type MetaType117 = MetaNamed117
 
 type CastLeak117 = CastNamed117 | CastOther117
 
+type SumNameLeft117 = SumNameLeftNamed117 | SumNameLeftOther117
+
+type SumNameRight117 = SumNameRightNamed117 | SumNameRightOther117
+
 struct MetaNamed117 {
 	name string
 }
@@ -1008,6 +1012,18 @@ struct CastNamed117 {
 struct CastOther117 {
 	id int
 }
+
+struct SumNameLeftNamed117 {
+	value string
+}
+
+struct SumNameLeftOther117 {}
+
+struct SumNameRightNamed117 {
+	value string
+}
+
+struct SumNameRightOther117 {}
 
 enum Marker117 {
 	off
@@ -1269,6 +1285,85 @@ fn optional_context_score117() int {
 		return 1
 	}
 	return 0
+}
+
+fn signed_narrow_load_score117() int {
+	mut values117 := []i8{}
+	values117 << i8(-1)
+	values117 << i8(7)
+	if values117[0] < 0 && values117[1] > 0 {
+		return 15
+	}
+	return 0
+}
+
+fn push_mut_stack_selector117(mut stack Stack117, value int) {
+	stack.values << value
+}
+
+fn mut_selector_base_score117() int {
+	mut stack117 := Stack117{
+		values: [3]
+	}
+	push_mut_stack_selector117(mut stack117, 8)
+	return stack117.values[0] * 10 + stack117.values[1]
+}
+
+fn chained_if_expr_score117(value int) int {
+	typ117 := if value == 0 {
+		MetaType117(MetaNamed117{
+			name: 'zero'
+		})
+	} else if value == 7 {
+		MetaType117(MetaArray117{
+			elem: MetaType117(MetaNamed117{
+				name: 'int'
+			})
+		})
+	} else {
+		MetaType117(MetaPointer117{
+			base: MetaType117(MetaNamed117{
+				name: 'fallback'
+			})
+		})
+	}
+	if meta_name117(typ117) == '[]int' {
+		return 80
+	}
+	return 0
+}
+
+fn (t SumNameLeft117) name() string {
+	if t is SumNameLeftNamed117 {
+		return t.value
+	}
+	return 'left-other'
+}
+
+fn (t SumNameRight117) name() string {
+	if t is SumNameRightNamed117 {
+		return t.value
+	}
+	return 'right-other'
+}
+
+fn sum_type_method_same_name_score117() int {
+	left117 := SumNameLeft117(SumNameLeftNamed117{
+		value: 'left'
+	})
+	right117 := SumNameRight117(SumNameRightNamed117{
+		value: 'right'
+	})
+	if left117.name() == 'left' && right117.name() == 'right' {
+		return 33
+	}
+	return 0
+}
+
+fn array_pop_score117() int {
+	mut values117 := [4, 6, 9]
+	last117 := values117.pop()
+	return last117 * 10 + values117.len
 }
 
 fn sum_nine116(a int, b int, c int, d int, e int, f int, g int, h int, i int) int {
@@ -5519,6 +5614,21 @@ fn main() {
 
 	// 117.25 Optional struct payloads preserve string fields from array indexes.
 	print_int(optional_context_score117()) // 1
+
+	// 117.26 Signed narrow loads keep sign bits for comparisons.
+	print_int(signed_narrow_load_score117()) // 15
+
+	// 117.27 Mut parameters can update array fields through selector bases.
+	print_int(mut_selector_base_score117()) // 38
+
+	// 117.28 Chained else-if expressions keep a stable branch tail type.
+	print_int(chained_if_expr_score117(7)) // 80
+
+	// 117.29 Same-named sum-type methods resolve from the actual receiver.
+	print_int(sum_type_method_same_name_score117()) // 33
+
+	// 117.30 Dynamic-array pop returns the removed value and shrinks the array.
+	print_int(array_pop_score117()) // 92
 
 	print_str('arm64 self-host regression coverage: ok')
 

@@ -566,7 +566,7 @@ fn (mut t Transformer) is_method_call(node flat.Node) bool {
 // Handles both checker-resolved calls and transform-time name resolution.
 fn (t &Transformer) get_call_return_type(id flat.NodeId, node flat.Node) string {
 	if !isnil(t.tc) {
-		if name := t.tc.resolved_calls[int(id)] {
+		if name := t.tc.resolved_call_name(id) {
 			if ret := t.tc.fn_ret_types[name] {
 				return t.normalize_type_alias(ret.name())
 			}

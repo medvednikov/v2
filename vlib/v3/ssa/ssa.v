@@ -1,5 +1,7 @@
 module ssa
 
+import v3.token
+
 pub type ValueID = int
 pub type TypeID = int
 pub type BlockID = int
@@ -9,6 +11,7 @@ pub enum OpCode {
 	ret
 	br
 	jmp
+	switch_ // Multi-way branch: switch_ %val, default_block, [case_val, block]...
 	unreachable
 	// Binary (integer)
 	add
@@ -36,6 +39,10 @@ pub enum OpCode {
 	load
 	store
 	get_element_ptr
+	heap_alloc // Heap allocate memory for a type (malloc+zero): returns ptr
+	fence      // Memory ordering barrier
+	cmpxchg    // Atomic compare-exchange
+	atomicrmw  // Atomic read-modify-write
 	// Comparisons
 	lt
 	gt
@@ -49,7 +56,8 @@ pub enum OpCode {
 	ne
 	// Other
 	call
-	call_indirect
+	call_indirect // Indirect call through function pointer
+	call_sret     // Call with struct return (x8 indirect return on ARM64)
 	neg
 	trunc
 	sext
@@ -61,10 +69,32 @@ pub enum OpCode {
 	bitcast
 	phi
 	select
+	assign             // Copy op used during phi elimination
+	inline_string_init // Build a string struct by value: (string){str, len}
+	// Concurrency
+	go_call    // Launch goroutine: go_call fn_ref, args...
+	spawn_call // Launch OS thread: spawn_call fn_ref, args...
+	// Aggregate (struct/tuple) operations
 	extractvalue
 	insertvalue
-	heap_alloc
 	struct_init
+}
+
+pub enum AtomicOrdering {
+	not_atomic
+	unordered
+	monotonic
+	acquire
+	release
+	acq_rel
+	seq_cst
+}
+
+pub enum InlineHint {
+	none_  // No hint, let optimizer decide
+	always // Always inline (e.g. V's [inline] attribute)
+	never  // Never inline (e.g. V's [noinline] attribute)
+	hint   // Suggest inlining (optimizer may ignore)
 }
 
 pub enum TypeKind {
@@ -72,8 +102,11 @@ pub enum TypeKind {
 	int_t
 	float_t
 	ptr_t
+	array_t
 	struct_t
 	func_t
+	label_t
+	metadata_t
 }
 
 pub struct Type {
@@ -81,11 +114,14 @@ pub:
 	kind        TypeKind
 	width       int
 	is_unsigned bool
-	elem_type   TypeID
+	elem_type   TypeID // For Ptr, Array
+	len         int    // For Array
 	fields      []TypeID
 	field_names []string
 	params      []TypeID
 	ret_type    TypeID
+	is_c_struct bool // True for C interop structs (raw field names, typedef to C struct)
+	is_union    bool // True for union types (all fields overlap at offset 0)
 }
 
 pub struct TypeStore {
@@ -107,12 +143,14 @@ pub fn TypeStore.new() TypeStore {
 }
 
 pub fn (mut ts TypeStore) get_int(width int) TypeID {
-	for id, typ in ts.types {
-		if typ.kind == .int_t && typ.width == width {
-			return TypeID(id)
+	key := 'i${width}'
+	if id := ts.cache[key] {
+		if id > 0 {
+			return id
 		}
 	}
 	id := ts.register(Type{ kind: .int_t, width: width })
+	ts.cache[key] = id
 	return id
 }
 
@@ -141,12 +179,46 @@ pub fn (mut ts TypeStore) get_float(width int) TypeID {
 }
 
 pub fn (mut ts TypeStore) get_ptr(elem TypeID) TypeID {
-	for id, typ in ts.types {
-		if typ.kind == .ptr_t && typ.elem_type == elem {
-			return TypeID(id)
+	key := 'p${elem}'
+	if id := ts.cache[key] {
+		if id > 0 {
+			return id
 		}
 	}
 	id := ts.register(Type{ kind: .ptr_t, elem_type: elem })
+	ts.cache[key] = id
+	return id
+}
+
+// get_array returns the cached fixed-array type for (elem, length).
+pub fn (mut ts TypeStore) get_array(elem TypeID, length int) TypeID {
+	key := 'a${elem}_${length}'
+	if id := ts.cache[key] {
+		if id > 0 {
+			return id
+		}
+	}
+	id := ts.register(Type{ kind: .array_t, elem_type: elem, len: length })
+	ts.cache[key] = id
+	return id
+}
+
+// get_tuple returns a cached anonymous struct type holding the given element types.
+pub fn (mut ts TypeStore) get_tuple(elem_types []TypeID) TypeID {
+	mut key := 'tuple'
+	for t in elem_types {
+		key += '_${t}'
+	}
+	if id := ts.cache[key] {
+		if id > 0 {
+			return id
+		}
+	}
+	id := ts.register(Type{
+		kind:   .struct_t
+		fields: elem_types
+	})
+	ts.cache[key] = id
 	return id
 }
 
@@ -163,7 +235,8 @@ pub enum ValueKind {
 	global
 	instruction
 	basic_block
-	string_literal
+	string_literal   // V string struct literal (by value)
+	c_string_literal // C string literal (raw char pointer)
 	func_ref
 }
 
@@ -177,55 +250,109 @@ pub mut:
 	uses  []ValueID
 }
 
+// ConstantData carries the typed payload of a constant value. It mirrors v2's
+// representation so backends can recover the original int/float/string value
+// instead of re-parsing Value.name.
+pub struct ConstantData {
+pub:
+	int_val   i64
+	float_val f64
+	str_val   string
+}
+
 pub struct Instruction {
 pub mut:
-	op       OpCode
-	operands []ValueID
-	block    BlockID
-	typ      TypeID
+	op         OpCode
+	operands   []ValueID
+	block      BlockID
+	typ        TypeID
+	pos        token.Pos
+	atomic_ord AtomicOrdering
+	inline     InlineHint // Inline hint for call instructions
 }
 
 pub struct BasicBlock {
 pub mut:
 	id     BlockID
+	val_id ValueID // SSA value representing the block (0 in v3's raw-block-id model)
 	name   string
 	parent int
 	instrs []ValueID
 	preds  []BlockID
 	succs  []BlockID
+	// Dominators
+	idom     BlockID
+	dom_tree []BlockID
+}
+
+pub enum CallConv {
+	c_decl
+	fast_call
+	wasm_std
+}
+
+pub enum Linkage {
+	external
+	private
+	internal
 }
 
 pub struct Function {
 pub mut:
-	id          int
-	name        string
-	typ         TypeID
-	blocks      []BlockID
-	params      []ValueID
-	is_c_extern bool
+	id           int
+	name         string
+	typ          TypeID
+	blocks       []BlockID
+	params       []ValueID
+	is_c_extern  bool // C-language extern function (no V body)
+	is_prototype bool // Registered declaration/signature whose body is not materialized yet
+	linkage      Linkage
+	call_conv    CallConv
 }
 
 pub struct GlobalVar {
 pub mut:
 	name          string
 	typ           TypeID
-	initial_value i64
+	linkage       Linkage
+	alignment     int
+	is_constant   bool
+	initial_value i64  // For constants/enums, the initial integer value
+	initial_data  []u8 // For constant arrays: serialized element data
+}
+
+pub struct TargetData {
+pub:
+	ptr_size      int = 8
+	endian_little bool = true
 }
 
 @[heap]
 pub struct Module {
 pub mut:
+	name       string
+	target     TargetData
 	type_store TypeStore
 	values     []Value
 	instrs     []Instruction
 	blocks     []BasicBlock
 	funcs      []Function
 	globals    []GlobalVar
+	// C struct names: TypeID -> C struct name (e.g. for `struct stat`). Used by
+	// codegen to emit `typedef struct <name> ...;` and preserve the C layout.
+	c_struct_names map[int]string
+	// C structs marked @[typedef] — already a C typedef, not a struct tag.
+	c_typedef_structs map[int]bool
+	// Constant cache: "type:name" -> ValueID for deduplication.
+	const_cache map[string]ValueID
 }
 
 pub fn Module.new() &Module {
 	mut m := &Module{
-		type_store: TypeStore.new()
+		type_store:        TypeStore.new()
+		c_struct_names:    map[int]string{}
+		c_typedef_structs: map[int]bool{}
+		const_cache:       map[string]ValueID{}
 	}
 	m.values << Value{
 		kind: .unknown
@@ -268,6 +395,41 @@ pub fn (mut m Module) add_instr(op OpCode, block BlockID, typ TypeID, operands [
 	return val_id
 }
 
+// add_instr_front creates an instruction and prepends it to the block (used for
+// phi insertion by mem2reg, which requires phis at the top of a block).
+pub fn (mut m Module) add_instr_front(op OpCode, block BlockID, typ TypeID, operands []ValueID) ValueID {
+	instr_idx := m.instrs.len
+	m.instrs << Instruction{
+		op:       op
+		block:    block
+		typ:      typ
+		operands: operands
+	}
+	val_id := m.add_value(.instruction, typ, '', instr_idx)
+	mut blk := m.blocks[block]
+	blk.instrs.prepend(val_id)
+	m.blocks[block] = blk
+	for op_id in m.instrs[instr_idx].value_operands() {
+		if op_id > 0 && op_id < m.values.len && val_id !in m.values[op_id].uses {
+			mut op_val := m.values[op_id]
+			op_val.uses << val_id
+			m.values[op_id] = op_val
+		}
+	}
+	return val_id
+}
+
+// append_phi_operands appends a (val, block_id) pair to a phi instruction.
+pub fn (mut m Module) append_phi_operands(instr_idx int, val ValueID, block_id BlockID) {
+	mut instr := m.instrs[instr_idx]
+	instr.operands << val
+	instr.operands << block_id
+	m.instrs[instr_idx] = instr
+	if val > 0 && val < m.values.len {
+		// keep use lists consistent: the phi value uses `val`
+	}
+}
+
 pub fn (mut m Module) add_block(func_id int, name string) BlockID {
 	id := BlockID(m.blocks.len)
 	unique := '${name}_${id}'
@@ -278,6 +440,7 @@ pub fn (mut m Module) add_block(func_id int, name string) BlockID {
 	}
 	mut f := m.funcs[func_id]
 	f.blocks << id
+	f.is_prototype = false
 	m.funcs[func_id] = f
 	return id
 }
@@ -297,23 +460,97 @@ pub fn (mut m Module) new_function(name string, ret TypeID) int {
 	return id
 }
 
+// --- Safe mutation helpers (avoid chained struct-array mutations) ---
+
+pub fn (mut m Module) func_add_param(func_id int, param_val ValueID) {
+	mut f := m.funcs[func_id]
+	f.params << param_val
+	m.funcs[func_id] = f
+}
+
+pub fn (mut m Module) func_set_c_extern(func_id int, val bool) {
+	mut f := m.funcs[func_id]
+	f.is_c_extern = val
+	m.funcs[func_id] = f
+}
+
+pub fn (mut m Module) func_set_prototype(func_id int, val bool) {
+	mut f := m.funcs[func_id]
+	f.is_prototype = val
+	m.funcs[func_id] = f
+}
+
+pub fn (mut m Module) block_add_succ(from BlockID, to BlockID) {
+	mut blk := m.blocks[from]
+	blk.succs << to
+	m.blocks[from] = blk
+}
+
+pub fn (mut m Module) block_add_pred(to BlockID, from BlockID) {
+	mut blk := m.blocks[to]
+	blk.preds << from
+	m.blocks[to] = blk
+}
+
 pub fn (mut m Module) add_global(name string, typ TypeID) ValueID {
 	id := m.globals.len
 	m.globals << GlobalVar{
-		name: name
-		typ:  typ
+		name:    name
+		typ:     typ
+		linkage: .private
+	}
+	ptr_typ := m.type_store.get_ptr(typ)
+	return m.add_value(.global, ptr_typ, name, id)
+}
+
+// add_global_with_data registers a private global initialized from raw bytes
+// (used for const arrays serialized to element data).
+pub fn (mut m Module) add_global_with_data(name string, elem_type TypeID, is_const bool, data []u8) ValueID {
+	id := m.globals.len
+	m.globals << GlobalVar{
+		name:         name
+		typ:          elem_type
+		linkage:      .private
+		is_constant:  is_const
+		initial_data: data
+	}
+	ptr_typ := m.type_store.get_ptr(elem_type)
+	return m.add_value(.global, ptr_typ, name, id)
+}
+
+// add_external_global registers (or reuses) a global defined outside this module
+// (e.g. C runtime globals such as __stdoutp). Returns the global pointer value.
+pub fn (mut m Module) add_external_global(name string, typ TypeID) ValueID {
+	for v in m.values {
+		if v.kind == .global && v.name == name {
+			return v.id
+		}
+	}
+	id := m.globals.len
+	m.globals << GlobalVar{
+		name:    name
+		typ:     typ
+		linkage: .external
 	}
 	ptr_typ := m.type_store.get_ptr(typ)
 	return m.add_value(.global, ptr_typ, name, id)
 }
 
 pub fn (mut m Module) get_or_add_const(typ TypeID, name string) ValueID {
-	for v in m.values {
-		if v.kind == .constant && v.typ == typ && v.name == name {
-			return v.id
+	key := '${typ}:${name}'
+	if existing := m.const_cache[key] {
+		if existing > 0 {
+			return existing
 		}
 	}
-	return m.add_value(.constant, typ, name, 0)
+	id := m.add_value(.constant, typ, name, 0)
+	m.const_cache[key] = id
+	return id
+}
+
+// get_block_from_val converts a basic-block value operand to its block index.
+pub fn (m &Module) get_block_from_val(val_id int) int {
+	return m.values[val_id].index
 }
 
 pub fn (m &Module) type_size(typ_id TypeID) int {
@@ -341,6 +578,19 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) in
 	if typ.width > 0 {
 		return (typ.width + 7) / 8
 	}
+	if typ.kind == .array_t {
+		if type_is_active(typ_id, active) {
+			return recursive_type_slot_size
+		}
+		active << typ_id
+		elem := m.type_size_inner(typ.elem_type, depth + 1, mut active)
+		active.delete_last()
+		total := elem * typ.len
+		if total > 0 {
+			return total
+		}
+		return 0
+	}
 	if typ.elem_type > 0 && typ.fields.len == 0 {
 		return 8
 	}
@@ -357,6 +607,33 @@ fn (m &Module) type_size_inner(typ_id TypeID, depth int, mut active []TypeID) in
 		return recursive_type_slot_size
 	}
 	active << typ_id
+	if typ.is_union {
+		// Unions: all fields overlap at offset 0; size is the largest field,
+		// rounded up to the largest field alignment.
+		mut max_size := 0
+		mut max_align := 1
+		for i in 0 .. typ.fields.len {
+			field_typ := typ.fields[i]
+			s := m.type_size_inner(field_typ, depth + 1, mut active)
+			if s > max_size {
+				max_size = s
+			}
+			a := m.type_align_inner(field_typ, depth + 1, mut active)
+			if a > max_align {
+				max_align = a
+			}
+		}
+		active.delete_last()
+		total := if max_align > 1 && max_size % max_align != 0 {
+			(max_size + max_align - 1) & ~(max_align - 1)
+		} else {
+			max_size
+		}
+		if total > 0 {
+			return total
+		}
+		return 8
+	}
 	mut offset := 0
 	mut max_align := 1
 	for i in 0 .. typ.fields.len {
@@ -404,6 +681,9 @@ fn (m &Module) type_align_inner(typ_id TypeID, depth int, mut active []TypeID) i
 			return 4
 		}
 		return 1
+	}
+	if typ.kind == .array_t {
+		return m.type_align_inner(typ.elem_type, depth + 1, mut active)
 	}
 	if typ.elem_type > 0 && typ.fields.len == 0 {
 		return 8
@@ -474,6 +754,18 @@ pub fn (i &Instruction) value_operands() []ValueID {
 	if i.op == .jmp {
 		return []ValueID{}
 	}
+	if i.op == .switch_ {
+		// switch_ %val, default_block, [case_val, block]...
+		// Only %val and the case values are SSA values; blocks are raw block ids.
+		mut r := []ValueID{}
+		if i.operands.len > 0 {
+			r << i.operands[0]
+		}
+		for oi := 2; oi < i.operands.len; oi += 2 {
+			r << i.operands[oi]
+		}
+		return r
+	}
 	if i.op == .phi {
 		mut r := []ValueID{}
 		for oi := 0; oi < i.operands.len; oi += 2 {
@@ -490,6 +782,9 @@ pub fn (m &Module) struct_field_offset(typ_id TypeID, field_idx int) int {
 	}
 	typ := m.type_store.types[typ_id]
 	if typ.kind != .struct_t {
+		return 0
+	}
+	if typ.is_union {
 		return 0
 	}
 	mut active := []TypeID{}

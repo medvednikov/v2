@@ -62,14 +62,30 @@ fn merge_blocks(mut m ssa.Module) {
 					continue
 				}
 				target_id := int(last_instr.operands[0])
-				if target_id < 0 || target_id == blk_id {
+				if target_id < 0 || target_id >= m.blocks.len || target_id == blk_id {
 					continue
 				}
 				if m.blocks[target_id].preds.len != 1 || m.blocks[target_id].preds[0] != blk_id {
 					continue
 				}
 
-				// Merge: remove jmp from A, append B's instrs
+				// Phi-safety: don't merge into a block that holds phi nodes. Its phis
+				// reference predecessors by block id; collapsing the edge would leave
+				// dangling predecessor operands.
+				mut target_has_phi := false
+				for vid in m.blocks[target_id].instrs {
+					if vid > 0 && vid < m.values.len && m.values[vid].kind == .instruction {
+						if m.instrs[m.values[vid].index].op == .phi {
+							target_has_phi = true
+							break
+						}
+					}
+				}
+				if target_has_phi {
+					continue
+				}
+
+				// Merge: remove jmp from A, append B's instrs (and reparent them).
 				mut blk := m.blocks[blk_id]
 				blk.instrs.delete_last()
 				for moved_val in m.blocks[target_id].instrs {
@@ -84,6 +100,34 @@ fn merge_blocks(mut m ssa.Module) {
 					}
 				}
 				m.blocks[blk_id] = blk
+
+				// B's successors now have A as a predecessor instead of B. Rewrite any
+				// phi predecessor operands that named B (raw block id) to name A.
+				for succ_id in m.blocks[target_id].succs {
+					if succ_id < 0 || succ_id >= m.blocks.len {
+						continue
+					}
+					for iv in m.blocks[succ_id].instrs {
+						if iv <= 0 || iv >= m.values.len || m.values[iv].kind != .instruction {
+							continue
+						}
+						idx := m.values[iv].index
+						if m.instrs[idx].op != .phi {
+							continue
+						}
+						mut phi_ins := m.instrs[idx]
+						mut phi_modified := false
+						for i := 1; i < phi_ins.operands.len; i += 2 {
+							if int(phi_ins.operands[i]) == target_id {
+								phi_ins.operands[i] = ssa.ValueID(blk_id)
+								phi_modified = true
+							}
+						}
+						if phi_modified {
+							m.instrs[idx] = phi_ins
+						}
+					}
+				}
 
 				merged[target_id] = true
 				changed = true

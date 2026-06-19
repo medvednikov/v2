@@ -853,7 +853,7 @@ fn (mut g FlatGen) gen_fn_field_call(node flat.Node, fn_node &flat.Node, base_ty
 }
 
 fn (g &FlatGen) call_key(id flat.NodeId, name string) string {
-	if resolved := g.tc.resolved_calls[int(id)] {
+	if resolved := g.tc.resolved_call_name(id) {
 		return g.normalize_call_key(resolved)
 	}
 	return g.normalize_call_key(name)

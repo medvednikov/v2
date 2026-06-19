@@ -61,6 +61,26 @@ fn build_cfg(mut m ssa.Module) {
 						}
 					}
 				}
+				.switch_ {
+					// switch_ cond, default_blk, [case_val, blk]...
+					if term.operands.len >= 2 {
+						s := int(term.operands[1])
+						if s >= 0 && s < n_blocks && !arr_contains(m.blocks[blk_id].succs, s) {
+							mut b := m.blocks[blk_id]
+							b.succs << s
+							m.blocks[blk_id] = b
+						}
+						for oi := 3; oi < term.operands.len; oi += 2 {
+							cs := int(term.operands[oi])
+							if cs >= 0 && cs < n_blocks
+								&& !arr_contains(m.blocks[blk_id].succs, cs) {
+								mut b := m.blocks[blk_id]
+								b.succs << cs
+								m.blocks[blk_id] = b
+							}
+						}
+					}
+				}
 				else {}
 			}
 

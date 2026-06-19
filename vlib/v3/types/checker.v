@@ -96,8 +96,10 @@ pub mut:
 	cur_module                    string
 	cur_file                      string
 	errors                        []TypeError
-	resolved_calls                map[int]string // node_id -> resolved function name
-	expr_types                    map[int]Type   // node_id -> complex/contextual resolved type
+	resolved_call_names           []string // node_id -> resolved function name
+	resolved_call_set             []bool
+	expr_type_values              []Type // node_id -> complex/contextual resolved type
+	expr_type_set                 []bool
 	diagnose_unknown_calls        bool
 	reject_unlowered_map_mutation bool
 	diagnostic_files              map[string]bool
@@ -108,33 +110,42 @@ pub mut:
 pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
 	fs := new_scope(unsafe { nil })
 	return TypeChecker{
-		a:                a
-		fn_ret_types:     map[string]Type{}
-		fn_param_types:   map[string][]Type{}
-		fn_variadic:      map[string]bool{}
-		structs:          map[string][]StructField{}
-		unions:           map[string]bool{}
-		type_aliases:     map[string]string{}
-		sum_types:        map[string][]string{}
-		enum_names:       map[string]bool{}
-		enum_fields:      map[string][]string{}
-		flag_enums:       map[string]bool{}
-		interface_names:  map[string]bool{}
-		interface_fields: map[string][]StructField{}
-		interface_embeds: map[string][]string{}
-		const_types:      map[string]Type{}
-		const_exprs:      map[string]flat.NodeId{}
-		const_modules:    map[string]string{}
-		imports:          map[string]string{}
-		file_imports:     map[string]string{}
-		file_modules:     map[string]string{}
-		file_scope:       fs
-		cur_scope:        fs
-		resolved_calls:   map[int]string{}
-		expr_types:       map[int]Type{}
-		diagnostic_files: map[string]bool{}
-		smartcasts:       map[string]Type{}
+		a:                   a
+		fn_ret_types:        map[string]Type{}
+		fn_param_types:      map[string][]Type{}
+		fn_variadic:         map[string]bool{}
+		structs:             map[string][]StructField{}
+		unions:              map[string]bool{}
+		type_aliases:        map[string]string{}
+		sum_types:           map[string][]string{}
+		enum_names:          map[string]bool{}
+		enum_fields:         map[string][]string{}
+		flag_enums:          map[string]bool{}
+		interface_names:     map[string]bool{}
+		interface_fields:    map[string][]StructField{}
+		interface_embeds:    map[string][]string{}
+		const_types:         map[string]Type{}
+		const_exprs:         map[string]flat.NodeId{}
+		const_modules:       map[string]string{}
+		imports:             map[string]string{}
+		file_imports:        map[string]string{}
+		file_modules:        map[string]string{}
+		file_scope:          fs
+		cur_scope:           fs
+		resolved_call_names: []string{len: a.nodes.len}
+		resolved_call_set:   []bool{len: a.nodes.len}
+		expr_type_values:    []Type{len: a.nodes.len, init: Type(void_)}
+		expr_type_set:       []bool{len: a.nodes.len}
+		diagnostic_files:    map[string]bool{}
+		smartcasts:          map[string]Type{}
 	}
+}
+
+fn (mut tc TypeChecker) reset_node_caches(n int) {
+	tc.resolved_call_names = []string{len: n}
+	tc.resolved_call_set = []bool{len: n}
+	tc.expr_type_values = []Type{len: n, init: Type(void_)}
+	tc.expr_type_set = []bool{len: n}
 }
 
 pub fn (mut tc TypeChecker) push_scope() {
@@ -184,6 +195,7 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 	tc.file_scope = new_scope(unsafe { nil })
 	tc.cur_scope = tc.file_scope
 	tc.scope_pool_index = 0
+	tc.reset_node_caches(a.nodes.len)
 	for node in a.nodes {
 		if node.kind == .struct_decl && node.value == 'string' {
 			tc.has_builtins = true
@@ -656,7 +668,7 @@ pub fn (tc &TypeChecker) expr_type(id flat.NodeId) ?Type {
 	if t := tc.resolved_call_type(id) {
 		return t
 	}
-	if t := tc.expr_types[int(id)] {
+	if t := tc.cached_expr_type(id) {
 		return t
 	}
 	return none
@@ -670,12 +682,47 @@ fn (tc &TypeChecker) resolved_call_type(id flat.NodeId) ?Type {
 	if node.kind != .call {
 		return none
 	}
-	if name := tc.resolved_calls[int(id)] {
+	if name := tc.cached_resolved_call(id) {
 		if t := tc.fn_ret_types[name] {
 			return t
 		}
 	}
 	return none
+}
+
+fn (tc &TypeChecker) cached_expr_type(id flat.NodeId) ?Type {
+	idx := int(id)
+	if idx >= 0 && idx < tc.expr_type_set.len && tc.expr_type_set[idx] {
+		return tc.expr_type_values[idx]
+	}
+	return none
+}
+
+fn (tc &TypeChecker) cached_resolved_call(id flat.NodeId) ?string {
+	idx := int(id)
+	if idx >= 0 && idx < tc.resolved_call_set.len && tc.resolved_call_set[idx] {
+		return tc.resolved_call_names[idx]
+	}
+	return none
+}
+
+// resolved_call_name returns the checker-resolved function name for a call node.
+pub fn (tc &TypeChecker) resolved_call_name(id flat.NodeId) ?string {
+	return tc.cached_resolved_call(id)
+}
+
+fn (mut tc TypeChecker) remember_resolved_call(id flat.NodeId, name string) {
+	idx := int(id)
+	if idx < 0 {
+		return
+	}
+	if idx >= tc.resolved_call_names.len {
+		tc.reset_node_caches(tc.a.nodes.len)
+	}
+	if idx < tc.resolved_call_names.len {
+		tc.resolved_call_names[idx] = name
+		tc.resolved_call_set[idx] = true
+	}
 }
 
 // register_synth_type records the type of a generated or transformed node.
@@ -689,7 +736,14 @@ fn (mut tc TypeChecker) remember_expr_type(id flat.NodeId, typ Type) {
 	}
 	kind := if int(id) < tc.a.nodes.len { tc.a.nodes[int(id)].kind } else { flat.NodeKind.empty }
 	if should_cache_expr_type(kind, typ) {
-		tc.expr_types[int(id)] = typ
+		idx := int(id)
+		if idx >= tc.expr_type_values.len {
+			tc.reset_node_caches(tc.a.nodes.len)
+		}
+		if idx < tc.expr_type_values.len {
+			tc.expr_type_values[idx] = typ
+			tc.expr_type_set[idx] = true
+		}
 	}
 }
 
@@ -1505,7 +1559,7 @@ fn (mut tc TypeChecker) check_return(id flat.NodeId, node flat.Node) {
 fn (mut tc TypeChecker) check_call(id flat.NodeId, node flat.Node) {
 	if info := tc.resolve_call_info(id, node) {
 		if info.name.len > 0 {
-			tc.resolved_calls[int(id)] = info.name
+			tc.remember_resolved_call(id, info.name)
 		}
 		tc.check_call_arg_types(id, node, info)
 		return
@@ -1859,10 +1913,54 @@ fn fn_type_from_type(typ Type) ?FnType {
 }
 
 fn (tc &TypeChecker) selector_fn_type(node flat.Node) ?FnType {
-	if typ := tc.selector_type(flat.NodeId(-1), node) {
-		return fn_type_from_type(typ)
+	if node.children_count == 0 {
+		return none
+	}
+	if !valid_string_data(node.value) {
+		return none
+	}
+	base_id := tc.a.child(&node, 0)
+	base_type := tc.resolve_type(base_id)
+	clean0 := unwrap_pointer(base_type)
+	mut clean := clean0
+	if clean0 is Alias {
+		clean = clean0.base_type
+	}
+	if clean is Struct {
+		fields := tc.structs[clean.name] or { return none }
+		for f in fields {
+			if !valid_string_data(f.name) {
+				continue
+			}
+			if f.name == node.value {
+				return fn_type_from_type(f.typ)
+			}
+		}
+	}
+	if clean is Interface {
+		if typ := tc.interface_field_type(clean.name, node.value) {
+			return fn_type_from_type(typ)
+		}
 	}
 	return none
+}
+
+fn valid_string_data(s string) bool {
+	if s.len == 0 {
+		return true
+	}
+	ptr := unsafe { u64(voidptr(s.str)) }
+	return ptr >= 4096 && ptr < 281474976710656 && s.len < 1048576
+}
+
+fn clone_smartcasts(src map[string]Type) map[string]Type {
+	mut dst := map[string]Type{}
+	for key, typ in src {
+		if valid_string_data(key) {
+			dst[key] = typ
+		}
+	}
+	return dst
 }
 
 fn array_elem_type(arr Array) Type {
@@ -2004,9 +2102,11 @@ fn (mut tc TypeChecker) check_if_expr(id flat.NodeId, node flat.Node) {
 	guard_bindings := tc.check_condition(cond_id)
 	smartcasts := tc.extract_smartcasts(cond_id)
 	then_id := tc.a.child(&node, 1)
-	saved_smartcasts := tc.smartcasts.clone()
+	saved_smartcasts := clone_smartcasts(tc.smartcasts)
 	for sc in smartcasts {
-		tc.smartcasts[sc.name] = sc.typ
+		if valid_string_data(sc.name) {
+			tc.smartcasts[sc.name] = sc.typ
+		}
 	}
 	tc.push_scope()
 	for binding in guard_bindings {
@@ -2015,7 +2115,7 @@ fn (mut tc TypeChecker) check_if_expr(id flat.NodeId, node flat.Node) {
 	tc.check_node(then_id)
 	then_type := tc.branch_tail_type(then_id)
 	tc.pop_scope()
-	tc.smartcasts = saved_smartcasts.clone()
+	tc.smartcasts = clone_smartcasts(saved_smartcasts)
 	mut else_type := Type(void_)
 	if node.children_count > 2 {
 		else_id := tc.a.child(&node, 2)
@@ -2079,12 +2179,14 @@ fn (mut tc TypeChecker) check_condition(cond_id flat.NodeId) []LocalBinding {
 		lhs_id := tc.a.child(&cond, 0)
 		rhs_id := tc.a.child(&cond, 1)
 		tc.check_bool_condition(lhs_id)
-		saved_smartcasts := tc.smartcasts.clone()
+		saved_smartcasts := clone_smartcasts(tc.smartcasts)
 		for sc in tc.extract_smartcasts(lhs_id) {
-			tc.smartcasts[sc.name] = sc.typ
+			if valid_string_data(sc.name) {
+				tc.smartcasts[sc.name] = sc.typ
+			}
 		}
 		rhs_bindings := tc.check_condition(rhs_id)
-		tc.smartcasts = saved_smartcasts.clone()
+		tc.smartcasts = clone_smartcasts(saved_smartcasts)
 		return rhs_bindings
 	}
 	tc.check_bool_condition(cond_id)
@@ -2168,8 +2270,9 @@ fn (mut tc TypeChecker) check_match_stmt(_id flat.NodeId, node flat.Node) {
 				}
 			}
 		}
-		saved_smartcasts := tc.smartcasts.clone()
-		if subject_key.len > 0 && n_conds == 1 && branch.children_count > 0 {
+		saved_smartcasts := clone_smartcasts(tc.smartcasts)
+		if subject_key.len > 0 && valid_string_data(subject_key) && n_conds == 1
+			&& branch.children_count > 0 {
 			cond_id := tc.a.child(branch, 0)
 			cond := tc.a.node(cond_id)
 			if pattern := tc.match_type_pattern(cond) {
@@ -2181,7 +2284,7 @@ fn (mut tc TypeChecker) check_match_stmt(_id flat.NodeId, node flat.Node) {
 			tc.check_node(tc.a.child(branch, j))
 		}
 		tc.pop_scope()
-		tc.smartcasts = saved_smartcasts.clone()
+		tc.smartcasts = clone_smartcasts(saved_smartcasts)
 	}
 }
 
@@ -2215,6 +2318,9 @@ fn (tc &TypeChecker) branch_tail_type(id flat.NodeId) Type {
 		return Type(void_)
 	}
 	node := tc.a.nodes[int(id)]
+	if node.kind == .if_expr {
+		return tc.if_expr_tail_type(id)
+	}
 	if node.kind == .block {
 		if node.children_count == 0 {
 			return Type(void_)
@@ -2247,6 +2353,52 @@ fn (tc &TypeChecker) branch_tail_type(id flat.NodeId) Type {
 	return tc.resolve_type(id)
 }
 
+fn (tc &TypeChecker) if_expr_tail_type(id flat.NodeId) Type {
+	mut cur_id := id
+	mut result := Type(void_)
+	for tc.valid_node_id(cur_id) {
+		node := tc.a.nodes[int(cur_id)]
+		if node.kind != .if_expr {
+			return choose_if_tail_type(result, tc.branch_tail_type(cur_id))
+		}
+		if node.children_count > 1 {
+			then_type := tc.branch_tail_type(tc.a.child(&node, 1))
+			result = choose_if_tail_type(result, then_type)
+		}
+		if node.children_count <= 2 {
+			return result
+		}
+		else_id := tc.a.child(&node, 2)
+		if !tc.valid_node_id(else_id) {
+			return result
+		}
+		else_node := tc.a.nodes[int(else_id)]
+		if else_node.kind == .if_expr {
+			cur_id = else_id
+			continue
+		}
+		else_type := tc.branch_tail_type(else_id)
+		return choose_if_tail_type(result, else_type)
+	}
+	return result
+}
+
+fn choose_if_tail_type(current Type, next Type) Type {
+	if current is Void {
+		return next
+	}
+	if next is Void {
+		return current
+	}
+	if current !is Primitive {
+		return current
+	}
+	if next !is Primitive {
+		return next
+	}
+	return current
+}
+
 fn (tc &TypeChecker) extract_smartcasts(cond_id flat.NodeId) []LocalBinding {
 	if int(cond_id) < 0 {
 		return []LocalBinding{}
@@ -2255,7 +2407,7 @@ fn (tc &TypeChecker) extract_smartcasts(cond_id flat.NodeId) []LocalBinding {
 	if cond.kind == .is_expr && cond.children_count > 0 {
 		expr_id := tc.a.child(&cond, 0)
 		key := tc.expr_key(expr_id)
-		if key.len > 0 && cond.value.len > 0 {
+		if key.len > 0 && valid_string_data(key) && cond.value.len > 0 {
 			mut result := []LocalBinding{}
 			result << LocalBinding{
 				name: key
@@ -3210,11 +3362,14 @@ fn (tc &TypeChecker) expr_key(id flat.NodeId) string {
 	}
 	node := tc.a.nodes[int(id)]
 	if node.kind == .ident {
-		return node.value
+		if valid_string_data(node.value) {
+			return node.value
+		}
+		return ''
 	}
 	if node.kind == .selector && node.children_count > 0 {
 		base := tc.expr_key(tc.a.child(&node, 0))
-		if base.len > 0 && node.value.len > 0 {
+		if base.len > 0 && node.value.len > 0 && valid_string_data(node.value) {
 			return '${base}.${node.value}'
 		}
 	}
@@ -3224,6 +3379,9 @@ fn (tc &TypeChecker) expr_key(id flat.NodeId) string {
 fn (tc &TypeChecker) smartcast_type(id flat.NodeId) ?Type {
 	key := tc.expr_key(id)
 	if key.len == 0 {
+		return none
+	}
+	if !valid_string_data(key) {
 		return none
 	}
 	if typ := tc.smartcasts[key] {
@@ -3490,7 +3648,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 	}
 	if node.kind != .ident && node.kind != .infix && node.kind != .selector
 		&& !(tc.smartcasts.len > 0 && (node.kind == .ident || node.kind == .selector)) {
-		if typ := tc.expr_types[int(id)] {
+		if typ := tc.cached_expr_type(id) {
 			return typ
 		}
 	}
@@ -3957,44 +4115,7 @@ pub fn (tc &TypeChecker) resolve_type(id flat.NodeId) Type {
 			})
 		}
 		.if_expr {
-			mut then_type := Type(void_)
-			then_block := tc.a.child_node(&node, 1)
-			if then_block.children_count > 0 {
-				last := tc.a.child_node(then_block, then_block.children_count - 1)
-				then_type = if last.kind == .expr_stmt {
-					tc.resolve_type(tc.a.child(last, 0))
-				} else {
-					tc.resolve_type(tc.a.child(then_block, then_block.children_count - 1))
-				}
-			}
-			if node.children_count > 2 {
-				else_node := tc.a.child_node(&node, 2)
-				mut else_type := Type(void_)
-				if else_node.kind == .block && else_node.children_count > 0 {
-					last := tc.a.child_node(else_node, else_node.children_count - 1)
-					else_type = if last.kind == .expr_stmt {
-						tc.resolve_type(tc.a.child(last, 0))
-					} else {
-						tc.resolve_type(tc.a.child(else_node, else_node.children_count - 1))
-					}
-				} else if else_node.kind == .if_expr {
-					else_type = tc.resolve_type(tc.a.child(&node, 2))
-				}
-				if then_type !is Void && then_type !is Primitive {
-					return then_type
-				}
-				if else_type !is Void && else_type !is Primitive {
-					return else_type
-				}
-				if then_type !is Void {
-					return then_type
-				}
-				return else_type
-			}
-			if then_type !is Void {
-				return then_type
-			}
-			return Type(void_)
+			return tc.if_expr_tail_type(id)
 		}
 		.match_stmt {
 			for i in 1 .. node.children_count {

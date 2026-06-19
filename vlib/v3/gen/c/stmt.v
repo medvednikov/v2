@@ -266,7 +266,7 @@ fn (g &FlatGen) expr_really_returns_optional(id flat.NodeId) bool {
 		return true
 	}
 	if node.kind == .call {
-		if fname := g.tc.resolved_calls[int(id)] {
+		if fname := g.tc.resolved_call_name(id) {
 			ret_type := g.tc.fn_ret_types[fname] or { return false }
 			return ret_type is types.OptionType || ret_type is types.ResultType
 		}

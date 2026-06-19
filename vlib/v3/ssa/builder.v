@@ -3922,13 +3922,31 @@ fn (b &Builder) fn_is_used(name string) bool {
 	if name in b.used_fns {
 		return true
 	}
+	if name in ['error_file_not_opened', 'error_size_of_type_0', 'vpopen', 'vpclose', 'Expr.name',
+		'SelectorExpr.name', '[]Expr.name_list'] {
+		return true
+	}
 	if name.contains('__') && name.replace('__', '.') in b.used_fns {
 		return true
 	}
-	if name.contains('.') {
+	if !name.contains('.') {
 		for used_name, _ in b.used_fns {
 			normalized_used := used_name.replace('__', '.')
 			if used_name.ends_with('.${name}') || normalized_used.ends_with('.${name}') {
+				return true
+			}
+		}
+	}
+	if name.contains('.') {
+		normalized_name := name.replace('__', '.')
+		short_name := normalized_name.all_after_last('.')
+		if short_name in b.used_fns {
+			return true
+		}
+		for used_name, _ in b.used_fns {
+			normalized_used := used_name.replace('__', '.')
+			if used_name.ends_with('.${name}') || normalized_used.ends_with('.${name}')
+				|| normalized_name.ends_with('.${normalized_used}') {
 				return true
 			}
 		}
@@ -5495,7 +5513,7 @@ fn (mut b Builder) build_in_expr(node flat.Node) ValueID {
 
 fn (mut b Builder) build_enum_val(id flat.NodeId, node flat.Node) ValueID {
 	if b.tc != unsafe { nil } {
-		if typ := b.tc.expr_types[int(id)] {
+		if typ := b.tc.expr_type(id) {
 			type_name := typ.name()
 			if value := b.enum_value_for_type(type_name, node.value) {
 				return b.m.get_or_add_const(b.i64_type, value.str())
@@ -6951,6 +6969,16 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 			actual_name = resolved
 		}
 	}
+	if fn_node.kind == .selector && !is_c_call && actual_name !in b.fn_ids {
+		if typed_name := b.typed_receiver_method_name(base_id, fn_node.value) {
+			actual_name = typed_name
+			is_method = true
+		}
+	}
+	if actual_name.starts_with('C.') {
+		actual_name = actual_name[2..]
+		is_c_call = true
+	}
 
 	if fn_node.kind == .selector && fn_node.value in ['set', 'clear', 'has'] {
 		if result := b.build_flag_enum_method_call(base_id, fn_node.value, node) {
@@ -6961,6 +6989,9 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 		return b.build_array_len_mutator_call(base_id, fn_node.value)
 	}
 	if fn_node.kind == .selector && b.call_base_is_array(base_id) {
+		if fn_node.value == 'pop' {
+			return b.build_array_pop_call(id, base_id)
+		}
 		if fn_node.value in ['delete_last', 'clear'] {
 			return b.build_array_len_mutator_call(base_id, fn_node.value)
 		}
@@ -7044,6 +7075,12 @@ fn (mut b Builder) build_call(id flat.NodeId, node flat.Node) ValueID {
 		if c_name in b.fn_ids {
 			resolved_name = c_name
 		} else {
+			moduleless_name := drop_first_fn_qualifier(resolved_name)
+			if moduleless_name != resolved_name && moduleless_name in b.fn_ids {
+				resolved_name = moduleless_name
+			}
+		}
+		if resolved_name !in b.fn_ids {
 			unqualified_method := resolved_name.all_after('.')
 			if unqualified_method in b.fn_ids {
 				resolved_name = unqualified_method
@@ -7313,11 +7350,32 @@ fn (mut b Builder) build_array_len_mutator_call(base_id flat.NodeId, method stri
 		len64 := b.emit1(.zext, b.i64_type, len32)
 		one := b.m.get_or_add_const(b.i64_type, '1')
 		new_len := b.emit2(.sub, b.i64_type, len64, one)
-		b.emit2(.store, b.void_type, new_len, len_ptr)
+		new_len32 := b.emit1(.trunc, b.i32_type, new_len)
+		b.emit2(.store, b.void_type, new_len32, len_ptr)
 	} else {
-		b.emit2(.store, b.void_type, zero, len_ptr)
+		zero32 := b.m.get_or_add_const(b.i32_type, '0')
+		b.emit2(.store, b.void_type, zero32, len_ptr)
 	}
 	return zero
+}
+
+fn (mut b Builder) build_array_pop_call(id flat.NodeId, base_id flat.NodeId) ValueID {
+	arr_addr := b.build_lvalue_addr(base_id)
+	base := b.emit1(.load, b.array_type, arr_addr)
+	elem_type := b.array_method_elem_type(id, base_id)
+	len_ptr := b.get_field_ptr(arr_addr, 'len')
+	len32 := b.emit1(.load, b.i32_type, len_ptr)
+	len64 := b.emit1(.zext, b.i64_type, len32)
+	one := b.m.get_or_add_const(b.i64_type, '1')
+	index := b.emit2(.sub, b.i64_type, len64, one)
+	ptr_i8 := b.m.type_store.get_ptr(b.i8_type)
+	fn_ref := b.m.add_value(.func_ref, ptr_i8, 'array_get', b.fn_ids['array_get'])
+	elem_ptr := b.emit3(.call, ptr_i8, fn_ref, base, index)
+	typed_ptr := b.emit1(.bitcast, b.m.type_store.get_ptr(elem_type), elem_ptr)
+	value := b.emit1(.load, elem_type, typed_ptr)
+	new_len32 := b.emit1(.trunc, b.i32_type, index)
+	b.emit2(.store, b.void_type, new_len32, len_ptr)
+	return value
 }
 
 fn (mut b Builder) build_array_first_last_call(id flat.NodeId, base_id flat.NodeId, method string) ValueID {
@@ -7487,11 +7545,20 @@ fn (b &Builder) receiver_type_name(base_id flat.NodeId) string {
 
 fn (b &Builder) typed_receiver_method_name(base_id flat.NodeId, method string) ?string {
 	receiver_name := b.receiver_type_name(base_id).trim_left('&')
-	if receiver_name == 'string' {
-		for candidate in ['string.${method}', 'string__${method}'] {
-			if candidate in b.fn_ids {
-				return candidate
-			}
+	if receiver_name.len == 0 {
+		return none
+	}
+	mut candidates := []string{}
+	candidates << '${receiver_name}.${method}'
+	candidates << '${receiver_name.replace('.', '__')}__${method}'
+	short_name := receiver_name.all_after_last('.')
+	if short_name != receiver_name {
+		candidates << '${short_name}.${method}'
+		candidates << '${short_name}__${method}'
+	}
+	for candidate in candidates {
+		if candidate in b.fn_ids {
+			return candidate
 		}
 	}
 	return none
@@ -7966,15 +8033,6 @@ fn (b &Builder) checked_expr_type_name(id flat.NodeId) string {
 				return name
 			}
 		}
-		if typ := b.tc.expr_types[int(id)] {
-			if typ is types.MultiReturn {
-				return b.multi_return_c_type(typ)
-			}
-			name := typ.name()
-			if name.len > 0 && name != 'unknown' {
-				return name
-			}
-		}
 	}
 	if node.typ.len > 0 && node.typ != 'unknown' {
 		return node.typ
@@ -8042,12 +8100,20 @@ fn (b &Builder) resolved_call_name(id flat.NodeId) ?string {
 	if b.tc == unsafe { nil } {
 		return none
 	}
-	if name := b.tc.resolved_calls[int(id)] {
+	if name := b.tc.resolved_call_name(id) {
 		if name.len > 0 {
 			return name
 		}
 	}
 	return none
+}
+
+fn drop_first_fn_qualifier(name string) string {
+	idx := name.index('.') or { return name }
+	if idx + 1 >= name.len {
+		return name
+	}
+	return name[idx + 1..]
 }
 
 fn (b &Builder) resolved_selector_has_receiver(resolved string, node flat.Node) bool {
@@ -8310,18 +8376,46 @@ fn (b &Builder) sum_name_for_type_id(typ_id TypeID) ?string {
 }
 
 fn (b &Builder) selector_qualified_name(node flat.Node) string {
-	if node.kind == .ident {
-		return node.value
+	mut cur := node
+	mut parts := []string{}
+	for _ in 0 .. 128 {
+		if cur.kind == .ident {
+			if cur.value.len > 0 {
+				parts << cur.value
+			}
+			break
+		}
+		if cur.kind != .selector {
+			break
+		}
+		if cur.value.len > 0 {
+			parts << cur.value
+		}
+		if cur.children_count == 0 {
+			break
+		}
+		next_id := b.a.child(&cur, 0)
+		if int(next_id) < 0 || int(next_id) >= b.a.nodes.len {
+			break
+		}
+		cur = b.a.nodes[int(next_id)]
 	}
-	if node.kind != .selector || node.children_count == 0 {
+	if parts.len == 0 {
 		return ''
 	}
-	base := b.a.child_node(&node, 0)
-	base_name := b.selector_qualified_name(base)
-	if base_name.len == 0 {
-		return node.value
+	mut out := ''
+	mut i := parts.len - 1
+	for i >= 0 {
+		if out.len > 0 {
+			out += '.'
+		}
+		out += parts[i]
+		if i == 0 {
+			break
+		}
+		i--
 	}
-	return base_name + '.' + node.value
+	return out
 }
 
 fn (mut b Builder) load_map_len(map_ptr ValueID) ValueID {
@@ -8863,11 +8957,19 @@ fn (mut b Builder) get_field_ptr(base_addr ValueID, field_name string) ValueID {
 
 	if struct_typ_id > 0 {
 		typ := b.m.type_store.types[struct_typ_id]
-		for fi, fname in typ.field_names {
+		mut field_count := typ.field_names.len
+		if typ.fields.len < field_count {
+			field_count = typ.fields.len
+		}
+		if field_count > 512 {
+			field_count = 512
+		}
+		for fi in 0 .. field_count {
+			fname := typ.field_names[fi]
 			if fname == field_name {
 				offset := b.m.struct_field_offset(struct_typ_id, fi)
 				off_const := b.m.get_or_add_const(b.i64_type, '${offset}')
-				field_type := if fi < typ.fields.len { typ.fields[fi] } else { b.i64_type }
+				field_type := typ.fields[fi]
 				ptr_type := b.m.type_store.get_ptr(field_type)
 
 				if b.m.type_store.types[b.m.values[base_addr].typ].kind == .ptr_t {
