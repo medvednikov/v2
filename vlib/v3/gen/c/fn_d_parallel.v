@@ -323,6 +323,7 @@ fn (g &FlatGen) clone_parallel_type_checker() types.TypeChecker {
 		fn_param_types:         g.tc.fn_param_types.clone()
 		fn_variadic:            g.tc.fn_variadic.clone()
 		structs:                g.tc.structs.clone()
+		unions:                 g.tc.unions.clone()
 		type_aliases:           g.tc.type_aliases.clone()
 		sum_types:              g.tc.sum_types.clone()
 		enum_names:             g.tc.enum_names.clone()

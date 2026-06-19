@@ -259,7 +259,8 @@ fn (mut g FlatGen) struct_decls() {
 		if g.skip_builtin_struct(name) {
 			continue
 		}
-		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
+		tag := if name in g.tc.unions { 'union' } else { 'struct' }
+		g.writeln('typedef ${tag} ${c_name(name)} ${c_name(name)};')
 	}
 	for name, variants in g.tc.sum_types {
 		g.writeln('typedef struct ${c_name(name)} ${c_name(name)};')
@@ -412,7 +413,8 @@ fn (mut g FlatGen) struct_decls() {
 fn (mut g FlatGen) emit_struct(name string) {
 	if name in g.tc.structs {
 		fields := g.tc.structs[name]
-		g.writeln('struct ${c_name(name)} {')
+		tag := if name in g.tc.unions { 'union' } else { 'struct' }
+		g.writeln('${tag} ${c_name(name)} {')
 		if fields.len == 0 {
 			g.writeln('\tint _dummy;')
 		}

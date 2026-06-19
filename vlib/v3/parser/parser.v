@@ -768,6 +768,7 @@ fn (mut p Parser) parse_param_group() []flat.NodeId {
 }
 
 fn (mut p Parser) struct_decl() flat.NodeId {
+	is_union := p.tok == .key_union
 	p.next() // skip 'struct' or 'union'
 	name := p.expect(.name)
 	// generic params — skip
@@ -791,6 +792,7 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 		return p.a.add_node(flat.Node{
 			kind:  .struct_decl
 			value: name
+			typ:   if is_union { 'union' } else { '' }
 		})
 	}
 	p.check(.lcbr)
@@ -903,6 +905,7 @@ fn (mut p Parser) struct_decl() flat.NodeId {
 	return p.a.add_node(flat.Node{
 		kind:           .struct_decl
 		value:          name
+		typ:            if is_union { 'union' } else { '' }
 		children_start: start
 		children_count: ids.len
 	})

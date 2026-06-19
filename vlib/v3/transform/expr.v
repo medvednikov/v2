@@ -204,7 +204,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			new_lhs := t.transform_expr(lhs_id)
 			new_rhs := t.transform_expr(rhs_id)
 			elem := rhs_type[2..]
-			fn_name := if elem == 'string' { 'array_contains_string' } else { 'array_contains_int' }
+			fn_name := array_contains_fn_name(elem)
 			result = t.make_call(fn_name, arr2(new_rhs, new_lhs))
 		} else if is_fixed_array_type(rhs_type) {
 			// fixed array membership -> fixed_array_contains_int/string(arr, len, val)
@@ -212,11 +212,7 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 			new_rhs := t.transform_expr(rhs_id)
 			elem := rhs_type.all_before('[')
 			len_str := rhs_type.all_after('[').all_before(']')
-			fn_name := if elem == 'string' {
-				'fixed_array_contains_string'
-			} else {
-				'fixed_array_contains_int'
-			}
+			fn_name := fixed_array_contains_fn_name(elem)
 			len_lit := t.make_int_literal(len_str.int())
 			result = t.make_call(fn_name, arr3(new_rhs, len_lit, new_lhs))
 		} else if t.clean_map_type(rhs_type).starts_with('map[') {
@@ -265,6 +261,22 @@ fn (mut t Transformer) transform_in_expr(id flat.NodeId, node flat.Node) flat.No
 		})
 	}
 	return result
+}
+
+fn array_contains_fn_name(elem string) string {
+	return match elem {
+		'string' { 'array_contains_string' }
+		'u8', 'byte' { 'array_contains_u8' }
+		else { 'array_contains_int' }
+	}
+}
+
+fn fixed_array_contains_fn_name(elem string) string {
+	return match elem {
+		'string' { 'fixed_array_contains_string' }
+		'u8', 'byte' { 'fixed_array_contains_u8' }
+		else { 'fixed_array_contains_int' }
+	}
 }
 
 fn (mut t Transformer) stable_expr_for_reuse(id flat.NodeId) flat.NodeId {

@@ -328,7 +328,7 @@ fn (mut b Builder) register_multi_return_types() {
 }
 
 fn (mut b Builder) register_multi_return_type(ret types.MultiReturn) TypeID {
-	name := b.tc.c_type(ret)
+	name := b.multi_return_c_type(ret)
 	if typ := b.struct_types[name] {
 		return typ
 	}
@@ -352,6 +352,46 @@ fn (mut b Builder) register_multi_return_type(ret types.MultiReturn) TypeID {
 	return typ_id
 }
 
+fn (b &Builder) multi_return_c_type(ret types.MultiReturn) string {
+	mut parts := []string{}
+	for field_type in ret.types {
+		parts << b.tc.c_type(field_type)
+	}
+	return 'multi_return_${parts.join('_')}'
+}
+
+fn primitive_type_name(typ types.Primitive) string {
+	if typ.props.has(.boolean) {
+		return 'bool'
+	}
+	if typ.props.has(.integer) {
+		if typ.props.has(.unsigned) {
+			return match typ.size {
+				8 { 'u8' }
+				16 { 'u16' }
+				32 { 'u32' }
+				64 { 'u64' }
+				else { 'u${typ.size}' }
+			}
+		}
+		return match typ.size {
+			0 { 'int' }
+			8 { 'i8' }
+			16 { 'i16' }
+			32 { 'i32' }
+			64 { 'i64' }
+			else { 'i${typ.size}' }
+		}
+	}
+	if typ.props.has(.float) {
+		return match typ.size {
+			32 { 'f32' }
+			else { 'f64' }
+		}
+	}
+	return 'int'
+}
+
 fn (mut b Builder) ssa_type_from_checker_type(typ types.Type) TypeID {
 	if typ is types.Void {
 		return b.void_type
@@ -369,7 +409,7 @@ fn (mut b Builder) ssa_type_from_checker_type(typ types.Type) TypeID {
 		return b.i64_type
 	}
 	if typ is types.Primitive {
-		return b.resolve_type(b.tc.c_type(types.Type(typ)))
+		return b.resolve_type(primitive_type_name(typ))
 	}
 	if typ is types.Array || typ is types.ArrayFixed {
 		return b.array_type
@@ -6008,73 +6048,76 @@ fn (mut b Builder) build_infix(node flat.Node) ValueID {
 		return b.build_string_infix(node.op, lhs, rhs)
 	}
 	lhs_type := b.value_type(lhs)
-	op := if b.is_float_type(lhs_type) {
+	mut op := OpCode.add
+	if b.is_float_type(lhs_type) {
+		op = OpCode.fadd
 		match node.op {
-			.plus { OpCode.fadd }
-			.minus { OpCode.fsub }
-			.mul { OpCode.fmul }
-			.div { OpCode.fdiv }
-			.mod { OpCode.frem }
-			.eq { OpCode.eq }
-			.ne { OpCode.ne }
-			.lt { OpCode.lt }
-			.gt { OpCode.gt }
-			.le { OpCode.le }
-			.ge { OpCode.ge }
-			else { OpCode.fadd }
+			.plus { op = OpCode.fadd }
+			.minus { op = OpCode.fsub }
+			.mul { op = OpCode.fmul }
+			.div { op = OpCode.fdiv }
+			.mod { op = OpCode.frem }
+			.eq { op = OpCode.eq }
+			.ne { op = OpCode.ne }
+			.lt { op = OpCode.lt }
+			.gt { op = OpCode.gt }
+			.le { op = OpCode.le }
+			.ge { op = OpCode.ge }
+			else {}
 		}
 	} else {
+		op = OpCode.add
 		match node.op {
 			.plus {
-				OpCode.add
+				op = OpCode.add
 			}
 			.minus {
-				OpCode.sub
+				op = OpCode.sub
 			}
 			.mul {
-				OpCode.mul
+				op = OpCode.mul
 			}
 			.div {
-				if b.is_unsigned_type(lhs_type) { OpCode.udiv } else { OpCode.sdiv }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.udiv } else { OpCode.sdiv }
 			}
 			.mod {
-				if b.is_unsigned_type(lhs_type) { OpCode.urem } else { OpCode.srem }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.urem } else { OpCode.srem }
 			}
 			.amp {
-				OpCode.and_
+				op = OpCode.and_
 			}
 			.pipe {
-				OpCode.or_
+				op = OpCode.or_
 			}
 			.xor {
-				OpCode.xor
+				op = OpCode.xor
 			}
 			.left_shift {
-				OpCode.shl
+				op = OpCode.shl
 			}
 			.right_shift {
-				if b.is_unsigned_type(lhs_type) { OpCode.lshr } else { OpCode.ashr }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.lshr } else { OpCode.ashr }
 			}
 			.eq {
-				OpCode.eq
+				op = OpCode.eq
 			}
 			.ne {
-				OpCode.ne
+				op = OpCode.ne
 			}
 			.lt {
-				if b.is_unsigned_type(lhs_type) { OpCode.ult } else { OpCode.lt }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.ult } else { OpCode.lt }
 			}
 			.gt {
-				if b.is_unsigned_type(lhs_type) { OpCode.ugt } else { OpCode.gt }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.ugt } else { OpCode.gt }
 			}
 			.le {
-				if b.is_unsigned_type(lhs_type) { OpCode.ule } else { OpCode.le }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.ule } else { OpCode.le }
 			}
 			.ge {
-				if b.is_unsigned_type(lhs_type) { OpCode.uge } else { OpCode.ge }
+				op = if b.is_unsigned_type(lhs_type) { OpCode.uge } else { OpCode.ge }
 			}
 			else {
-				OpCode.add
+				op = OpCode.add
 			}
 		}
 	}
@@ -7263,7 +7306,7 @@ fn (b &Builder) const_int_literal_value(id flat.NodeId) ?string {
 		.prefix {
 			if node.children_count > 0 && node.op == .minus {
 				if value := b.const_int_literal_value(b.a.child(&node, 0)) {
-					return '${-value.i64()}'
+					return '-' + value
 				}
 			}
 		}
@@ -7556,13 +7599,13 @@ fn (b &Builder) checked_expr_type_name(id flat.NodeId) string {
 	if b.tc != unsafe { nil } {
 		if typ := b.tc.expr_type(id) {
 			if typ is types.MultiReturn {
-				return b.tc.c_type(typ)
+				return b.multi_return_c_type(typ)
 			}
 			return typ.name()
 		}
 		if typ := b.tc.expr_types[int(id)] {
 			if typ is types.MultiReturn {
-				return b.tc.c_type(typ)
+				return b.multi_return_c_type(typ)
 			}
 			return typ.name()
 		}

@@ -182,12 +182,15 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.gen_expr(g.a.child(&node, 1))
 			g.write(')')
 		}
+		'bytestr' {
+			g.write('u8__vstring_with_len((u8*)')
+			g.gen_expr(base_id)
+			g.write('${dot}data, ')
+			g.gen_expr(base_id)
+			g.write('${dot}len)')
+		}
 		'contains' {
-			contains_fn := if arr.elem_type is types.String {
-				'array_contains_string'
-			} else {
-				'array_contains_int'
-			}
+			contains_fn := 'array_contains_${array_lookup_suffix(arr.elem_type)}'
 			g.write('${contains_fn}(')
 			g.gen_expr(base_id)
 			g.write(', ')
@@ -195,11 +198,7 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			g.write(')')
 		}
 		'index' {
-			index_fn := if arr.elem_type is types.String {
-				'array_index_string'
-			} else {
-				'array_index_int'
-			}
+			index_fn := 'array_index_${array_lookup_suffix(arr.elem_type)}'
 			g.write('${index_fn}(')
 			g.gen_expr(base_id)
 			g.write(', ')
@@ -232,6 +231,18 @@ fn (mut g FlatGen) gen_array_method_call(node flat.Node, fn_node &flat.Node, arr
 			}
 		}
 	}
+}
+
+fn array_lookup_suffix(elem_type types.Type) string {
+	if elem_type is types.String {
+		return 'string'
+	}
+	if elem_type is types.Primitive {
+		if elem_type.props.has(.unsigned) && elem_type.size == 8 {
+			return 'u8'
+		}
+	}
+	return 'int'
 }
 
 fn (mut g FlatGen) array_method_fallback(method string) string {

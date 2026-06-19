@@ -3,6 +3,7 @@
 import os
 
 const vexe = @VEXE
+const v1exe = 'v'
 const tests_dir = os.dir(@FILE)
 const v3_dir = os.dir(tests_dir)
 const test_v = os.join_path(tests_dir, 'test_all_lang_features.v')
@@ -27,15 +28,15 @@ fn build_v3() string {
 
 fn run_v1() string {
 	v1_bin := '${os.temp_dir()}/v1_test'
-	r := run('${vexe} -enable-globals -o ${v1_bin} ${test_v}')
+	r := run('${v1exe} -enable-globals -o ${v1_bin} ${test_v}')
 	if r.exit_code != 0 {
-		eprintln('FAIL: v1 compilation failed')
+		eprintln('FAIL: global v compilation failed')
 		eprintln(r.output)
 		exit(1)
 	}
 	r2 := run(v1_bin)
 	if r2.exit_code != 0 {
-		eprintln('FAIL: v1 binary crashed (exit ${r2.exit_code})')
+		eprintln('FAIL: global v binary crashed (exit ${r2.exit_code})')
 		exit(1)
 	}
 	return r2.output

@@ -1052,9 +1052,9 @@ fn (mut t Transformer) transform_string_interp(_id flat.NodeId, node flat.Node) 
 			min_cap += 16
 		}
 		transformed := t.transform_expr(child_id)
-		mut typ := t.node_type(transformed)
+		mut typ := t.reliable_stringify_type(child_id)
 		if typ.len == 0 {
-			typ = t.reliable_stringify_type(child_id)
+			typ = t.node_type(transformed)
 		}
 		if typ.len == 0 {
 			typ = t.node_type(child_id)

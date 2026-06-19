@@ -71,6 +71,7 @@ pub mut:
 	fn_param_types                map[string][]Type
 	fn_variadic                   map[string]bool
 	structs                       map[string][]StructField
+	unions                        map[string]bool
 	type_aliases                  map[string]string
 	sum_types                     map[string][]string
 	enum_names                    map[string]bool
@@ -101,6 +102,7 @@ pub fn TypeChecker.new(a &flat.FlatAst) TypeChecker {
 		fn_param_types:   map[string][]Type{}
 		fn_variadic:      map[string]bool{}
 		structs:          map[string][]StructField{}
+		unions:           map[string]bool{}
 		type_aliases:     map[string]string{}
 		sum_types:        map[string][]string{}
 		enum_names:       map[string]bool{}
@@ -248,7 +250,11 @@ pub fn (mut tc TypeChecker) collect(a &flat.FlatAst) {
 						typ:  tc.parse_type(f.typ)
 					}
 				}
-				tc.structs[tc.qualify_name(node.value)] = fields
+				qname := tc.qualify_name(node.value)
+				tc.structs[qname] = fields
+				if node.typ == 'union' {
+					tc.unions[qname] = true
+				}
 			}
 			.c_fn_decl {
 				tc.fn_ret_types[node.value] = tc.parse_type(node.typ)
