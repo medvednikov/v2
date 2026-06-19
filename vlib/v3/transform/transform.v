@@ -1280,6 +1280,10 @@ fn (mut t Transformer) transform_typeof_expr(id flat.NodeId, node flat.Node) fla
 		return id
 	}
 	expr_id := t.a.child(&node, 0)
+	expr := t.a.nodes[int(expr_id)]
+	if expr.kind == .int_literal {
+		return t.make_string_literal('int literal')
+	}
 	mut typ := t.node_type(expr_id)
 	if typ.len == 0 {
 		typ = t.reliable_stringify_type(expr_id)
@@ -1608,8 +1612,29 @@ fn (t &Transformer) resolve_expr_type(id flat.NodeId) string {
 			}
 			return ''
 		}
-		.array_literal, .array_init {
-			return node.typ
+		.array_literal {
+			if node.typ.len > 0 {
+				return node.typ
+			}
+			if node.children_count > 0 {
+				elem_type := t.node_type(t.a.child(&node, 0))
+				if elem_type.len > 0 {
+					return '[]${elem_type}'
+				}
+			}
+			return '[]int'
+		}
+		.array_init {
+			if node.typ.len > 0 {
+				return node.typ
+			}
+			if is_fixed_array_type(node.value) {
+				return node.value
+			}
+			if node.value.len > 0 {
+				return '[]${node.value}'
+			}
+			return '[]int'
 		}
 		.map_init {
 			return node.value

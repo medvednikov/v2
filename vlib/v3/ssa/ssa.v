@@ -9,12 +9,21 @@ pub enum OpCode {
 	ret
 	br
 	jmp
+	unreachable
 	// Binary (integer)
 	add
 	sub
 	mul
 	sdiv
 	srem
+	udiv
+	urem
+	// Binary (float)
+	fadd
+	fsub
+	fmul
+	fdiv
+	frem
 	// Bitwise
 	shl
 	ashr
@@ -32,13 +41,29 @@ pub enum OpCode {
 	gt
 	le
 	ge
+	ult
+	ugt
+	ule
+	uge
 	eq
 	ne
 	// Other
 	call
+	call_indirect
 	neg
+	trunc
+	sext
 	zext
+	fptoui
+	fptosi
+	uitofp
+	sitofp
 	bitcast
+	phi
+	select
+	extractvalue
+	insertvalue
+	heap_alloc
 	struct_init
 }
 
@@ -55,6 +80,7 @@ pub struct Type {
 pub:
 	kind        TypeKind
 	width       int
+	is_unsigned bool
 	elem_type   TypeID
 	fields      []TypeID
 	field_names []string
@@ -85,6 +111,30 @@ pub fn (mut ts TypeStore) get_int(width int) TypeID {
 		}
 	}
 	id := ts.register(Type{ kind: .int_t, width: width })
+	return id
+}
+
+pub fn (mut ts TypeStore) get_uint(width int) TypeID {
+	key := 'u${width}'
+	if id := ts.cache[key] {
+		if id > 0 {
+			return id
+		}
+	}
+	id := ts.register(Type{ kind: .int_t, width: width, is_unsigned: true })
+	ts.cache[key] = id
+	return id
+}
+
+pub fn (mut ts TypeStore) get_float(width int) TypeID {
+	key := 'f${width}'
+	if id := ts.cache[key] {
+		if id > 0 {
+			return id
+		}
+	}
+	id := ts.register(Type{ kind: .float_t, width: width })
+	ts.cache[key] = id
 	return id
 }
 
@@ -206,6 +256,13 @@ pub fn (mut m Module) add_instr(op OpCode, block BlockID, typ TypeID, operands [
 	mut blk := m.blocks[block]
 	blk.instrs << val_id
 	m.blocks[block] = blk
+	for op_id in m.instrs[instr_idx].value_operands() {
+		if op_id > 0 && op_id < m.values.len && val_id !in m.values[op_id].uses {
+			mut op_val := m.values[op_id]
+			op_val.uses << val_id
+			m.values[op_id] = op_val
+		}
+	}
 	return val_id
 }
 
@@ -393,6 +450,13 @@ pub fn (i &Instruction) value_operands() []ValueID {
 	}
 	if i.op == .jmp {
 		return []ValueID{}
+	}
+	if i.op == .phi {
+		mut r := []ValueID{}
+		for oi := 0; oi < i.operands.len; oi += 2 {
+			r << i.operands[oi]
+		}
+		return r
 	}
 	return i.operands
 }

@@ -749,6 +749,16 @@ fn (mut g FlatGen) gen_call(id flat.NodeId, node flat.Node) {
 				arg_idx := if is_method { i } else { i - 1 }
 				arg_id := g.a.child(&node, i)
 				arg_node := g.a.nodes[int(arg_id)]
+				if !is_method && actual_fn == 'array_push_many' && arg_idx == 1
+					&& arg_node.kind == .array_literal {
+					elem_type := if arg_node.children_count > 0 {
+						g.tc.resolve_type(g.a.child(&arg_node, 0))
+					} else {
+						types.Type(types.int_)
+					}
+					g.gen_array_literal_value(arg_node, elem_type)
+					continue
+				}
 				mut needs_addr := false
 				if !is_c_call && arg_idx < param_types.len && param_types[arg_idx] is types.Pointer
 					&& !(arg_node.kind == .prefix && arg_node.op == .amp) {
@@ -1028,6 +1038,15 @@ fn (mut g FlatGen) gen_call_args(fn_name string, node flat.Node, start int) {
 		arg_idx := i - start
 		arg_id := g.a.child(&node, i)
 		arg_node := g.a.nodes[int(arg_id)]
+		if fn_name == 'array_push_many' && arg_idx == 1 && arg_node.kind == .array_literal {
+			elem_type := if arg_node.children_count > 0 {
+				g.tc.resolve_type(g.a.child(&arg_node, 0))
+			} else {
+				types.Type(types.int_)
+			}
+			g.gen_array_literal_value(arg_node, elem_type)
+			continue
+		}
 		if is_variadic && arg_idx == variadic_idx {
 			variadic_type := param_types[variadic_idx]
 			if variadic_type is types.Array {

@@ -1291,7 +1291,10 @@ fn (mut tc TypeChecker) check_call(id flat.NodeId, node flat.Node) {
 }
 
 fn (tc &TypeChecker) should_diagnose(id flat.NodeId) bool {
-	if int(id) < tc.a.user_code_start {
+	if int(id) < 0 || int(id) < tc.a.user_code_start {
+		return false
+	}
+	if int(id) < tc.a.nodes.len && !tc.a.nodes[int(id)].pos.is_valid() && !tc.diagnose_unknown_calls {
 		return false
 	}
 	if tc.diagnostic_files.len == 0 {
@@ -2030,6 +2033,9 @@ fn (mut tc TypeChecker) check_selector(id flat.NodeId, node flat.Node) {
 	} else {
 		if tc.should_diagnose(id) {
 			base_type := tc.resolve_type(base_id)
+			if base_type is Unknown {
+				return
+			}
 			tc.record_error(.unknown_field,
 				'unknown field `${node.value}` on `${base_type.name()}`', id)
 		}

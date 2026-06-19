@@ -153,7 +153,8 @@ fn (mut g Gen) gen_func(func_idx int) {
 				slot_offset += alloc_size
 				g.alloca_offset[val_id] = -slot_offset
 				slot_offset += 8
-			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp {
+			} else if instr.op != .store && instr.op != .ret && instr.op != .br && instr.op != .jmp
+				&& instr.op != .unreachable {
 				result_size := g.m.type_size(val.typ)
 				alloc_size := if result_size > 8 && val.typ > 0
 					&& val.typ < g.m.type_store.types.len
@@ -375,7 +376,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 			g.emit32(asm_add_reg(Reg(8), Reg(base_reg), Reg(off_reg)))
 			g.store_val(8, val_id)
 		}
-		.add, .sub, .mul, .sdiv, .srem, .and_, .or_, .xor, .shl, .ashr, .lshr {
+		.add, .sub, .mul, .sdiv, .srem, .udiv, .urem, .and_, .or_, .xor, .shl, .ashr, .lshr {
 			lhs_reg := g.load_val(instr.operands[0], 8)
 			rhs_reg := g.load_val(instr.operands[1], 9)
 			match instr.op {
@@ -393,6 +394,13 @@ fn (mut g Gen) gen_instr(val_id int) {
 				}
 				.srem {
 					g.emit32(asm_sdiv(Reg(10), Reg(lhs_reg), Reg(rhs_reg)))
+					g.emit32(asm_msub(Reg(8), Reg(10), Reg(rhs_reg), Reg(lhs_reg)))
+				}
+				.udiv {
+					g.emit32(asm_udiv(Reg(8), Reg(lhs_reg), Reg(rhs_reg)))
+				}
+				.urem {
+					g.emit32(asm_udiv(Reg(10), Reg(lhs_reg), Reg(rhs_reg)))
 					g.emit32(asm_msub(Reg(8), Reg(10), Reg(rhs_reg), Reg(lhs_reg)))
 				}
 				.and_ {
@@ -418,7 +426,7 @@ fn (mut g Gen) gen_instr(val_id int) {
 
 			g.store_val(8, val_id)
 		}
-		.eq, .ne, .lt, .gt, .le, .ge {
+		.eq, .ne, .lt, .gt, .le, .ge, .ult, .ugt, .ule, .uge {
 			lhs_reg := g.load_val(instr.operands[0], 8)
 			rhs_reg := g.load_val(instr.operands[1], 9)
 			g.emit32(asm_cmp_reg(Reg(lhs_reg), Reg(rhs_reg)))
@@ -429,6 +437,10 @@ fn (mut g Gen) gen_instr(val_id int) {
 				.gt { g.emit32(asm_cset_gt(Reg(8))) }
 				.le { g.emit32(asm_cset_le(Reg(8))) }
 				.ge { g.emit32(asm_cset_ge(Reg(8))) }
+				.ult { g.emit32(asm_cset_lo(Reg(8))) }
+				.ugt { g.emit32(asm_cset_hi(Reg(8))) }
+				.ule { g.emit32(asm_cset_ls(Reg(8))) }
+				.uge { g.emit32(asm_cset_hs(Reg(8))) }
 				else {}
 			}
 
@@ -457,6 +469,52 @@ fn (mut g Gen) gen_instr(val_id int) {
 				g.store_val(8, val_id)
 			}
 		}
+		.sext {
+			if instr.operands.len > 0 {
+				src_id := instr.operands[0]
+				src_reg := g.load_val(src_id, 8)
+				src_typ := g.m.values[src_id].typ
+				src_width := if src_typ > 0 && src_typ < g.m.type_store.types.len {
+					g.m.type_store.types[src_typ].width
+				} else {
+					64
+				}
+				match src_width {
+					8 {
+						g.emit32(asm_sxtb(Reg(8), Reg(src_reg)))
+					}
+					16 {
+						g.emit32(asm_sxth(Reg(8), Reg(src_reg)))
+					}
+					32 {
+						g.emit32(asm_sxtw(Reg(8), Reg(src_reg)))
+					}
+					else {
+						if src_reg != 8 {
+							g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
+						}
+					}
+				}
+
+				g.store_val(8, val_id)
+			}
+		}
+		.trunc {
+			if instr.operands.len > 0 {
+				src_reg := g.load_val(instr.operands[0], 8)
+				dst_width := if val.typ > 0 && val.typ < g.m.type_store.types.len {
+					g.m.type_store.types[val.typ].width
+				} else {
+					64
+				}
+				if dst_width > 0 && dst_width < 64 {
+					g.emit32(asm_ubfx_lower(Reg(8), Reg(src_reg), u32(dst_width)))
+				} else if src_reg != 8 {
+					g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
+				}
+				g.store_val(8, val_id)
+			}
+		}
 		.bitcast {
 			if instr.operands.len > 0 {
 				src_reg := g.load_val(instr.operands[0], 8)
@@ -467,6 +525,9 @@ fn (mut g Gen) gen_instr(val_id int) {
 			}
 		}
 		.call {
+			g.gen_call(val_id, instr)
+		}
+		.call_indirect {
 			g.gen_call(val_id, instr)
 		}
 		.ret {
@@ -556,9 +617,15 @@ fn (mut g Gen) gen_instr(val_id int) {
 				return
 			}
 			target_blk := int(instr.operands[0])
+			g.emit_phi_edge_copies(instr.block, target_blk)
 			g.emit_branch_to_block(target_blk)
 		}
+		.unreachable {
+			g.emit32(asm_udf())
+		}
+		.phi {}
 		.struct_init {}
+		else {}
 	}
 }
 
@@ -567,8 +634,12 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 		return
 	}
 	fn_ref_id := instr.operands[0]
+	is_indirect := instr.op == .call_indirect
 	fn_ref := g.m.values[fn_ref_id]
-	fn_name := fn_ref.name
+	mut fn_name := ''
+	if !is_indirect {
+		fn_name = fn_ref.name
+	}
 	ret_indirect := g.is_large_struct_type(instr.typ)
 
 	out_stack_size := g.call_stack_arg_size(instr)
@@ -695,7 +766,10 @@ fn (mut g Gen) gen_call(val_id int, instr ssa.Instruction) {
 
 	is_c_extern := fn_ref.kind == .func_ref && fn_ref.index >= 0 && fn_ref.index < g.m.funcs.len
 		&& g.m.funcs[fn_ref.index].is_c_extern
-	if !is_c_extern && fn_name in g.fn_offsets {
+	if is_indirect {
+		target_reg := g.load_val(fn_ref_id, 16)
+		g.emit32(asm_blr(Reg(target_reg)))
+	} else if !is_c_extern && fn_name in g.fn_offsets {
 		target := g.fn_offsets[fn_name]
 		offset := (target - g.macho.text_data.len) / 4
 		g.emit32(asm_bl(i32(offset)))
@@ -788,6 +862,10 @@ fn (mut g Gen) load_val(val_id int, reg int) int {
 			return reg
 		}
 		.global {
+			g.emit_global_addr(reg, val.name)
+			return reg
+		}
+		.func_ref {
 			g.emit_global_addr(reg, val.name)
 			return reg
 		}
@@ -904,6 +982,76 @@ fn (mut g Gen) emit_branch_to_block(blk_id int) {
 		}
 		g.emit32(asm_b(0))
 	}
+}
+
+fn (mut g Gen) emit_phi_edge_copies(from_blk int, to_blk int) {
+	if to_blk < 0 || to_blk >= g.m.blocks.len {
+		return
+	}
+	for val_id in g.m.blocks[to_blk].instrs {
+		if val_id <= 0 || val_id >= g.m.values.len {
+			continue
+		}
+		val := g.m.values[val_id]
+		if val.kind != .instruction {
+			continue
+		}
+		instr := g.m.instrs[val.index]
+		if instr.op != .phi {
+			break
+		}
+		for oi := 0; oi + 1 < instr.operands.len; oi += 2 {
+			if int(instr.operands[oi + 1]) != from_blk {
+				continue
+			}
+			src_id := instr.operands[oi]
+			g.emit_phi_copy_value(src_id, val_id)
+			break
+		}
+	}
+}
+
+fn (mut g Gen) emit_phi_copy_value(src_id int, dst_id int) {
+	if dst_id <= 0 || dst_id >= g.m.values.len {
+		return
+	}
+	dst := g.m.values[dst_id]
+	if dst.typ > 0 && dst.typ < g.m.type_store.types.len && g.is_aggregate_type(dst.typ) {
+		dst_off := g.stack_map[dst_id] or { return }
+		size := g.m.type_size(dst.typ)
+		n_words := (size + 7) / 8
+		src := g.m.values[src_id]
+		if src.kind == .string_literal {
+			g.materialize_string(src_id, 8)
+			g.emit_store_fp(8, dst_off)
+			if n_words > 1 {
+				g.emit_store_fp(10, dst_off + 8)
+			}
+			return
+		}
+		if src_off := g.stack_map[src_id] {
+			for wi in 0 .. n_words {
+				g.emit_load_fp(8, src_off + wi * 8)
+				g.emit_store_fp(8, dst_off + wi * 8)
+			}
+			return
+		}
+		src_reg := g.load_val(src_id, 8)
+		if src_reg != 8 {
+			g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
+		}
+		g.emit_store_fp(8, dst_off)
+		g.emit_mov_imm(8, 0)
+		for wi in 1 .. n_words {
+			g.emit_store_fp(8, dst_off + wi * 8)
+		}
+		return
+	}
+	src_reg := g.load_val(src_id, 8)
+	if src_reg != 8 {
+		g.emit32(asm_mov_reg(Reg(8), Reg(src_reg)))
+	}
+	g.store_val(8, dst_id)
 }
 
 fn (mut g Gen) resolve_pending_jmps(blk_id int) {
@@ -1074,11 +1222,31 @@ fn (mut g Gen) emit_store_typed(src_reg int, ptr_reg int, typ ssa.TypeID) {
 fn (mut g Gen) emit_load_typed(dst_reg int, ptr_reg int, typ ssa.TypeID) {
 	size := g.m.type_size(typ)
 	match size {
-		1 { g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg))) }
-		2 { g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg))) }
-		4 { g.emit32(asm_ldrsw(Reg(dst_reg), Reg(ptr_reg))) }
-		else { g.emit32(asm_ldr(Reg(dst_reg), Reg(ptr_reg))) }
+		1 {
+			g.emit32(asm_ldr_b(Reg(dst_reg), Reg(ptr_reg)))
+		}
+		2 {
+			g.emit32(asm_ldr_h(Reg(dst_reg), Reg(ptr_reg)))
+		}
+		4 {
+			if g.is_signed_int_type(typ) {
+				g.emit32(asm_ldrsw(Reg(dst_reg), Reg(ptr_reg)))
+			} else {
+				g.emit32(asm_ldr_w(Reg(dst_reg), Reg(ptr_reg)))
+			}
+		}
+		else {
+			g.emit32(asm_ldr(Reg(dst_reg), Reg(ptr_reg)))
+		}
 	}
+}
+
+fn (g &Gen) is_signed_int_type(typ_id ssa.TypeID) bool {
+	if typ_id <= 0 || typ_id >= g.m.type_store.types.len {
+		return false
+	}
+	typ := g.m.type_store.types[typ_id]
+	return typ.kind == .int_t && !typ.is_unsigned
 }
 
 fn (mut g Gen) emit_sub_sp(size int) {
