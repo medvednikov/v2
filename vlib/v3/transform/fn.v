@@ -551,6 +551,10 @@ fn (mut t Transformer) transform_call_args(id flat.NodeId, node flat.Node) flat.
 	}
 	call_name := t.call_name_for_node(id, node)
 	mut params := t.call_param_types(call_name)
+	mut concrete_param_texts := []string{}
+	if param_texts := t.concrete_generic_call_param_type_texts(id, node) {
+		concrete_param_texts = param_texts.clone()
+	}
 	if concrete_params := t.concrete_generic_call_param_types(id, node) {
 		params = concrete_params.clone()
 	}
@@ -572,7 +576,13 @@ fn (mut t Transformer) transform_call_args(id flat.NodeId, node flat.Node) flat.
 		param_idx := arg_idx + param_offset
 		arg_id := t.a.child(&node, i)
 		arg_node := t.a.nodes[int(arg_id)]
-		param_type := if param_idx < params.len { params[param_idx].name() } else { '' }
+		param_type := if param_idx < concrete_param_texts.len {
+			concrete_param_texts[param_idx]
+		} else if param_idx < params.len {
+			params[param_idx].name()
+		} else {
+			''
+		}
 		if arg_node.kind == .field_init {
 			if packed_arg := t.transform_params_struct_call_arg(node, i, param_type) {
 				new_children << packed_arg

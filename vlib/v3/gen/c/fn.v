@@ -4448,6 +4448,7 @@ fn (mut g FlatGen) c_extern_forward_decls() {
 	mut cur_file := ''
 	mut decls := map[string]string{}
 	mut names := []string{}
+	address_taken_c_externs := g.address_taken_c_extern_symbols()
 	for i in 0 .. g.a.nodes.len {
 		node := g.a.nodes[i]
 		kind_id := node_kind_id(node)
@@ -4471,10 +4472,11 @@ fn (mut g FlatGen) c_extern_forward_decls() {
 		raw_cfn := c_name(raw_name)
 		cfn := c_winapi_wide_export_name(raw_cfn)
 		shared_runtime_extern := g.needs_shared_runtime && cfn in c_shared_runtime_extern_symbols
+		address_taken_extern := raw_cfn in address_taken_c_externs || cfn in address_taken_c_externs
 		if g.has_used_fn_filter() && !(g.spawn_wrapper_defs.len > 0
 			&& cfn in c_spawn_runtime_extern_symbols) && !shared_runtime_extern
-			&& !g.used_fn_contains(raw_name) && !g.used_fn_contains(raw_cfn)
-			&& !g.used_fn_contains(cfn) {
+			&& !address_taken_extern && !g.used_fn_contains(raw_name)
+			&& !g.used_fn_contains(raw_cfn) && !g.used_fn_contains(cfn) {
 			continue
 		}
 		if !g.should_emit_c_extern_decl(cfn) {
@@ -4494,6 +4496,38 @@ fn (mut g FlatGen) c_extern_forward_decls() {
 	if names.len > 0 {
 		g.writeln('')
 	}
+}
+
+fn (g &FlatGen) address_taken_c_extern_symbols() map[string]bool {
+	mut symbols := map[string]bool{}
+	for i := 0; i < g.a.nodes.len; i++ {
+		node := g.a.nodes[i]
+		if node.kind != .prefix || node.op != .amp || node.children_count == 0 {
+			continue
+		}
+		if symbol := g.address_taken_c_extern_symbol(g.a.child(&node, 0)) {
+			symbols[symbol] = true
+		}
+	}
+	return symbols
+}
+
+fn (g &FlatGen) address_taken_c_extern_symbol(id flat.NodeId) ?string {
+	if int(id) < 0 || int(id) >= g.a.nodes.len {
+		return none
+	}
+	node := g.a.nodes[int(id)]
+	if node.kind in [.paren, .cast_expr, .expr_stmt] && node.children_count > 0 {
+		return g.address_taken_c_extern_symbol(g.a.child(&node, 0))
+	}
+	if node.kind != .selector || node.children_count == 0 {
+		return none
+	}
+	base := g.a.child_node(&node, 0)
+	if base.kind != .ident || base.value != 'C' || node.value.len == 0 {
+		return none
+	}
+	return c_winapi_wide_export_name(node.value)
 }
 
 fn (mut g FlatGen) preseed_c_extern_fn_ptr_types() {

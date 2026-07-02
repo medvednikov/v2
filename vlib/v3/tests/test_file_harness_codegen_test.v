@@ -62,6 +62,12 @@ fn compile_and_run_flags(v3_bin string, name string, suffix string, src string, 
 	return os.execute(bin_path)
 }
 
+fn run_test_command(v3_bin string, name string, suffix string, src string) os.Result {
+	src_path := write_source(name, suffix, src)
+	bin_path := os.join_path(os.temp_dir(), 'v3_${name}')
+	return os.execute('${v3_bin} test ${src_path} -b c -o ${bin_path}')
+}
+
 fn compile_project_and_run(v3_bin string, name string, files map[string]string) (os.Result, string) {
 	root := write_project(name, files)
 	return compile_project_root_and_run(v3_bin, name, root)
@@ -110,6 +116,9 @@ fn test_two() {
 	order_run := compile_and_run(v3_bin, 'harness_order_run', '_test.c.v', order_src)
 	assert order_run.exit_code == 0, order_run.output
 	assert order_run.output.trim_space() == 'one\ntwo'
+	order_test_cmd := run_test_command(v3_bin, 'harness_order_test_cmd', '_test.c.v', order_src)
+	assert order_test_cmd.exit_code == 0, order_test_cmd.output
+	assert order_test_cmd.output.contains('one\ntwo'), order_test_cmd.output
 
 	parallel_v3_bin := build_v3_with('v3_test_file_harness_parallel_test', '-d parallel')
 	parallel_c := gen_c(parallel_v3_bin, 'harness_parallel_order', '_test.c.v', order_src)
@@ -157,6 +166,12 @@ fn test_result() ! {
 ")
 	assert result_fail.exit_code != 0
 	assert result_fail.output.contains('test failed: test_fail')
+	result_fail_test_cmd := run_test_command(v3_bin, 'harness_result_fail_test_cmd', '_test.v', "fn test_fail() ! {
+	return error('bad')
+}
+")
+	assert result_fail_test_cmd.exit_code != 0
+	assert result_fail_test_cmd.output.contains('test failed: test_fail')
 
 	result_fail_cleanup := compile_and_run(v3_bin, 'harness_result_fail_cleanup', '_test.v', "fn testsuite_end() {
 	println('end')

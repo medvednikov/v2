@@ -154,7 +154,7 @@ fn input_is_cmd_v(input_file string) bool {
 fn main() {
 	args := os.args[1..]
 	if args.len == 0 {
-		eprintln('usage: v3 <file.v> [-o output|file.c] [-b c|arm64|eval] [-c99] [-d flag]')
+		eprintln('usage: v3 [test] <file.v|dir> [-o output|file.c] [-b c|arm64|eval] [-c99] [-d flag]')
 		exit(1)
 	}
 
@@ -164,6 +164,7 @@ fn main() {
 	mut is_prod := false
 	mut is_strict := false
 	mut is_selfhost := false
+	mut output_requested := false
 	mut no_parallel := false
 	mut parallel_transform := true
 	mut building_v := false
@@ -171,10 +172,15 @@ fn main() {
 	mut all_backends := false
 	mut compile_backends := []string{}
 	mut user_defines := []string{}
+	mut test_command := false
 	mut i := 0
 	for i < args.len {
-		if args[i] == '-o' && i + 1 < args.len {
+		if args[i] == 'test' && input_file == '' {
+			test_command = true
+			i++
+		} else if args[i] == '-o' && i + 1 < args.len {
 			output_file = args[i + 1]
+			output_requested = true
 			i += 2
 		} else if args[i] == '-b' && i + 1 < args.len {
 			backend = args[i + 1]
@@ -349,6 +355,10 @@ fn main() {
 		p.parse_into(uf)
 	}
 	test_files := test_input_files(user_files, backend)
+	if test_command && test_files.len == 0 {
+		eprintln('no test files')
+		exit(1)
+	}
 
 	seed_implicit_sync_import(mut a)
 	seed_implicit_embed_file_import(mut a)
@@ -423,7 +433,7 @@ fn main() {
 	pre_tc.reject_unlowered_map_mutation = true
 	set_diagnostic_files(mut pre_tc, user_files)
 	set_unsupported_generic_files(mut pre_tc, a, is_selfhost, diagnostic_root)
-	if !building_v && !cmd_v_build {
+	if backend == 'arm64' || (!building_v && !cmd_v_build) {
 		pre_tc.annotate_types_with_used(used_fns)
 	}
 	b.step('annotate types')
@@ -559,7 +569,7 @@ fn main() {
 		os.rm(cc_src) or {}
 		os.rmdir(cc_dir) or {}
 		b.step('cc')
-		if test_files.len > 0 {
+		if test_files.len > 0 && (test_command || !output_requested) {
 			test_result := run_test_binary(bin_file)
 			if test_result != 0 {
 				exit(test_result)

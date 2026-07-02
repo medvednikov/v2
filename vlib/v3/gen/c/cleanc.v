@@ -630,6 +630,9 @@ fn (mut g FlatGen) collect_c_directive(module_name string, node flat.Node, sourc
 			|| include_arg.contains('stdatomic') {
 			return true
 		}
+		if c_should_drop_headerless_stdlib_include(module_name, include_arg) {
+			return true
+		}
 		include_dirs := c_flag_include_dirs(g.c_flags)
 		if header := c_inline_header_text(include_arg, g.compiler_vroot, source_file, include_dirs) {
 			header_text := header.text
@@ -655,6 +658,13 @@ fn (mut g FlatGen) collect_c_directive(module_name string, node flat.Node, sourc
 		'error', 'warning'] {
 		g.add_c_directive(module_name, c_preprocessor_directive_line(node.value, node.typ),
 			before_import)
+		return true
+	}
+	return false
+}
+
+fn c_should_drop_headerless_stdlib_include(module_name string, include_arg string) bool {
+	if module_name == 'time' && include_arg.trim_space() == '<mach/mach_time.h>' {
 		return true
 	}
 	return false
@@ -832,7 +842,7 @@ fn c_should_preserve_uninlined_include(include_arg string) bool {
 	if clean[0] == `<` {
 		return !c_headerless_system_include_is_handled(clean)
 	}
-	return true
+	return false
 }
 
 fn c_preserved_system_include_declared_fns(include_arg string) []string {
@@ -4538,6 +4548,7 @@ fn (mut g FlatGen) headerless_libc_preamble() {
 	g.writeln('#ifndef _WIN32')
 	g.writeln('int open(const char* path, int flags, ...);')
 	g.writeln('ssize_t read(int fd, void* buf, size_t count);')
+	g.writeln('long syscall(long number, ...);')
 	g.writeln('int fork(void);')
 	g.writeln('int dup2(int oldfd, int newfd);')
 	g.writeln('int execlp(const char* file, const char* arg, ...);')
@@ -4635,6 +4646,9 @@ fn (mut g FlatGen) headerless_libc_preamble() {
 	g.writeln('int pthread_mutex_lock(void* mutex);')
 	g.writeln('int pthread_mutex_unlock(void* mutex);')
 	g.writeln('int pthread_mutex_destroy(void* mutex);')
+	g.writeln('#ifdef __linux__')
+	g.writeln('int pthread_rwlockattr_setkind_np(void*, i32);')
+	g.writeln('#endif')
 	g.writeln('typedef struct SRWLOCK { void* Ptr; } SRWLOCK;')
 	g.writeln('typedef struct CONDITION_VARIABLE { void* Ptr; } CONDITION_VARIABLE;')
 	g.writeln('typedef void* atomic_uintptr_t;')
@@ -4709,6 +4723,7 @@ const c_headerless_libc_declared_fns = [
 	'fabs',
 	'open',
 	'read',
+	'syscall',
 	'fork',
 	'dup2',
 	'execlp',
@@ -4733,6 +4748,7 @@ const c_headerless_libc_declared_fns = [
 	'pthread_mutex_lock',
 	'pthread_mutex_unlock',
 	'pthread_mutex_destroy',
+	'pthread_rwlockattr_setkind_np',
 ]
 
 fn (mut g FlatGen) headerless_windows_sdk_types() {

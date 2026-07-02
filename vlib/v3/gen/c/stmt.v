@@ -1922,6 +1922,13 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 					v_type = lock_type
 				}
 			}
+			if lhs.kind == .ident && lhs.value.starts_with('__arr_val_') {
+				rhs_type := g.usable_expr_type(rhs_id)
+				v_ct := g.tc.c_type(v_type)
+				if v_ct in ['int', 'i64'] && (rhs_type is types.String || rhs_type is types.Array) {
+					v_type = rhs_type
+				}
+			}
 			if fixed := array_fixed_type(v_type) {
 				if g.fixed_array_decl_is_unusable(fixed) {
 					rhs_type := g.decl_rhs_fallback_type(rhs_id, rhs)
@@ -1944,8 +1951,10 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 				continue
 			}
 			ct0 := g.tc.c_type(v_type)
+			concrete_optional_decl := (v_type is types.OptionType || v_type is types.ResultType)
+				&& g.or_expr_uses_concrete_optional(rhs_id)
 			ct := if v_type is types.OptionType || v_type is types.ResultType {
-				g.optional_type_name_for_context(v_type, specialized_generic_fn_name(g.cur_fn_name))
+				g.optional_type_name_for_context(v_type, concrete_optional_decl)
 			} else {
 				ct0
 			}
@@ -1965,6 +1974,9 @@ fn (mut g FlatGen) gen_decl_assign(node flat.Node) {
 			g.writeln(';')
 			if lhs.kind == .ident {
 				g.tc.cur_scope.insert(lhs.value, v_type)
+				if concrete_optional_decl {
+					g.cur_concrete_optional_params[lhs.value] = true
+				}
 			}
 		}
 		i += 2
@@ -2539,8 +2551,7 @@ fn (mut g FlatGen) gen_assign_or_expr(node flat.Node, lhs_idx int, or_node flat.
 	expr_node := g.a.nodes[int(expr_id)]
 	tmp := g.tmp_name()
 	expr_type := g.or_expr_source_type(expr_id, expr_node)
-	opt_ct := g.optional_type_name_for_context(expr_type,
-		specialized_generic_fn_name(g.cur_fn_name))
+	opt_ct := g.optional_type_name_for_context(expr_type, g.or_expr_uses_concrete_optional(expr_id))
 	g.write('${opt_ct} ${tmp} = ')
 	g.gen_expr(expr_id)
 	g.writeln(';')
@@ -2774,12 +2785,14 @@ fn (g &FlatGen) or_expr_uses_concrete_optional(expr_id flat.NodeId) bool {
 		return false
 	}
 	expr_node := g.a.nodes[int(expr_id)]
-	if expr_node.value.len > 0 && g.cur_concrete_optional_params[expr_node.value] {
-		return true
-	}
-	if expr_node.value.len > 0 {
-		if typ := g.cur_param_types[expr_node.value] {
-			return g.tc.c_type(typ).starts_with('Optional_')
+	if expr_node.kind == .ident {
+		if expr_node.value.len > 0 && g.cur_concrete_optional_params[expr_node.value] {
+			return true
+		}
+		if expr_node.value.len > 0 {
+			if typ := g.cur_param_types[expr_node.value] {
+				return g.tc.c_type(typ).starts_with('Optional_')
+			}
 		}
 	}
 	if expr_node.kind in [.paren, .prefix] && expr_node.children_count == 1 {

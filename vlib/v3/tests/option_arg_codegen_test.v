@@ -35,6 +35,14 @@ fn test_optional_argument_codegen_wraps_values_and_none() {
 	assert out == 'ok'
 }
 
+// test_generic_method_or_expr_uses_callee_optional_abi validates this v3 regression case.
+fn test_generic_method_or_expr_uses_callee_optional_abi() {
+	v3_bin := build_v3()
+	out := run_good(v3_bin, 'generic_method_or_expr_optional_abi_input',
+		"struct Box[T] {\n\tvalue T\n}\n\nfn may_seek() ! {\n\treturn\n}\n\nfn may_read() !int {\n\treturn 3\n}\n\nfn (b Box[T]) use_helpers() !T {\n\tmay_seek()!\n\tn := may_read()!\n\tassert n == 3\n\treturn b.value\n}\n\nfn main() {\n\tb := Box[int]{value: 9}\n\tvalue := b.use_helpers()!\n\tassert value == 9\n\tprintln('ok')\n}\n")
+	assert out == 'ok'
+}
+
 // test_optional_if_expr_codegen_initializes_optional_temp validates this v3 regression case.
 fn test_optional_if_expr_codegen_initializes_optional_temp() {
 	v3_bin := build_v3()
